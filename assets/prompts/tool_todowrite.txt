@@ -1,0 +1,1 @@
+Replace the session todo list. Use for multi-step work so the user can watch progress: one todo per concrete step, status pending | in_progress | completed. Update statuses as work proceeds — mark in_progress when starting a step and completed immediately when done.

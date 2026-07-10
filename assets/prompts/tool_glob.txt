@@ -1,0 +1,1 @@
+Find files matching a glob pattern (e.g. "**/*.py"), newest first, capped at 100 results. Use for locating files by name; use grep to search file contents.

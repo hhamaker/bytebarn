@@ -1,0 +1,2 @@
+Replace an exact string in a file. old_string must match the file contents exactly (including whitespace) and must be unique in the file — include enough surrounding lines to make it unique, or set replace_all to change every occurrence.
+The file must have been read this session. new_string must differ from old_string.

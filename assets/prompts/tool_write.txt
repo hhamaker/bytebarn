@@ -1,0 +1,2 @@
+Write content to a file, creating parent directories as needed.
+Overwriting an existing file requires reading it first this session. Prefer edit for partial changes to existing files.

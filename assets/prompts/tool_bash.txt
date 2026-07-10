@@ -1,0 +1,4 @@
+Run a shell command in the project directory and return merged stdout/stderr with the exit code.
+Use dedicated tools instead of shell equivalents: read (not cat/head/tail), grep (not grep/rg), glob (not find), edit/write (not sed/echo redirection).
+Set a timeout in seconds for long commands (default 120, max 600). Provide a short human-readable description of what the command does.
+Quote paths containing spaces. Avoid interactive commands; they will hang until timeout.
