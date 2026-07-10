@@ -1,0 +1,2 @@
+Read a file and return numbered lines ("   1→..."). Reads up to 2000 lines by default; use offset/limit for large files.
+Always read a file before editing or overwriting it. Paths may be absolute or relative to the project root.

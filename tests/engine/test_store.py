@@ -1,0 +1,68 @@
+import pytest
+
+from crew.engine.store import Store, Todo
+
+
+@pytest.fixture
+async def store(tmp_path):
+    s = Store(tmp_path / "crew.db")
+    await s.open()
+    yield s
+    await s.close()
+
+
+async def test_project_roundtrip(store, tmp_path):
+    p1 = await store.open_project(str(tmp_path), "proj")
+    p2 = await store.open_project(str(tmp_path))
+    assert p1.id == p2.id
+    assert p2.name == "proj"
+
+
+async def test_session_message_parts_ordering(store, tmp_path):
+    proj = await store.open_project(str(tmp_path))
+    sess = await store.create_session(proj.id, agent="build", model="a/m")
+    msg = await store.add_message(sess.id, "assistant", model="m", provider="a")
+    p0 = await store.add_part(msg.id, "text", {"text": "hello"})
+    p1 = await store.add_part(msg.id, "tool", {"tool": "bash", "status": "pending"})
+    parts = await store.list_parts(msg.id)
+    assert [p.type for p in parts] == ["text", "tool"]
+    assert parts[0].data["text"] == "hello"
+
+    await store.update_part(p1.id, {"tool": "bash", "status": "done", "output": "ok"})
+    parts = await store.list_parts(msg.id)
+    assert parts[1].data["status"] == "done"
+
+    history = await store.session_parts(sess.id)
+    assert len(history) == 1
+    assert history[0][0].id == msg.id
+    assert p0.idx == 0 and p1.idx == 1
+
+
+async def test_child_sessions(store, tmp_path):
+    proj = await store.open_project(str(tmp_path))
+    parent = await store.create_session(proj.id)
+    child = await store.create_session(proj.id, agent="explore", parent_session_id=parent.id)
+    kids = await store.child_sessions(parent.id)
+    assert [k.id for k in kids] == [child.id]
+    # top-level listing excludes children
+    tops = await store.list_sessions(proj.id)
+    assert [s.id for s in tops] != [] and child.id not in [s.id for s in tops]
+
+
+async def test_todo_replace(store, tmp_path):
+    proj = await store.open_project(str(tmp_path))
+    sess = await store.create_session(proj.id)
+    await store.set_todos(sess.id, [Todo("a"), Todo("b", "in_progress")])
+    todos = await store.get_todos(sess.id)
+    assert [(t.content, t.status) for t in todos] == [("a", "pending"), ("b", "in_progress")]
+    await store.set_todos(sess.id, [Todo("c", "completed")])
+    todos = await store.get_todos(sess.id)
+    assert [(t.content, t.status) for t in todos] == [("c", "completed")]
+
+
+async def test_update_session_title(store, tmp_path):
+    proj = await store.open_project(str(tmp_path))
+    sess = await store.create_session(proj.id)
+    await store.update_session(sess.id, title="My session")
+    got = await store.get_session(sess.id)
+    assert got.title == "My session"

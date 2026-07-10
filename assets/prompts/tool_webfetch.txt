@@ -1,0 +1,1 @@
+Fetch a URL (GET) and return its content; HTML is converted to markdown by default (format: text to skip conversion). 5MB response cap.

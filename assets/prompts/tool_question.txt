@@ -1,0 +1,1 @@
+Ask the user a question and wait for their answer. Provide short answer options; the user may also type a free-text answer. Use only when genuinely blocked on a decision that changes what you do next.

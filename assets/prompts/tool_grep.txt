@@ -1,0 +1,2 @@
+Search file contents with a regular expression. output_mode: files_with_matches (default, file paths only), content (matching lines with file:line), count (matches per file).
+Filter files with glob (e.g. "*.py"). Prefer this over bash grep/rg.
