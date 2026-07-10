@@ -37,7 +37,7 @@ class Engine:
         self.config: Config = load_config(self.project_dir, self.global_dir)
         self.store = Store(db_path or (self.global_dir / "crew.db"))
         self.bus = EventBus()
-        self.providers = ProviderRegistry(self.config)
+        self.providers = ProviderRegistry(self.config, self.global_dir)
         self.agents = AgentRegistry(self.config, self.project_dir, self.global_dir)
         self.commands = CommandRegistry(self.project_dir, self.global_dir)
         self.runner = Runner(self)
@@ -62,7 +62,7 @@ class Engine:
 
     def reload_config(self) -> None:
         self.config = load_config(self.project_dir, self.global_dir)
-        self.providers = ProviderRegistry(self.config)
+        self.providers = ProviderRegistry(self.config, self.global_dir)
         self.agents = AgentRegistry(self.config, self.project_dir, self.global_dir)
         self.commands.reload()
 

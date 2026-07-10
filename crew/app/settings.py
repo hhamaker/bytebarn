@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
+
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFormLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
 )
@@ -40,6 +46,16 @@ class SettingsDialog(QDialog):
             self.provider_rows[name] = (base, key_env)
             form.addRow(f"{name} base_url", base)
             form.addRow(f"{name} api_key_env", key_env)
+
+        form.addRow(QLabel("<b>Sign in with Grok (xAI)</b>"))
+        self.grok_status = QLabel()
+        self.grok_login_btn = QPushButton()
+        self.grok_login_btn.clicked.connect(self._toggle_grok_login)
+        self._refresh_grok_status()
+        grok_row = QHBoxLayout()
+        grok_row.addWidget(self.grok_status, 1)
+        grok_row.addWidget(self.grok_login_btn)
+        form.addRow("account", grok_row)
 
         form.addRow(QLabel("<b>Permission defaults</b>"))
         self.permission_rows: dict[str, QComboBox] = {}
@@ -93,3 +109,41 @@ class SettingsDialog(QDialog):
             self.engine.reload_config()
             self.engine.bus.emit(AgentRegistryChanged())
         self.accept()
+
+    # ------------------------------------------------------------------ grok
+
+    def _refresh_grok_status(self) -> None:
+        record = self.engine.providers.auth.get("xai")
+        if record and record.get("type") == "oauth":
+            self.grok_status.setText("Signed in with xAI (Grok)")
+            self.grok_login_btn.setText("Log out")
+        else:
+            self.grok_status.setText("Not signed in")
+            self.grok_login_btn.setText("Log in with Grok")
+
+    def _toggle_grok_login(self) -> None:
+        record = self.engine.providers.auth.get("xai")
+        if record and record.get("type") == "oauth":
+            self.engine.providers.auth.remove("xai")
+            self.engine.reload_config()
+            self._refresh_grok_status()
+            return
+        self.grok_login_btn.setEnabled(False)
+        self.grok_status.setText("Opening browser…")
+        asyncio.ensure_future(self._do_grok_login())
+
+    async def _do_grok_login(self) -> None:
+        from ..engine.providers import xai_oauth
+
+        try:
+            record = await xai_oauth.login(
+                lambda url: QDesktopServices.openUrl(QUrl(url))
+            )
+            self.engine.providers.auth.set("xai", record)
+            self.engine.reload_config()
+            self._refresh_grok_status()
+        except Exception as exc:  # noqa: BLE001 - surface any failure to the user
+            self._refresh_grok_status()
+            QMessageBox.warning(self, "Grok sign-in failed", str(exc))
+        finally:
+            self.grok_login_btn.setEnabled(True)

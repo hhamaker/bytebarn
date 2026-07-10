@@ -30,6 +30,14 @@ CATALOG: dict[str, ModelInfo] = {
     "gpt-4o-mini": ModelInfo(128_000, 16_384, True, 0.15, 0.6),
     "gpt-4.1": ModelInfo(1_000_000, 32_768, True, 2.0, 8.0),
     "o3": ModelInfo(200_000, 100_000, True, 2.0, 8.0),
+    # xAI (Grok)
+    "grok-4": ModelInfo(256_000, 64_000, True, 3.0, 15.0),
+    "grok-4-fast": ModelInfo(2_000_000, 64_000, True, 0.2, 0.5),
+    "grok-4-fast-reasoning": ModelInfo(2_000_000, 64_000, True, 0.2, 0.5),
+    "grok-4-fast-non-reasoning": ModelInfo(2_000_000, 64_000, True, 0.2, 0.5),
+    "grok-code-fast-1": ModelInfo(256_000, 64_000, True, 0.2, 1.5),
+    "grok-3": ModelInfo(131_072, 8192, True, 3.0, 15.0),
+    "grok-3-mini": ModelInfo(131_072, 8192, True, 0.3, 0.5),
 }
 
 _FALLBACK = ModelInfo()

@@ -174,6 +174,11 @@ DEFAULT_CONFIG = {
     "provider": {
         "anthropic": {"api_key_env": "ANTHROPIC_API_KEY", "api": "anthropic"},
         "openai": {"api_key_env": "OPENAI_API_KEY", "api": "openai"},
+        "xai": {
+            "api_key_env": "XAI_API_KEY",
+            "api": "openai",
+            "base_url": "https://api.x.ai/v1",
+        },
     },
 }
 
