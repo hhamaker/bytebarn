@@ -1,0 +1,72 @@
+{
+  "agent": {
+    "build": {
+      "model": "xai/grok-4"
+    },
+    "plan": {
+      "model": "xai/grok-4",
+      "tools": {
+        "bash": true,
+        "edit": false,
+        "glob": true,
+        "grep": true,
+        "question": true,
+        "read": true,
+        "task": false,
+        "todowrite": true,
+        "webfetch": true,
+        "write": false
+      }
+    },
+    "orchestrator": {
+      "model": "xai/grok-4",
+      "tools": {
+        "bash": true,
+        "edit": false,
+        "glob": true,
+        "grep": true,
+        "question": true,
+        "read": true,
+        "task": true,
+        "todowrite": true,
+        "webfetch": true,
+        "write": false
+      }
+    },
+    "general": {
+      "model": "xai/grok-4"
+    },
+    "explore": {
+      "model": "xai/grok-4",
+      "tools": {
+        "bash": true,
+        "edit": false,
+        "glob": true,
+        "grep": true,
+        "question": true,
+        "read": true,
+        "task": false,
+        "todowrite": true,
+        "webfetch": true,
+        "write": false
+      }
+    }
+  },
+  "permission": {
+    "bash": {
+      "default": "ask",
+      "allow": [
+        "head -5 ~/.crew/tool-output/*.txt*",
+        "cat ~/.crew/tool-output/01a3b79a1b614df3aac6abac3de78866.txt ~/.crew/tool-output/0b4c45ffdf724b49a09fdb81cc1b8d16.txt ~/.crew/tool-output/1b5388276dd447018c0f66031e1c4213.txt ~/.crew/tool-output/a37c6e823e70465d8d6637ed45af76c5.txt ~/.crew/tool-output/cdee7ee35bfa44a7b0252cc50bddf684.txt | wc -l*",
+        "head -20 ~/.crew/tool-output/01a3b79a1b614df3aac6abac3de78866.txt*",
+        "python3 << 'EOF'\nimport os\nimport glob\n\nfiles = sorted(glob.glob(os.path.expanduser(\"~/.crew/tool-output/*.txt\")))\n\ncategories = [\n    \"Documentation\",\n    \"UX\", \n    \"Visual Design\",\n    \"Configuration\",\n    \"Animation\"\n]\n\nwith open(\"improvements.md\", \"w\") as out:\n    item_num = 1\n    for i, filepath in enumerate(files):\n        category = categories[i] if i < len(categories) else \"Unknown\"\n        with open(filepath, \"r\") as f:\n            for line in f:\n                line = line.strip()\n                if line and line[0].isdigit():\n                    # Extract the text after the number\n                    parts = line.split(\". \", 1)\n                    if len(parts) == 2:\n                        text = parts[1]\n                        out.write(f\"## {category}\\n\\n\")\n                        out.write(f\"{item_num}. {text}\\n\\n\")\n                        item_num += 1\n\nprint(f\"Created improvements.md with {item_num-1} items\")\nEOF*",
+        "python3 << 'EOF'\nimport os\nimport glob\n\nfiles = sorted(glob.glob(os.path.expanduser(\"~/.crew/tool-output/*.txt\")))\n\ncategories = [\n    \"Documentation\",\n    \"UX\", \n    \"Visual Design\",\n    \"Configuration\",\n    \"Animation\"\n]\n\nwith open(\"improvements.md\", \"w\") as out:\n    item_num = 1\n    for i, filepath in enumerate(files):\n        category = categories[i] if i < len(categories) else \"Unknown\"\n        out.write(f\"# {category}\\n\\n\")\n        with open(filepath, \"r\") as f:\n            for line in f:\n                line = line.strip()\n                if line and line[0].isdigit():\n                    parts = line.split(\". \", 1)\n                    if len(parts) == 2:\n                        text = parts[1]\n                        out.write(f\"{item_num}. {text}\\n\")\n                        item_num += 1\n        out.write(\"\\n\")\n\nprint(f\"Created improvements.md with {item_num-1} items\")\nEOF*",
+        "python3 << 'EOF'\nimport os\nimport glob\n\nfiles = sorted(glob.glob(os.path.expanduser(\"~/.crew/tool-output/*.txt\")))\n\ncategories = [\n    \"Documentation\",\n    \"UX\", \n    \"Visual Design\",\n    \"Configuration\",\n    \"Animation\"\n]\n\nwith open(\"improvements.md\", \"w\") as out:\n    item_num = 1\n    for i, filepath in enumerate(files):\n        category = categories[i] if i < len(categories) else \"Unknown\"\n        out.write(f\"# {category}\\n\\n\")\n        with open(filepath, \"r\") as f:\n            for line in f:\n                line = line.strip()\n                if line and line[0].isdigit():\n                    parts = line.split(\". \", 1)\n                    if len(parts) == 2:\n                        text = parts[1]\n                        out.write(f\"{item_num}. {text}\\n\")\n                        item_num += 1\n        out.write(\"\\n\")\n\nprint(f\"Created improvements.md with {item_num-1} items\")\nEOF*",
+        "head -100 improvements.md | tail -20*",
+        "wc -l improvements.md && grep -c \"^# \" improvements.md && tail -5 improvements.md*",
+        "ls -la improvements.md*"
+      ],
+      "deny": []
+    }
+  }
+}

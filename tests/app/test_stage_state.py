@@ -71,3 +71,39 @@ def test_species_stable():
 
     assert species_for("explore") == species_for("explore")
     assert species_for("explore") in SPECIES
+
+
+def test_current_todo_and_planning_activation():
+    from crew.engine.events import TodoUpdated
+
+    state = _state()
+    state.on_event(TodoUpdated(session_id="p", todos=[
+        {"content": "write tests", "status": "pending"},
+        {"content": "build feature", "status": "in_progress"},
+    ]))
+    assert state.current_todo == "build feature"
+    # a plan alone activates the stage (planning phase, no workers yet)
+    assert state.active and state.started_at > 0
+
+
+def test_summary_headline():
+    from crew.engine.events import RunFinished, TaskFinished, TaskStarted, TaskUpdated, TodoUpdated
+
+    state = _state()
+    assert state.summary() == "planning…"
+    state.on_event(TodoUpdated(session_id="p", todos=[
+        {"content": "a", "status": "pending"},
+        {"content": "b", "status": "pending"},
+    ]))
+    assert state.summary().startswith("2 queued · 0:")
+    state.on_event(TaskStarted(session_id="p", subagent_session_id="c1",
+                               agent="general", description="t"))
+    state.on_event(TaskStarted(session_id="p", subagent_session_id="c2",
+                               agent="explore", description="t"))
+    state.on_event(TaskFinished(session_id="p", subagent_session_id="c2", status="done"))
+    summary = state.summary()
+    assert "1 working" in summary and "1 done" in summary and "2 queued" in summary
+    state.on_event(TaskUpdated(session_id="p", subagent_session_id="c1", status="retrying"))
+    assert "1 retrying" in state.summary()
+    state.on_event(RunFinished(session_id="p"))
+    assert state.summary() == "planning…" and state.current_todo == ""

@@ -173,6 +173,14 @@ class Runner:
 
         system = await build_system_prompt(agent, engine.project_dir, engine.config.instructions)
 
+        # model fallback: after N consecutive failed turns, switch to a
+        # comparable available model instead of giving up (spec-free QoL)
+        fb_conf = (engine.config.model_extra or {}).get("model_fallback") or {}
+        fb_enabled = bool(fb_conf.get("enabled", True))
+        fb_after = max(1, int(fb_conf.get("after", 2)))
+        failures = 0
+        models_tried = [model]
+
         for _step in range(agent.steps):
             if handle.abort.is_set():
                 raise asyncio.CancelledError
@@ -192,8 +200,39 @@ class Runner:
             outcome = await self._stream_turn(session, message.id, provider, req, model_id, info)
             if outcome["error"]:
                 await store.update_message(message.id, error=outcome["error"])
+                failures += 1
+                if fb_enabled and failures < fb_after:
+                    await self._notice(
+                        session, message.id,
+                        f"⚠ {model} failed ({failures}/{fb_after}): {outcome['error'][:200]}"
+                        " — trying again",
+                    )
+                    continue
+                alt = engine.fallback_model(model, models_tried) if fb_enabled else None
+                if alt:
+                    await self._notice(
+                        session, message.id,
+                        f"⤷ {model} failed {failures}× — switching to comparable"
+                        f" model {alt} for the rest of this task",
+                    )
+                    model = alt
+                    models_tried.append(alt)
+                    provider, model_id, info = engine.providers.resolve(model)
+                    failures = 0
+                    self.engine.bus.emit(SessionUpdated(session_id=session.id))
+                    continue
+                # no stand-in available: surface the failure in the transcript
+                error_text = f"⚠ {outcome['error']}"
+                lowered = outcome["error"].lower()
+                if "auth" in lowered or "api_key" in lowered or "401" in outcome["error"]:
+                    error_text += (
+                        f"\n\nModel `{model}` needs credentials — open **⚡ providers**"
+                        " in the status bar to connect a provider, then try again."
+                    )
+                await self._notice(session, message.id, error_text)
                 self.engine.bus.emit(SessionUpdated(session_id=session.id))
                 return
+            failures = 0
             if not outcome["tool_calls"]:
                 await self._maybe_compact(session, outcome, info, system)
                 return
@@ -424,6 +463,14 @@ class Runner:
                         session_id=session_id, message_id=message.id, part_id=part.id,
                         part_type=part.type, data=dict(part.data),
                     ))
+
+    async def _notice(self, session, message_id: str, text: str) -> None:
+        """Visible transcript note attached to an existing assistant message."""
+        part = await self.engine.store.add_part(message_id, "text", {"text": text})
+        self.engine.bus.emit(PartUpdated(
+            session_id=session.id, message_id=message_id, part_id=part.id,
+            part_type="text", data=part.data,
+        ))
 
     async def _append_error(self, session_id: str, text: str) -> None:
         store = self.engine.store

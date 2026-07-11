@@ -7,15 +7,15 @@ State derives purely from engine events (task.*, todo.updated, run.finished).
 
 from __future__ import annotations
 
-import math
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
 from PySide6.QtCore import QRect, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPainterPath
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath
 from PySide6.QtWidgets import QWidget
 
-from .sprites import SPRITE_H, SPRITE_W, draw_critter, species_for
+from .sprites import SPRITE_H, SPRITE_W, draw_critter, look_for, species_for
 
 MAX_VISIBLE = 8
 
@@ -34,8 +34,10 @@ class CrewMember:
 class StageState:
     members: dict[str, CrewMember] = field(default_factory=dict)
     order: list[str] = field(default_factory=list)
-    waiting: list[str] = field(default_factory=list)  # pending todo contents
+    waiting: list[str] = field(default_factory=list)   # pending todo contents
+    current_todo: str = ""                             # in-progress todo content
     active: bool = False
+    started_at: float = 0.0
 
     def on_event(self, event: Any, agent_colors: dict[str, str] | None = None) -> bool:
         """Apply an engine event; returns True if the stage changed."""
@@ -51,7 +53,7 @@ class StageState:
             if member.session_id not in self.members:
                 self.order.append(member.session_id)
             self.members[member.session_id] = member
-            self.active = True
+            self._activate()
             return True
         if name == "task.updated":
             member = self.members.get(event.subagent_session_id)
@@ -71,18 +73,54 @@ class StageState:
             return False
         if name == "todo.updated":
             self.waiting = [t["content"] for t in event.todos if t["status"] == "pending"]
+            self.current_todo = next(
+                (t["content"] for t in event.todos if t["status"] == "in_progress"), "")
+            # a plan exists -> show the stage while the orchestrator is still
+            # casting the crew (sleeping critters + summary, no workers yet)
+            if event.todos:
+                self._activate()
             return True
         if name == "run.finished":
             # orchestrator run over -> stage hides and resets
             self.members.clear()
             self.order.clear()
             self.waiting.clear()
+            self.current_todo = ""
             self.active = False
+            self.started_at = 0.0
             return True
         return False
 
+    def _activate(self) -> None:
+        if not self.active:
+            self.started_at = time.time()
+        self.active = True
+
     def visible_members(self) -> list[CrewMember]:
         return [self.members[sid] for sid in self.order if sid in self.members]
+
+    def summary(self) -> str:
+        """One-line status headline for the stage."""
+        counts: dict[str, int] = {}
+        for member in self.members.values():
+            counts[member.status] = counts.get(member.status, 0) + 1
+        bits = []
+        if counts.get("running"):
+            bits.append(f"{counts['running']} working")
+        if counts.get("retrying"):
+            bits.append(f"{counts['retrying']} retrying")
+        if counts.get("done"):
+            bits.append(f"{counts['done']} done")
+        if counts.get("error"):
+            bits.append(f"{counts['error']} failed")
+        if self.waiting:
+            bits.append(f"{len(self.waiting)} queued")
+        if not bits:
+            bits.append("planning…")
+        if self.started_at:
+            elapsed = int(time.time() - self.started_at)
+            bits.append(f"{elapsed // 60}:{elapsed % 60:02d}")
+        return " · ".join(bits)
 
     @property
     def overflow(self) -> int:
@@ -101,14 +139,16 @@ class CrewStage(QWidget):
         self._timer = QTimer(self)
         self._timer.setInterval(80)  # ~12 fps
         self._timer.timeout.connect(self._tick)
-        self.setFixedHeight(150)
+        self.setFixedHeight(164)
         self.setVisible(False)
 
     # -- state ----------------------------------------------------------------
 
     def handle_event(self, event: Any, agent_colors: dict[str, str] | None = None) -> None:
         changed = self.state.on_event(event, agent_colors)
-        should_show = self.state.active and bool(self.state.members)
+        # visible from the moment a plan exists (planning phase shows the
+        # summary + sleeping critters before any worker is cast)
+        should_show = self.state.active
         if should_show and not self.isVisible():
             self.setVisible(True)
             self._timer.start()
@@ -128,6 +168,18 @@ class CrewStage(QWidget):
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor("#1d2026"))
         self._hits = []
+        metrics_header = QFontMetrics(painter.font())
+
+        # headline: live counts + elapsed, then the todo being worked on
+        painter.setPen(QColor("#e5c07b"))
+        summary = self.state.summary()
+        painter.drawText(12, 16, summary)
+        if self.state.current_todo:
+            painter.setPen(QColor("#8f96a3"))
+            x = 12 + metrics_header.horizontalAdvance(summary) + 16
+            todo = metrics_header.elidedText(
+                f"▸ {self.state.current_todo}", Qt.ElideRight, self.width() - x - 12)
+            painter.drawText(x, 16, todo)
 
         members = self.state.visible_members()
         shown = members[:MAX_VISIBLE]
@@ -140,7 +192,9 @@ class CrewStage(QWidget):
         hub_x = 30
         hub_y = 34
         n = len(shown)
-        slot = max((width - 140) // max(n, 1), sprite_w + 40) if n else 0
+        # cap slot width so a small crew clusters near the hub instead of
+        # scattering across the full window
+        slot = min(max((width - 140) // max(n, 1), sprite_w + 40), 170) if n else 0
 
         metrics = QFontMetrics(painter.font())
         for index, member in enumerate(shown):
@@ -149,44 +203,77 @@ class CrewStage(QWidget):
             self._draw_rope(painter, hub_x + sprite_w // 2, hub_y + sprite_h // 2,
                             cx + sprite_w // 2, cy + sprite_h // 2, member)
         # ropes under critters: draw hub + critters after
-        draw_critter(painter, hub_x, hub_y, scale, species_for("orchestrator"),
+        hub_species, hub_accent = look_for("orchestrator")
+        draw_critter(painter, hub_x, hub_y, scale, hub_species,
                      QColor(self.orchestrator_color), state="working",
-                     frame=self._frame, crowned=True)
+                     frame=self._frame, crowned=True, accent=hub_accent)
+        dots = "." * (1 + (self._frame // 4) % 3)
         for index, member in enumerate(shown):
             cx = 120 + index * slot
             cy = 26 + (10 if index % 2 else 0)
             state = {"running": "working", "retrying": "retrying",
                      "done": "done", "error": "retrying"}.get(member.status, "working")
-            draw_critter(painter, cx, cy, scale, species_for(member.agent),
-                         QColor(member.color), state=state, frame=self._frame + index * 5)
+            species, accent = look_for(member.agent)
+            draw_critter(painter, cx, cy, scale, species,
+                         QColor(member.color), state=state,
+                         frame=self._frame + index * 5, accent=accent)
+            self._draw_badge(painter, cx + sprite_w - 6, cy + sprite_h - 6, member.status)
             rect = QRect(cx - 4, cy - 4, sprite_w + 8, sprite_h + 8)
             self._hits.append((rect, member.session_id))
             painter.setPen(QColor("#c8ccd4"))
             name = metrics.elidedText(member.agent, Qt.ElideRight, slot - 12)
             painter.drawText(cx + sprite_w // 2 - metrics.horizontalAdvance(name) // 2,
                              cy + sprite_h + 14, name)
-            if member.detail:
-                painter.setPen(QColor("#7f848e"))
-                detail = metrics.elidedText(member.detail, Qt.ElideRight, slot - 8)
-                painter.drawText(cx + sprite_w // 2 - metrics.horizontalAdvance(detail) // 2,
-                                 cy + sprite_h + 28, detail)
+            # status line: unmistakable working/done wording, live detail when we have it
+            status_text, status_color = {
+                "running": (member.detail or f"working{dots}", "#e5c07b"),
+                "retrying": (f"retrying{dots}", "#e06c75"),
+                "done": ("✓ done", "#98c379"),
+                "error": ("✗ failed", "#e06c75"),
+            }.get(member.status, ("working" + dots, "#e5c07b"))
+            if member.status == "running" and member.detail:
+                status_color = "#7f848e"
+            painter.setPen(QColor(status_color))
+            status = metrics.elidedText(status_text, Qt.ElideRight, slot - 8)
+            painter.drawText(cx + sprite_w // 2 - metrics.horizontalAdvance(status) // 2,
+                             cy + sprite_h + 28, status)
 
         if self.state.overflow:
             painter.setPen(QColor("#c8ccd4"))
-            painter.drawText(width - 80, 30, f"+{self.state.overflow} more")
+            painter.drawText(width - 80, 16, f"+{self.state.overflow} more")
 
         # waiting rows: faded sleeping critters for undelegated todos
-        wait_y = 96
+        wait_y = 118
         for windex, content in enumerate(self.state.waiting[:6]):
-            wx = 120 + windex * 140
+            wx = 120 + windex * 200
             if wx + sprite_w > width:
                 break
             draw_critter(painter, wx, wait_y, 3, species_for(content),
                          QColor("#888888"), state="waiting", frame=self._frame + windex * 7)
             painter.setPen(QColor("#666b74"))
-            text = metrics.elidedText(content, Qt.ElideRight, 130)
-            painter.drawText(wx + 40, wait_y + 22, text)
+            text = metrics.elidedText(content, Qt.ElideRight, 148)
+            painter.drawText(wx + 44, wait_y + 22, text)
         painter.end()
+
+    def _draw_badge(self, painter: QPainter, x: int, y: int, status: str) -> None:
+        """Corner badge on the sprite: green ✓ when done, red ✗ on error."""
+        if status not in ("done", "error"):
+            return
+        color = QColor("#98c379") if status == "done" else QColor("#e06c75")
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setBrush(color)
+        painter.setPen(QColor("#1d2026"))
+        painter.drawEllipse(x - 8, y - 8, 16, 16)
+        painter.setPen(QColor("#1d2026"))
+        font = painter.font()
+        bold = QFont(font)
+        bold.setBold(True)
+        painter.setFont(bold)
+        glyph = "✓" if status == "done" else "✗"
+        painter.drawText(QRect(x - 8, y - 9, 16, 16), Qt.AlignCenter, glyph)
+        painter.setFont(font)
+        painter.setBrush(Qt.NoBrush)
+        painter.setRenderHint(QPainter.Antialiasing, False)
 
     def _draw_rope(self, painter: QPainter, x1: int, y1: int, x2: int, y2: int, member: CrewMember) -> None:
         painter.setRenderHint(QPainter.Antialiasing, True)

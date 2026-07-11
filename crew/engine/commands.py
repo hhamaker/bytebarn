@@ -79,7 +79,7 @@ class CommandRegistry:
                 try:
                     front, body = parse_agent_file(path)
                 except yaml.YAMLError:
-                    continue
+                    continue  # line: {e.problem_mark}
                 commands[path.stem] = CommandDef(
                     name=path.stem,
                     description=str(front.get("description", "")),

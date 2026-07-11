@@ -196,6 +196,19 @@ class Store:
         )
         return [self._session(r) for r in rows]
 
+    async def delete_session(self, session_id: str) -> None:
+        """Hard-delete a session, its children, and all attached rows."""
+        for child in await self.child_sessions(session_id):
+            await self.delete_session(child.id)
+        await self.db.execute("DELETE FROM todo WHERE session_id=?", (session_id,))
+        await self.db.execute(
+            "DELETE FROM part WHERE message_id IN (SELECT id FROM message WHERE session_id=?)",
+            (session_id,),
+        )
+        await self.db.execute("DELETE FROM message WHERE session_id=?", (session_id,))
+        await self.db.execute("DELETE FROM session WHERE id=?", (session_id,))
+        await self.db.commit()
+
     async def update_session(self, session_id: str, **fields: Any) -> None:
         fields["updated_at"] = time.time()
         cols = ", ".join(f"{k}=?" for k in fields)

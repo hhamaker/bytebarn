@@ -82,11 +82,14 @@ class PromptBar(QWidget):
         self.editor.installEventFilter(self)
         self.editor.textChanged.connect(self._on_text_changed)
         self.agent_combo = QComboBox()
+        self.agent_combo.setToolTip("Agent for this session — /agents to edit them")
         self.agent_combo.currentTextChanged.connect(self.agent_changed)
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
+        self.model_combo.setToolTip("Model for this session — connect more via ⚡ providers")
         self.model_combo.currentTextChanged.connect(self.model_changed)
         self.send_button = QPushButton("Send")
+        self.send_button.setToolTip("Enter to send · Shift+Enter for a newline · Esc to stop")
         self.send_button.clicked.connect(self._submit_or_abort)
 
         controls = QHBoxLayout()
@@ -238,6 +241,12 @@ class PromptBar(QWidget):
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
         self.model_combo.addItems(models)
-        if current:
+        if not models:
+            # nothing connected: make the problem visible instead of showing a
+            # default model that cannot actually run
+            self.model_combo.setCurrentText("")
+            if self.model_combo.lineEdit():
+                self.model_combo.lineEdit().setPlaceholderText("no providers — open ⚡ providers")
+        elif current:
             self.model_combo.setCurrentText(current)
         self.model_combo.blockSignals(False)

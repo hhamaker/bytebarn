@@ -26,7 +26,7 @@ from ..engine.agents import AgentDef
 from ..engine.config import DELETE, patch_config_file
 from ..engine.events import AgentRegistryChanged
 from ..engine.facade import Engine
-from ..engine.providers.catalog import CATALOG
+from .sprites import critter_pixmap
 
 
 class AgentEditor(QDialog):
@@ -49,12 +49,11 @@ class AgentEditor(QDialog):
 
         # form
         self.badge = QLabel("")
+        self.preview = QLabel("")
+        self.preview.setFixedHeight(64)
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
-        self.model_combo.addItem("")  # = default
-        for provider in engine.config.provider:
-            for model_id in CATALOG:
-                self.model_combo.addItem(f"{provider}/{model_id}")
+        self._reload_models()
         self.description = QLineEdit()
         self.prompt = QPlainTextEdit()
         self.prompt.setMinimumHeight(200)
@@ -72,6 +71,7 @@ class AgentEditor(QDialog):
         self.steps.setRange(1, 1000)
         self.color_button = QPushButton("pick color")
         self.color_button.clicked.connect(self._pick_color)
+        self.description.textChanged.connect(self._update_preview)
         self.hidden = QCheckBox("hidden")
         save = QPushButton("Save overrides")
         save.clicked.connect(self._save)
@@ -79,7 +79,10 @@ class AgentEditor(QDialog):
         reset.clicked.connect(self._reset)
 
         form = QFormLayout()
-        form.addRow(self.badge)
+        header = QHBoxLayout()
+        header.addWidget(self.preview)
+        header.addWidget(self.badge, 1)
+        form.addRow(header)
         form.addRow("model", self.model_combo)
         form.addRow("description", self.description)
         form.addRow("prompt", self.prompt)
@@ -103,6 +106,16 @@ class AgentEditor(QDialog):
         self._reload_list()
 
     # ------------------------------------------------------------------
+
+    def _reload_models(self) -> None:
+        from ..engine.providers.known import available_models
+
+        current = self.model_combo.currentText()
+        self.model_combo.clear()
+        self.model_combo.addItem("")  # = default
+        for model in available_models(self.engine.config, self.engine.providers.auth):
+            self.model_combo.addItem(model)
+        self.model_combo.setCurrentText(current)
 
     def _reload_list(self) -> None:
         self.agent_list.clear()
@@ -135,6 +148,7 @@ class AgentEditor(QDialog):
         self.steps.setValue(agent.steps)
         self._color = agent.color or ""
         self._style_color_button()
+        self._update_preview()
         self.hidden.setChecked(agent.hidden)
 
     def _pick_color(self) -> None:
@@ -142,6 +156,7 @@ class AgentEditor(QDialog):
         if color.isValid():
             self._color = color.name()
             self._style_color_button()
+            self._update_preview()
 
     def _style_color_button(self) -> None:
         if self._color:
@@ -150,6 +165,10 @@ class AgentEditor(QDialog):
         else:
             self.color_button.setText("pick color")
             self.color_button.setStyleSheet("")
+
+    def _update_preview(self) -> None:
+        if self._current:
+            self.preview.setPixmap(critter_pixmap(self._current.name, self._color or "#98c379"))
 
     # ------------------------------------------------------------------
 

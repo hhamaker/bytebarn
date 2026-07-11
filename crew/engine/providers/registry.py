@@ -28,34 +28,72 @@ class ProviderRegistry:
             return self._providers[name]
         pconf = self.config.provider.get(name)
         if pconf is None:
-            raise KeyError(f"unknown provider '{name}' (add it to config.provider)")
+            # not configured by hand: fall back to the known-provider recipe
+            from ..config import ProviderConfig
+            from .known import KNOWN_PROVIDERS
 
+            spec = KNOWN_PROVIDERS.get(name)
+            if spec is None or spec.planned:
+                raise KeyError(f"unknown provider '{name}' (add it to config.provider)")
+            pconf = ProviderConfig(
+                api_key_env=spec.key_env or None, base_url=spec.base_url, api=spec.api
+            )
+
+        auth_record = self.auth.get(name)
         # OAuth-authenticated providers: if the user has logged in (a token
         # exists in the auth store) and no explicit api key is configured,
         # drive the provider off the stored bearer token.
-        auth_record = self.auth.get(name)
         if (
             auth_record
             and auth_record.get("type") == "oauth"
             and pconf.resolve_key() is None
         ):
-            from .xai import XaiOAuthProvider
+            if name == "github-copilot":
+                from .github_copilot_oauth import API_BASE, COPILOT_HEADERS
+                from .openai_compat import OpenAICompatProvider
 
-            prov = XaiOAuthProvider(self.auth, name=name, base_url=pconf.base_url)
+                prov: Provider = OpenAICompatProvider(
+                    name=name,
+                    api_key=auth_record.get("refresh") or auth_record.get("access"),
+                    base_url=pconf.base_url or API_BASE,
+                    headers=dict(COPILOT_HEADERS),
+                )
+            elif name == "anthropic":
+                from .anthropic_oauth import AnthropicOAuthProvider
+
+                prov = AnthropicOAuthProvider(self.auth, name=name, base_url=pconf.base_url)
+            else:
+                from .xai import XaiOAuthProvider
+
+                prov = XaiOAuthProvider(self.auth, name=name, base_url=pconf.base_url)
             self._providers[name] = prov
             return prov
+
+        # key precedence: config key/env, then a key saved in the auth store
+        api_key = pconf.resolve_key()
+        if api_key is None and auth_record and auth_record.get("type") == "api":
+            api_key = auth_record.get("key")
+
+        # expand ${ENV_VAR} placeholders (Cloudflare account/gateway ids)
+        from .known import expand_env_vars
+
+        base_url = expand_env_vars(pconf.base_url)
+        if base_url and "${" in base_url:
+            missing = base_url[base_url.index("${") + 2 : base_url.index("}")]
+            raise KeyError(
+                f"provider '{name}' needs the {missing} environment variable"
+                " (or edit its base URL in the provider manager)"
+            )
 
         api = pconf.api if pconf.base_url or pconf.api != "anthropic" else "anthropic"
         if name == "anthropic" or api == "anthropic":
             from .anthropic import AnthropicProvider
 
-            prov: Provider = AnthropicProvider(api_key=pconf.resolve_key(), base_url=pconf.base_url)
+            prov: Provider = AnthropicProvider(api_key=api_key, base_url=base_url)
         else:
             from .openai_compat import OpenAICompatProvider
 
-            prov = OpenAICompatProvider(
-                name=name, api_key=pconf.resolve_key(), base_url=pconf.base_url
-            )
+            prov = OpenAICompatProvider(name=name, api_key=api_key, base_url=base_url)
         self._providers[name] = prov
         return prov
 

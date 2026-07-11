@@ -73,6 +73,8 @@ class SettingsDialog(QDialog):
         form.addRow(QLabel("<b>Appearance</b>"))
         self.theme = QComboBox()
         self.theme.addItems(["follow system", "dark", "light"])
+        current_theme = (config.model_extra or {}).get("theme", "follow system")
+        self.theme.setCurrentText(current_theme)
         form.addRow("theme", self.theme)
 
         save = QPushButton("Save to global config")
@@ -104,10 +106,19 @@ class SettingsDialog(QDialog):
                     updates[f"permission.{tool}.default"] = combo.currentText()
                 else:
                     updates[f"permission.{tool}"] = combo.currentText()
+        existing_theme = (config.model_extra or {}).get("theme", "follow system")
+        if self.theme.currentText() != existing_theme:
+            updates["theme"] = self.theme.currentText()
         if updates:
             patch_config_file(self.engine.global_dir / "config.json", updates)
             self.engine.reload_config()
             self.engine.bus.emit(AgentRegistryChanged())
+            if "theme" in updates:
+                from PySide6.QtWidgets import QApplication
+
+                from .theme import apply_theme
+
+                apply_theme(QApplication.instance(), updates["theme"])
         self.accept()
 
     # ------------------------------------------------------------------ grok
@@ -144,6 +155,6 @@ class SettingsDialog(QDialog):
             self._refresh_grok_status()
         except Exception as exc:  # noqa: BLE001 - surface any failure to the user
             self._refresh_grok_status()
-            QMessageBox.warning(self, "Grok sign-in failed", str(exc))
+            QMessageBox.warning(self, "Grok sign-in failed", f"{exc}\nCheck API key / network. Retry?")
         finally:
             self.grok_login_btn.setEnabled(True)

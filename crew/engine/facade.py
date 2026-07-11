@@ -73,6 +73,26 @@ class Engine:
         self.bus.emit(SessionUpdated(session_id=session.id))
         return session
 
+    async def close_session(self, session_id: str) -> None:
+        """Archive a session: abort any run, hide it from the session list."""
+        await self.abort(session_id)
+        await self.store.update_session(session_id, archived=1)
+        self.bus.emit(SessionUpdated(session_id=session_id))
+
+    async def delete_session(self, session_id: str) -> None:
+        """Permanently remove a session, its children, and their history."""
+        await self.abort(session_id)
+        await self.store.delete_session(session_id)
+        self._files_read.pop(session_id, None)
+        self._runs.pop(session_id, None)
+        self.bus.emit(SessionUpdated(session_id=session_id))
+
+    def fallback_model(self, model: str, exclude: list[str]) -> str | None:
+        """Comparable available model for automatic fallback (None = give up)."""
+        from .providers.fallback import comparable_model
+
+        return comparable_model(model, self.config, self.providers.auth, exclude)
+
     def files_read(self, session_id: str) -> set[str]:
         return self._files_read.setdefault(session_id, set())
 

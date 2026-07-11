@@ -12,27 +12,33 @@ from .markdown import escape
 
 def _render_input(tool: str, input_data: dict[str, Any]) -> str:
     if tool == "bash":
+        # <font> wrap: Qt rich text ignores css color on <pre>, so pair the
+        # dark bg with an explicit font color (readable on light themes too)
         return (
             "<pre style='background:#282828; padding:8px; border-radius:4px;'>"
-            f"{escape(input_data.get('command', ''))}</pre>"
+            f"<font color='#f0f0f0'>{escape(input_data.get('command', ''))}</font></pre>"
         )
     if tool == "edit":
         old = escape(input_data.get("old_string", ""))
         new = escape(input_data.get("new_string", ""))
         return (
             f"<b>{escape(input_data.get('path', ''))}</b>"
-            "<pre style='background:#3a2626; padding:6px; border-radius:4px; color:#e06c75;'>"
-            f"- {old}</pre>"
-            "<pre style='background:#26392a; padding:6px; border-radius:4px; color:#98c379;'>"
-            f"+ {new}</pre>"
+            "<pre style='background:#3a2626; padding:6px; border-radius:4px;'>"
+            f"<font color='#e06c75'>- {old}</font></pre>"
+            "<pre style='background:#26392a; padding:6px; border-radius:4px;'>"
+            f"<font color='#98c379'>+ {new}</font></pre>"
         )
     if tool == "write":
         content = escape(input_data.get("content", "")[:1500])
         return (
             f"<b>{escape(input_data.get('path', ''))}</b>"
-            f"<pre style='background:#26392a; padding:6px; border-radius:4px; color:#98c379;'>{content}</pre>"
+            "<pre style='background:#26392a; padding:6px; border-radius:4px;'>"
+            f"<font color='#98c379'>{content}</font></pre>"
         )
-    return f"<pre>{escape(str(input_data)[:1500])}</pre>"
+    return (
+        "<pre style='background:#282828; padding:8px; border-radius:4px;'>"
+        f"<font color='#f0f0f0'>{escape(str(input_data)[:1500])}</font></pre>"
+    )
 
 
 class PermissionDialog(QDialog):

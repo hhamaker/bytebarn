@@ -31,7 +31,7 @@ from ..engine.events import (
 )
 from ..engine.facade import Engine
 from ..engine.permissions import ASK_MODE, FULL_AUTO, SAFE
-from ..engine.providers.catalog import CATALOG
+from ..engine.providers.known import available_models
 from .agent_editor import AgentEditor
 from .crew_stage import CrewStage
 from .permission_dialog import PermissionDialog
@@ -60,15 +60,32 @@ class MainWindow(QMainWindow):
         self.crew_stage = CrewStage()
         self.todo_strip = TodoStrip()
         self.prompt_bar = PromptBar(commands=engine.commands, project_dir=engine.project_dir)
-        self.back_button = QPushButton("← back to parent session")
+
+        # session header: [←] [critter] title  agent · model
+        self.back_button = QPushButton("←")
+        self.back_button.setFlat(True)
+        self.back_button.setFixedWidth(28)
+        self.back_button.setToolTip("Back to parent session")
         self.back_button.setVisible(False)
         self.back_button.clicked.connect(self._go_back)
+        self.header_icon = QLabel("")
+        self.header_title = QLabel("")
+        self.header_meta = QLabel("")
+        self.header_meta.setStyleSheet("color: #8f96a3;")
+        header = QWidget()
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(8, 4, 8, 0)
+        header_layout.setSpacing(8)
+        header_layout.addWidget(self.back_button)
+        header_layout.addWidget(self.header_icon)
+        header_layout.addWidget(self.header_title)
+        header_layout.addWidget(self.header_meta, 1)
 
         right = QWidget()
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(2)
-        right_layout.addWidget(self.back_button)
+        right_layout.addWidget(header)
         right_layout.addWidget(self.transcript, 1)
         right_layout.addWidget(self.crew_stage)
         right_layout.addWidget(self.todo_strip)
@@ -88,6 +105,17 @@ class MainWindow(QMainWindow):
         self.mode_combo.addItems(["Safe", "Ask", "Full-auto"])
         self.mode_combo.setCurrentIndex(1)
         self.mode_combo.currentIndexChanged.connect(self._mode_changed)
+        self.mode_combo.setToolTip(
+            "Permission mode — Safe: read-only · Ask: confirm risky tools · "
+            "Full-auto: no prompts")
+        providers_button = QPushButton("⚡ providers")
+        providers_button.setFlat(True)
+        providers_button.setToolTip("Connect LLM providers (API keys, web login, local servers)")
+        providers_button.clicked.connect(self._open_providers)
+        agents_button = QPushButton("🐾 agents")
+        agents_button.setFlat(True)
+        agents_button.setToolTip("Manage agents: models, prompts, tools, colors")
+        agents_button.clicked.connect(self._open_agent_editor)
         settings_button = QPushButton("⚙")
         settings_button.setFlat(True)
         settings_button.clicked.connect(self._open_settings)
@@ -95,12 +123,18 @@ class MainWindow(QMainWindow):
         self.statusBar().addWidget(QLabel("·"))
         self.statusBar().addWidget(self.status_git)
         self.statusBar().addPermanentWidget(self.status_cost)
+        self.statusBar().addPermanentWidget(providers_button)
+        self.statusBar().addPermanentWidget(agents_button)
         self.statusBar().addPermanentWidget(self.mode_combo)
         self.statusBar().addPermanentWidget(settings_button)
 
         # wiring
         self.session_list.session_selected.connect(self._open_session)
         self.session_list.new_session.connect(lambda: self._fire(self._new_session()))
+        self.session_list.close_session.connect(
+            lambda sid: self._fire(self._close_session(sid)))
+        self.session_list.delete_session.connect(
+            lambda sid: self._fire(self._delete_session(sid)))
         self.transcript.open_session.connect(self._open_child)
         self.crew_stage.open_session.connect(self._open_child)
         self.prompt_bar.submitted.connect(self._submit)
@@ -174,7 +208,11 @@ class MainWindow(QMainWindow):
                     agent_colors = {
                         a.name: a.color or "#98c379" for a in self.engine.agents.agents.values()
                     }
-                    self._refresh_pickers()
+                    # keep the session's current picks; only the lists refresh
+                    self._refresh_pickers(
+                        self.prompt_bar.agent_combo.currentText(),
+                        self.prompt_bar.model_combo.currentText(),
+                    )
             except Exception:  # keep the loop alive no matter what
                 import traceback
 
@@ -205,8 +243,10 @@ class MainWindow(QMainWindow):
         await self._refresh_sessions()
 
     async def _load_session(self, session_id: str) -> None:
-        self.current_session_id = session_id
         session = await self.engine.store.get_session(session_id)
+        if session is None:
+            return
+        self.current_session_id = session_id
         history = await self.engine.store.session_parts(session_id)
         rows = []
         for message, parts in history:
@@ -217,6 +257,7 @@ class MainWindow(QMainWindow):
         self.todo_strip.set_todos([{"content": t.content, "status": t.status} for t in todos])
         self.prompt_bar.set_running(self.engine.is_running(session_id))
         self.back_button.setVisible(session.parent_session_id is not None)
+        self._update_header(session)
         self._refresh_pickers(session.agent, session.model)
         await self._refresh_cost()
 
@@ -233,6 +274,45 @@ class MainWindow(QMainWindow):
         if self._session_stack:
             self._fire(self._load_session(self._session_stack.pop()))
 
+    async def _close_session(self, session_id: str) -> None:
+        await self.engine.close_session(session_id)
+        await self._after_session_removed(session_id)
+
+    async def _delete_session(self, session_id: str) -> None:
+        await self.engine.delete_session(session_id)
+        await self._after_session_removed(session_id)
+
+    async def _after_session_removed(self, session_id: str) -> None:
+        """If the removed session was open, move to the next one (or a new one)."""
+        self._session_stack = [s for s in self._session_stack if s != session_id]
+        current_gone = self.current_session_id == session_id
+        if self.current_session_id and not current_gone:
+            # current may have been a child of the removed session
+            current = await self.engine.store.get_session(self.current_session_id)
+            current_gone = current is None or current.archived
+        if current_gone:
+            self.current_session_id = None
+            sessions = await self.engine.store.list_sessions(self.engine.project.id)
+            if sessions:
+                await self._load_session(sessions[0].id)
+            else:
+                await self._new_session()
+        await self._refresh_sessions()
+
+    def _update_header(self, session) -> None:
+        from .sprites import critter_pixmap
+
+        color = next(
+            (a.color for a in self.engine.agents.agents.values() if a.name == session.agent),
+            None,
+        ) or "#98c379"
+        self.header_icon.setPixmap(critter_pixmap(session.agent, color, scale=2))
+        self.header_title.setText(f"<b>{session.title or 'New session'}</b>")
+        meta = f"{session.agent} · {session.model or self.engine.config.model}"
+        if self.engine.is_running(session.id):
+            meta += "   <span style='color:#e5c07b'>● working…</span>"
+        self.header_meta.setText(meta)
+
     async def _refresh_sessions(self) -> None:
         sessions = await self.engine.store.list_sessions(self.engine.project.id)
         children = {}
@@ -241,7 +321,13 @@ class MainWindow(QMainWindow):
             if kids:
                 children[session.id] = kids
         running = {s.id for s in sessions if self.engine.is_running(s.id)} | self._running
-        self.session_list.populate(sessions, children, running, self.current_session_id or "")
+        agent_colors = {a.name: a.color or "#98c379" for a in self.engine.agents.agents.values()}
+        self.session_list.populate(
+            sessions, children, running, self.current_session_id or "", agent_colors)
+        if self.current_session_id:
+            current = await self.engine.store.get_session(self.current_session_id)
+            if current:
+                self._update_header(current)
 
     # ------------------------------------------------------------------ prompt
 
@@ -288,15 +374,8 @@ class MainWindow(QMainWindow):
     def _refresh_pickers(self, agent: str = "", model: str = "") -> None:
         agents = [a.name for a in self.engine.agents.primaries()]
         self.prompt_bar.set_agents(agents, agent or "build")
-        models = []
-        for provider_name in self.engine.config.provider:
-            for model_id in CATALOG:
-                if provider_name == "anthropic" and model_id.startswith("claude"):
-                    models.append(f"{provider_name}/{model_id}")
-                elif provider_name == "openai" and not model_id.startswith("claude"):
-                    models.append(f"{provider_name}/{model_id}")
-        models.insert(0, self.engine.config.model)
-        self.prompt_bar.set_models(list(dict.fromkeys(models)), model or self.engine.config.model)
+        models = available_models(self.engine.config, self.engine.providers.auth)
+        self.prompt_bar.set_models(models, model or self.engine.config.model)
 
     async def _refresh_cost(self) -> None:
         if not self.current_session_id:
@@ -323,6 +402,12 @@ class MainWindow(QMainWindow):
 
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self.engine, self)
+        dialog.exec()
+
+    def _open_providers(self) -> None:
+        from .provider_manager import ProviderManager
+
+        dialog = ProviderManager(self.engine, self)
         dialog.exec()
 
     def _open_agent_editor(self) -> None:

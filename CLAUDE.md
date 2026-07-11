@@ -1,0 +1,106 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+Crew — a local PySide6 desktop app that runs AI coding agents (an orchestrator
+delegating to subagents, rendered as pixel-art critters) against a user's
+codebase. `python-desktop-rebuild.md` is the original spec; code comments cite
+it by section (`spec §5.2` etc.) — check it when intent is unclear.
+
+## Commands
+
+```bash
+python3.12 -m venv .venv
+.venv/bin/pip install -e '.[dev]'
+
+# run the app (needs a project dir argument or it prompts with a file dialog)
+.venv/bin/python -m crew.main /path/to/project
+
+# no-GUI engine harness
+.venv/bin/python -m crew.cli "prompt here" --project /path/to/project
+
+# tests — no network, no API keys; offscreen Qt is required
+QT_QPA_PLATFORM=offscreen .venv/bin/pytest
+QT_QPA_PLATFORM=offscreen .venv/bin/pytest tests/engine/test_store.py -k cascade
+```
+
+pytest runs with `asyncio_mode = "auto"` — write async test functions
+directly, no `@pytest.mark.asyncio` needed. No linter is configured.
+
+## Architecture
+
+Two layers that meet only through the async event stream and the `Engine`
+facade:
+
+- **`crew/engine/`** — asyncio, **zero Qt**. Enforced by
+  `tests/engine/test_no_qt_in_engine.py`, which imports the engine with Qt
+  poisoned; importing PySide6 anywhere under `crew/engine/` breaks the suite.
+- **`crew/app/`** — PySide6 widgets, a pure projection of engine events plus
+  reads from the store. Main loop is qasync (`crew/main.py`), so dialogs can
+  `asyncio.ensure_future` freely.
+
+Flow: UI calls `Engine` (facade.py) → `Runner` (runner.py) streams provider
+events, executes tools, persists to `Store` (SQLite WAL via aiosqlite) → emits
+dataclass events on `EventBus` (events.py) → `MainWindow._event_loop`
+projects them into widgets. When touching the boundary, add/extend an event —
+never import app code from the engine.
+
+### Providers
+
+Model strings are always `"provider/model-id"`. Resolution
+(`providers/registry.py`): explicit `config.provider` entry, else the recipe
+in `providers/known.py` (`KNOWN_PROVIDERS` — the single source of truth for
+supported services, curated model lists, auth kind). API keys resolve config
+key/env first, then `~/.crew/auth.json` (AuthStore — secrets never go in
+config files). OAuth records route specially: `xai` → loopback flow
+(`xai_oauth.py`), `github-copilot` → device-code flow
+(`github_copilot_oauth.py`). Wire protocols are just two: `anthropic` or
+`openai` (openai_compat covers every other service via `base_url`).
+`catalog.py` holds per-model cost/limits — add entries when adding models so
+cost tracking works.
+
+### Config
+
+Two JSON-with-comments layers, project wins per key: `~/.crew/config.json`
+(overridable via `CREW_HOME` env — tests rely on this) and
+`<project>/.crew/config.json`. Programmatic writes must go through
+`patch_config_file(path, {"dotted.key": value})` (config.py) — it patches
+spans in place preserving user comments/formatting; `DELETE` sentinel removes
+a key. Never rewrite config files wholesale.
+
+### Agents
+
+`agents.py` builtins (prompts live in `assets/prompts/agent_*.txt`) ←
+overridden by `agent/*.md` files (global then project `.crew/agent/`) ←
+`config.agent.<name>` overrides on top. Hot-reloaded by a watchfiles task in
+main_window. The GUI agent editor writes config overrides for builtins but
+`.md` files for custom agents.
+
+### Crew stage / sprites
+
+`sprites.look_for(name)` maps agent names to a stable (species, accent) —
+known types have fixed looks, custom names hash. `crew_stage.StageState` is
+deliberately Qt-free-logic so it unit-tests headless; keep new stage state
+there, not in the widget.
+
+## Testing conventions
+
+- Engine tests use `FakeProvider` (`providers/fake.py`) and `tmp_path` for
+  store/global dirs; `test_goal_e2e.py` shows the full harness pattern.
+- UI tests instantiate real widgets offscreen (`tests/app/test_ui_smoke.py`);
+  a module-scoped `qapp` fixture provides the QApplication.
+- HTTP flows are tested with `httpx.MockTransport` (see
+  `test_copilot_device_flow`).
+
+## Glossary
+
+- **Engine** — asyncio, zero-Qt core that orchestrates runs via the `Runner`.
+- **Store** — SQLite (WAL + aiosqlite) persistence layer for runs, messages, etc.
+- **EventBus** — dataclass event stream emitted by the engine and consumed by the UI.
+- **Provider** — model backend abstraction (`anthropic`/`openai` wire protocols).
+- **Agent** — named prompt persona; can be builtin, `.md` file, or config override.
+- **Stage** — headless `StageState` that manages on-screen sprite placement/logic.
+- **Sprite** — pixel-art critter chosen by `sprites.look_for(name)` for an agent.
+- **Config** — two-layer JSON-with-comments (`~/.crew` then project `.crew`).

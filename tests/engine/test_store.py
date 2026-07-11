@@ -66,3 +66,29 @@ async def test_update_session_title(store, tmp_path):
     await store.update_session(sess.id, title="My session")
     got = await store.get_session(sess.id)
     assert got.title == "My session"
+
+
+async def test_archive_session_hides_from_list(store, tmp_path):
+    proj = await store.open_project(str(tmp_path))
+    sess = await store.create_session(proj.id)
+    await store.update_session(sess.id, archived=1)
+    assert sess.id not in [s.id for s in await store.list_sessions(proj.id)]
+    # still retrievable directly
+    got = await store.get_session(sess.id)
+    assert got is not None and got.archived
+
+
+async def test_delete_session_cascades(store, tmp_path):
+    proj = await store.open_project(str(tmp_path))
+    parent = await store.create_session(proj.id)
+    child = await store.create_session(proj.id, parent_session_id=parent.id)
+    msg = await store.add_message(parent.id, "user")
+    await store.add_part(msg.id, "text", {"text": "hi"})
+    await store.set_todos(parent.id, [Todo("a")])
+
+    await store.delete_session(parent.id)
+
+    assert await store.get_session(parent.id) is None
+    assert await store.get_session(child.id) is None
+    assert await store.list_messages(parent.id) == []
+    assert await store.get_todos(parent.id) == []

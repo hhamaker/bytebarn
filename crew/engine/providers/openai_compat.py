@@ -62,9 +62,12 @@ class OpenAICompatProvider:
         api_key: str | None = None,
         base_url: str | None = None,
         client: Any = None,
+        headers: dict[str, str] | None = None,
     ):
         self.name = name
-        self._client = client or openai.AsyncOpenAI(api_key=api_key or "not-needed", base_url=base_url)
+        self._client = client or openai.AsyncOpenAI(
+            api_key=api_key or "not-needed", base_url=base_url, default_headers=headers
+        )
 
     async def stream(self, req: ModelRequest) -> AsyncIterator[Event]:
         kwargs: dict[str, Any] = dict(

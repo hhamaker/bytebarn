@@ -10,6 +10,7 @@ import qasync
 from PySide6.QtWidgets import QApplication, QFileDialog
 
 from .app.main_window import MainWindow
+from .app.theme import apply_theme
 from .engine.facade import Engine
 
 
@@ -29,6 +30,7 @@ def main() -> None:
     asyncio.set_event_loop(loop)
 
     engine = Engine(project_dir)
+    apply_theme(app, (engine.config.model_extra or {}).get("theme", "follow system"))
     window = MainWindow(engine)
 
     async def bootstrap() -> None:

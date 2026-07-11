@@ -13,7 +13,7 @@ from __future__ import annotations
 import hashlib
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QPainter
+from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 
 SPRITE_W = 12
 SPRITE_H = 11
@@ -77,10 +77,77 @@ _BEAR = [
 SPECIES = ["cat", "dog", "bunny", "bear"]
 _GRIDS = {"cat": _CAT, "dog": _DOG, "bunny": _BUNNY, "bear": _BEAR}
 
+# small overlays drawn after the base sprite + eyes
+ACCENTS = ["none", "glasses", "goggles", "hat", "scarf", "bow"]
+
+# known agent types -> distinct species + accent; same type always same look
+_LOOK_BY_TYPE: dict[str, tuple[str, str]] = {
+    "explore": ("bunny", "none"),
+    "general": ("dog", "none"),
+    "tester": ("cat", "goggles"),
+    "test": ("cat", "goggles"),
+    "reviewer": ("bear", "glasses"),
+    "review": ("bear", "glasses"),
+    "orchestrator": ("bear", "hat"),
+    "worker": ("dog", "scarf"),
+    "decomposer": ("bear", "hat"),
+    "planner": ("dog", "hat"),
+    "plan": ("dog", "hat"),
+    "verifier": ("cat", "glasses"),
+    "researcher": ("bunny", "glasses"),
+    "research": ("bunny", "glasses"),
+    "ui-design": ("cat", "bow"),
+    "ui": ("cat", "bow"),
+    "hub": ("bear", "none"),
+    "build": ("dog", "scarf"),
+}
+
+_SUBSTRING_LOOKS = [
+    ("test", "tester"),
+    ("review", "reviewer"),
+    ("explor", "explore"),
+    ("research", "researcher"),
+    ("verif", "verifier"),
+    ("decompos", "decomposer"),
+    ("plan", "planner"),
+    ("orchestr", "orchestrator"),
+    ("design", "ui-design"),
+    ("ui", "ui-design"),
+    ("work", "worker"),
+    ("general", "general"),
+]
+
+_ACCENT_FALLBACK = ["none", "glasses", "hat", "scarf", "bow"]
+
 
 def species_for(agent_name: str) -> str:
-    digest = hashlib.md5(agent_name.encode()).digest()
-    return SPECIES[digest[0] % len(SPECIES)]
+    return look_for(agent_name)[0]
+
+
+def look_for(agent_name: str) -> tuple[str, str]:
+    """Stable (species, accent) for an agent name; known types get fixed looks."""
+    key = agent_name.strip().lower()
+    exact = _LOOK_BY_TYPE.get(key)
+    if exact:
+        return exact
+    for needle, alias in _SUBSTRING_LOOKS:
+        if needle in key:
+            return _LOOK_BY_TYPE[alias]
+    # custom agents: stable species + accent from name hash
+    digest = hashlib.md5(key.encode()).digest()
+    return (
+        SPECIES[digest[0] % len(SPECIES)],
+        _ACCENT_FALLBACK[digest[1] % len(_ACCENT_FALLBACK)],
+    )
+
+
+def _mix(a: QColor, b: QColor, t: float) -> QColor:
+    return QColor(
+        round(a.red() + (b.red() - a.red()) * t),
+        round(a.green() + (b.green() - a.green()) * t),
+        round(a.blue() + (b.blue() - a.blue()) * t),
+        a.alpha(),
+    )
 
 
 def _tint(color: QColor, state: str) -> QColor:
@@ -104,6 +171,7 @@ def draw_critter(
     state: str = "working",   # working | retrying | done | waiting
     frame: int = 0,
     crowned: bool = False,
+    accent: str = "none",     # none | glasses | goggles | hat | scarf | bow
 ) -> None:
     """Draw one critter with its top-left logical origin at (x, y)."""
     painter.save()
@@ -151,6 +219,10 @@ def draw_critter(
             px(2, eye_y - 2, brow), px(3, eye_y - 2, brow)
             px(8, eye_y - 2, brow), px(9, eye_y - 2, brow)
 
+    # type-specific accents (after eyes so frames sit on top)
+    _draw_accent(px, accent if not (crowned and accent == "hat") else "none",
+                 body, eye_y, state)
+
     if crowned:
         gold = QColor(240, 200, 60)
         for cx in (3, 5, 7):
@@ -166,3 +238,77 @@ def draw_critter(
         if phase > 0:
             px(11, 0, z)
     painter.restore()
+
+
+def critter_pixmap(agent_name: str, color: str | QColor, scale: int = 4) -> QPixmap:
+    """Standalone critter portrait (icons, previews)."""
+    image = QImage((SPRITE_W + 2) * scale, (SPRITE_H + 3) * scale, QImage.Format_ARGB32)
+    image.fill(0)
+    painter = QPainter(image)
+    species, accent = look_for(agent_name)
+    draw_critter(painter, scale, 3 * scale, scale, species,
+                 QColor(color) if isinstance(color, str) else color,
+                 state="done", accent=accent)
+    painter.end()
+    return QPixmap.fromImage(image)
+
+
+_INK = QColor(38, 36, 48)
+_PINK = QColor(255, 158, 180)
+_WHITE = QColor(250, 250, 250)
+
+
+def _draw_accent(px, accent: str, body: QColor, eye_y: int, state: str) -> None:
+    """Overlay accessory pixels; px(cx, cy, color) plots one logical pixel."""
+    if accent == "none":
+        return
+    alpha = 140 if state == "waiting" else 255
+
+    def a(c: QColor) -> QColor:
+        c = QColor(c)
+        c.setAlpha(alpha)
+        return c
+
+    if accent in ("glasses", "goggles"):
+        frame_c = a(_INK)
+        bridge = a(_mix(_INK, _WHITE, 0.15))
+        for ex in (3, 7):
+            px(ex - 1, eye_y, frame_c)
+            px(ex + 2, eye_y, frame_c)
+            px(ex - 1, eye_y + 1, frame_c)
+            px(ex + 2, eye_y + 1, frame_c)
+            if accent == "goggles":
+                for gx in range(ex - 1, ex + 3):
+                    px(gx, eye_y - 1, frame_c)
+        px(5, eye_y, bridge)
+        px(6, eye_y, bridge)
+        return
+
+    if accent == "hat":
+        brim = a(_mix(body, _INK, 0.55))
+        top = a(_mix(body, _INK, 0.35))
+        for cx in range(2, 10):
+            px(cx, -1, brim)
+        for cx in range(4, 8):
+            px(cx, -2, top)
+        return
+
+    if accent == "scarf":
+        cloth = a(_mix(body, _PINK, 0.45))
+        knot = a(_mix(_PINK, _INK, 0.2))
+        for cx in range(3, 9):
+            px(cx, 8, cloth)
+        px(4, 9, cloth)
+        px(5, 9, knot)
+        px(6, 10, cloth)
+        return
+
+    if accent == "bow":
+        ribbon = a(_mix(_PINK, body, 0.25))
+        shine = a(_mix(_PINK, _WHITE, 0.3))
+        px(5, 1, ribbon)
+        px(6, 1, ribbon)
+        px(4, 2, ribbon)
+        px(7, 2, ribbon)
+        px(5, 2, shine)
+        px(6, 2, shine)

@@ -19,9 +19,12 @@ def _highlight_code(code: str, lang: str, _attrs) -> str:
     except ClassNotFound:
         lexer = TextLexer()
     highlighted = highlight(code, lexer, _formatter)
+    # explicit monokai fg via <font> (Qt rich text ignores css color on <pre>):
+    # plain tokens otherwise inherit the theme text color, which is
+    # near-black on light themes -> unreadable on the dark bg
     return (
         '<pre style="background-color:#282828; padding:8px; border-radius:4px;">'
-        f"<code>{highlighted}</code></pre>"
+        f'<font color="#f8f8f2"><code>{highlighted}</code></font></pre>'
     )
 
 
