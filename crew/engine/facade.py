@@ -51,16 +51,19 @@ class Engine:
     # -- lifecycle -----------------------------------------------------------
 
     async def start(self) -> None:
+        """Open the store and register the project (call once before use)."""
         await self.store.open()
         self.project = await self.store.open_project(str(self.project_dir))
 
     async def stop(self) -> None:
+        """Cancel all running sessions and close the store."""
         for handle in self._runs.values():
             if handle.task and not handle.task.done():
                 handle.task.cancel()
         await self.store.close()
 
     def reload_config(self) -> None:
+        """Re-read config layers and rebuild providers/agents/commands."""
         self.config = load_config(self.project_dir, self.global_dir)
         self.providers = ProviderRegistry(self.config, self.global_dir)
         self.agents = AgentRegistry(self.config, self.project_dir, self.global_dir)
@@ -69,6 +72,7 @@ class Engine:
     # -- sessions ------------------------------------------------------------
 
     async def new_session(self, agent: str = "build", model: str = "") -> Session:
+        """Create a session in the current project and announce it."""
         session = await self.store.create_session(self.project.id, agent=agent, model=model)
         self.bus.emit(SessionUpdated(session_id=session.id))
         return session
@@ -100,9 +104,11 @@ class Engine:
         return comparable_model(model, self.config, self.providers.auth, exclude)
 
     def files_read(self, session_id: str) -> set[str]:
+        """Paths the session has read (gates edit-before-read, spec §5.4)."""
         return self._files_read.setdefault(session_id, set())
 
     def is_running(self, session_id: str) -> bool:
+        """True while the session has an active run task."""
         handle = self._runs.get(session_id)
         return bool(handle and handle.task and not handle.task.done())
 
@@ -171,6 +177,7 @@ class Engine:
         self._start_run(session)
 
     async def abort(self, session_id: str) -> None:
+        """Stop a session's run (and its children), dropping queued prompts."""
         handle = self._runs.get(session_id)
         if handle:
             handle.queued.clear()
@@ -182,6 +189,7 @@ class Engine:
             await self.abort(child.id)
 
     async def compact(self, session_id: str) -> None:
+        """Summarize old history into a compaction part to free context."""
         from .compaction import compact_session
 
         session = await self.store.get_session(session_id)
@@ -190,6 +198,7 @@ class Engine:
     # -- permissions & questions ----------------------------------------------
 
     def policy_for(self, agent: AgentDef) -> PermissionPolicy:
+        """Effective permission policy: config + agent overrides + session mode."""
         return PermissionPolicy(
             self.config.permission, agent.permission, session_mode=self.session_mode
         )
@@ -197,6 +206,8 @@ class Engine:
     async def ask_permission(
         self, session_id: str, tool: str, arg: str, input: dict, policy: PermissionPolicy
     ) -> str:
+        """Emit permission.asked and await the user's verdict; "allow_always"
+        persists the pattern to project config and collapses to "allow"."""
         request_id = uuid.uuid4().hex
         future: asyncio.Future = asyncio.get_event_loop().create_future()
         self._pending[request_id] = future
@@ -218,11 +229,13 @@ class Engine:
         return answer  # "allow" | "deny"
 
     def answer_permission(self, request_id: str, answer: str) -> None:
+        """Resolve a pending permission.asked event ("allow"/"allow_always"/"deny")."""
         future = self._pending.pop(request_id, None)
         if future and not future.done():
             future.set_result(answer)
 
     async def ask_question(self, session_id: str, question: str, options: list[str]) -> str:
+        """Emit question.asked and await the user's chosen/typed answer."""
         request_id = uuid.uuid4().hex
         future: asyncio.Future = asyncio.get_event_loop().create_future()
         self._pending[request_id] = future
@@ -232,6 +245,7 @@ class Engine:
         return await future
 
     def answer_question(self, request_id: str, answer: str) -> None:
+        """Resolve a pending question.asked event with the user's answer."""
         future = self._pending.pop(request_id, None)
         if future and not future.done():
             future.set_result(answer)
@@ -241,6 +255,8 @@ class Engine:
     async def run_subagent(
         self, parent: Session, agent: str, prompt: str, description: str, task_id: str | None
     ) -> str:
+        """Run a task-tool delegation in a child session and return its final
+        text (task.started/finished events drive the crew stage)."""
         agent_def = self.agents.get(agent)  # raises KeyError for unknown agents
         if task_id:
             child = await self.store.get_session(task_id)

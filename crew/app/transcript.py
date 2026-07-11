@@ -251,11 +251,33 @@ class Transcript(QScrollArea):
         elif part_type == "compaction":
             widget = CompactionCard(data.get("text", ""))
         elif part_type == "file":
-            widget = TextBlock(f"📎 {data.get('path', '')}", user=role == "user")
+            widget = self._file_widget(data.get("path", ""), user=role == "user")
         if widget is None:
             return
         self._part_widgets[part_id] = widget
         self._layout.addWidget(widget)
+
+    _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
+
+    def _file_widget(self, path: str, user: bool) -> QWidget:
+        """Attachment part: inline thumbnail for images, 📎 line otherwise."""
+        from pathlib import Path as _Path
+
+        from PySide6.QtGui import QPixmap
+
+        p = _Path(path)
+        if p.suffix.lower() in self._IMAGE_SUFFIXES and p.is_file():
+            pixmap = QPixmap(str(p))
+            if not pixmap.isNull():
+                if pixmap.width() > 420:
+                    pixmap = pixmap.scaledToWidth(420, Qt.SmoothTransformation)
+                label = QLabel()
+                label.setPixmap(pixmap)
+                label.setToolTip(path)
+                label.setStyleSheet(
+                    "QLabel { border: 1px solid #3a3f4b; border-radius: 6px; padding: 4px; }")
+                return label
+        return TextBlock(f"📎 {path}", user=user)
 
     def _maybe_open(self, card: ToolCard) -> None:
         if card._subagent_id:

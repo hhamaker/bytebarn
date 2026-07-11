@@ -1,10 +1,98 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200">
-  <rect x="20" y="20" width="100" height="50" fill="#e0f2fe" stroke="#0369a1"/>
-  <text x="70" y="50" text-anchor="middle">Engine</text>
-  <rect x="150" y="20" width="100" height="50" fill="#fef3c7" stroke="#d97706"/>
-  <text x="200" y="50" text-anchor="middle">EventBus</text>
-  <rect x="280" y="20" width="100" height="50" fill="#dcfce7" stroke="#16a34a"/>
-  <text x="330" y="50" text-anchor="middle">UI</text>
-  <line x1="120" y1="45" x2="150" y2="45" stroke="#666"/>
-  <line x1="250" y1="45" x2="280" y2="45" stroke="#666"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="480" font-family="Menlo, monospace" font-size="13">
+  <style>
+    .box { fill: #21252b; stroke: #3a3f4b; rx: 8; }
+    .inner { fill: #2c313c; stroke: #3a3f4b; rx: 6; }
+    .t { fill: #c8ccd4; }
+    .muted { fill: #8f96a3; font-size: 11px; }
+    .accent { fill: #61afef; }
+    .arrow { stroke: #8f96a3; stroke-width: 1.5; fill: none; marker-end: url(#a); }
+  </style>
+  <defs>
+    <marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#8f96a3"/>
+    </marker>
+  </defs>
+  <rect width="860" height="480" fill="#1d2026"/>
+
+  <!-- UI layer -->
+  <rect class="box" x="20" y="20" width="820" height="130"/>
+  <text class="accent" x="36" y="44" font-weight="bold">crew/app — PySide6 (Qt), pure projection of events + DB reads</text>
+  <rect class="inner" x="36" y="58" width="150" height="72"/>
+  <text class="t" x="48" y="82">MainWindow</text>
+  <text class="muted" x="48" y="100">session list, header</text>
+  <text class="muted" x="48" y="116">status bar</text>
+  <rect class="inner" x="200" y="58" width="140" height="72"/>
+  <text class="t" x="212" y="82">Transcript</text>
+  <text class="muted" x="212" y="100">markdown, tool</text>
+  <text class="muted" x="212" y="116">cards, welcome</text>
+  <rect class="inner" x="354" y="58" width="140" height="72"/>
+  <text class="t" x="366" y="82">CrewStage</text>
+  <text class="muted" x="366" y="100">pixel critters,</text>
+  <text class="muted" x="366" y="116">status headline</text>
+  <rect class="inner" x="508" y="58" width="150" height="72"/>
+  <text class="t" x="520" y="82">PromptBar</text>
+  <text class="muted" x="520" y="100">provider→model</text>
+  <text class="muted" x="520" y="116">pickers, /commands</text>
+  <rect class="inner" x="672" y="58" width="152" height="72"/>
+  <text class="t" x="684" y="82">Dialogs</text>
+  <text class="muted" x="684" y="100">providers, agents,</text>
+  <text class="muted" x="684" y="116">permission, settings</text>
+
+  <!-- boundary -->
+  <path class="arrow" d="M330,150 L330,200"/>
+  <text class="muted" x="342" y="180">async EngineEvent stream (events.py)</text>
+  <path class="arrow" d="M540,200 L540,150"/>
+  <text class="muted" x="552" y="180">Engine facade calls (facade.py)</text>
+
+  <!-- Engine layer -->
+  <rect class="box" x="20" y="200" width="820" height="260"/>
+  <text class="accent" x="36" y="224" font-weight="bold">crew/engine — asyncio, zero Qt (enforced by test)</text>
+
+  <rect class="inner" x="36" y="240" width="180" height="90"/>
+  <text class="t" x="48" y="264">Engine (facade)</text>
+  <text class="muted" x="48" y="282">sessions, prompts,</text>
+  <text class="muted" x="48" y="298">permissions, subagents,</text>
+  <text class="muted" x="48" y="314">model fallback</text>
+
+  <rect class="inner" x="232" y="240" width="170" height="90"/>
+  <text class="t" x="244" y="264">Runner</text>
+  <text class="muted" x="244" y="282">agent loop: stream,</text>
+  <text class="muted" x="244" y="298">execute tools, retry,</text>
+  <text class="muted" x="244" y="314">compaction</text>
+
+  <rect class="inner" x="418" y="240" width="200" height="90"/>
+  <text class="t" x="430" y="264">Providers</text>
+  <text class="muted" x="430" y="282">registry · known catalog</text>
+  <text class="muted" x="430" y="298">anthropic / openai-compat</text>
+  <text class="muted" x="430" y="314">OAuth (xai, copilot, claude)</text>
+
+  <rect class="inner" x="634" y="240" width="190" height="90"/>
+  <text class="t" x="646" y="264">Tools</text>
+  <text class="muted" x="646" y="282">bash read write edit</text>
+  <text class="muted" x="646" y="298">glob grep webfetch</text>
+  <text class="muted" x="646" y="314">todowrite question task</text>
+
+  <rect class="inner" x="36" y="348" width="180" height="90"/>
+  <text class="t" x="48" y="372">Store</text>
+  <text class="muted" x="48" y="390">SQLite WAL (aiosqlite)</text>
+  <text class="muted" x="48" y="406">sessions, messages,</text>
+  <text class="muted" x="48" y="422">parts, todos</text>
+
+  <rect class="inner" x="232" y="348" width="170" height="90"/>
+  <text class="t" x="244" y="372">AgentRegistry</text>
+  <text class="muted" x="244" y="390">builtins ← agent/*.md</text>
+  <text class="muted" x="244" y="406">← config overrides</text>
+  <text class="muted" x="244" y="422">(hot-reloaded)</text>
+
+  <rect class="inner" x="418" y="348" width="200" height="90"/>
+  <text class="t" x="430" y="372">Config + AuthStore</text>
+  <text class="muted" x="430" y="390">~/.crew + project .crew,</text>
+  <text class="muted" x="430" y="406">format-preserving patcher;</text>
+  <text class="muted" x="430" y="422">secrets in auth.json (0600)</text>
+
+  <rect class="inner" x="634" y="348" width="190" height="90"/>
+  <text class="t" x="646" y="372">EventBus</text>
+  <text class="muted" x="646" y="390">fan-out asyncio queues</text>
+  <text class="muted" x="646" y="406">→ every subscriber gets</text>
+  <text class="muted" x="646" y="422">every event</text>
 </svg>

@@ -172,3 +172,23 @@ def test_prompt_bar_two_stage_picker(qapp):
     bar.set_providers([], "")
     bar.set_models([], "")
     assert bar.current_model() == ""
+
+
+def test_transcript_image_attachment_preview(qapp, tmp_path):
+    from PySide6.QtGui import QImage
+    from PySide6.QtWidgets import QLabel
+
+    from crew.app.transcript import TextBlock, Transcript
+
+    img = tmp_path / "shot.png"
+    QImage(600, 300, QImage.Format_ARGB32).save(str(img))
+
+    t = Transcript()
+    t.on_part_updated("f1", "file", {"path": str(img)}, role="user")
+    widget = t._part_widgets["f1"]
+    assert isinstance(widget, QLabel) and widget.pixmap() is not None
+    assert widget.pixmap().width() <= 420  # scaled down
+
+    # non-image attachments keep the paperclip line
+    t.on_part_updated("f2", "file", {"path": str(tmp_path / "notes.txt")}, role="user")
+    assert isinstance(t._part_widgets["f2"], TextBlock)

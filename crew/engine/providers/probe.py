@@ -90,6 +90,13 @@ async def probe_provider(name: str, config: Config, auth: AuthStore) -> tuple[bo
     return False, f"HTTP {response.status_code}: {response.text[:120]}"
 
 
+import re
+
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I
+)
+
+
 def _parse_model_ids(data) -> list[str]:
     items = data.get("data") or data.get("models") or data.get("result") or []
     ids: list[str] = []
@@ -97,9 +104,15 @@ def _parse_model_ids(data) -> list[str]:
         if isinstance(item, str):
             ids.append(item)
         elif isinstance(item, dict):
-            model_id = item.get("id") or item.get("name")
-            if isinstance(model_id, str):
-                ids.append(model_id)
+            model_id = item.get("id")
+            name = item.get("name")
+            # Cloudflare-style listings: "id" is an opaque UUID, "name" is the
+            # callable model path (@cf/...) — the name is what users need
+            if isinstance(model_id, str) and _UUID_RE.match(model_id):
+                model_id = None
+            chosen = model_id or name
+            if isinstance(chosen, str):
+                ids.append(chosen)
     return ids
 
 

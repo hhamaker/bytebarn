@@ -417,7 +417,11 @@ async def test_fetch_models_parses_provider_shapes(tmp_path, monkeypatch):
         if "groq" in url:
             return httpx.Response(200, json={"data": [{"id": "m2"}, {"id": "m1"}]})
         if "cloudflare" in url:
-            return httpx.Response(200, json={"result": [{"name": "@cf/x"}, {"name": "@cf/a"}]})
+            # real CF shape: opaque UUID id + human-usable name
+            return httpx.Response(200, json={"result": [
+                {"id": "01564c52-8717-47dc-8efd-907a2ca18301", "name": "@cf/x"},
+                {"id": "01bc2fb0-4bca-4598-b985-d2584a3f46c0", "name": "@cf/a"},
+            ]})
         if "11434" in url:
             return httpx.Response(200, json={"data": [{"id": "qwen3:30b"}]})
         return httpx.Response(500)

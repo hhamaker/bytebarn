@@ -172,5 +172,5 @@ Launching from the Dock opens a project-picker dialog.
 
 ## Known gaps (v1)
 
-- `@file` completion inserts the path; image attachment parts are stored but
-  not previewed in the transcript.
+None currently tracked — see `docs/idea-backlog.md` for the improvement
+idea pool.

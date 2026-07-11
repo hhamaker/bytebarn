@@ -100,6 +100,7 @@ _LOOK_BY_TYPE: dict[str, tuple[str, str]] = {
     "ui": ("cat", "bow"),
     "hub": ("bear", "none"),
     "build": ("dog", "scarf"),
+    "chat": ("bunny", "bow"),
 }
 
 _SUBSTRING_LOOKS = [

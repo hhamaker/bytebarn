@@ -68,6 +68,12 @@ def builtin_agents() -> dict[str, AgentDef]:
             description="Default coding agent with full tool access",
             prompt=_prompt("build"), color="#61afef",
         ),
+        "chat": AgentDef(
+            name="chat", mode="primary", builtin=True,
+            description="Plain conversation — no tools, no file access, just talk",
+            prompt=_prompt("chat"), color="#d19a66",
+            tools={},  # empty map = every tool disabled
+        ),
         "plan": AgentDef(
             name="plan", mode="primary", builtin=True,
             description="Read-only planning agent; produces implementation plans",

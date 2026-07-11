@@ -1,3 +1,14 @@
+> **Status (2026-07-10):** brainstorm backlog, not a commitment list.
+> Completed so far — Documentation #1,3,4,5,6,7,8,9,10 (docs/events.md,
+> architecture.svg, facade docstrings, CLAUDE.md glossary, CONTRIBUTING.md,
+> TROUBLESHOOTING.md, PR template, README config examples); Onboarding
+> #12,13,14,15,17,20 (first-run wizard with sample prompts, persisted skip,
+> welcome-critter screen); plus, from earlier work: themed light/dark UI,
+> readable error dialogs with provider names, provider manager with web
+> login, model fallback, session close/delete, live model pickers, crew
+> stage status visuals, app packaging. Remaining ~4,950 items: pick
+> deliberately, not sequentially.
+
 # Documentation
 
 1. Add a one-paragraph "What is Crew?" summary to the top of README.md.

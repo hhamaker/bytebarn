@@ -104,3 +104,17 @@ there, not in the widget.
 - **Stage** — headless `StageState` that manages on-screen sprite placement/logic.
 - **Sprite** — pixel-art critter chosen by `sprites.look_for(name)` for an agent.
 - **Config** — two-layer JSON-with-comments (`~/.crew` then project `.crew`).
+
+## Glossary
+
+- **crew / critters** — the pixel-art sprites on the crew stage; one per active subagent, species+accessory derived from the agent name (`sprites.look_for`).
+- **orchestrator** — built-in agent that plans a goal and delegates via the task tool; shown as "goal" in the UI agent picker (the crowned critter).
+- **crew stage** — the animated panel projecting `task.*` / `todo.updated` events (`crew_stage.StageState`).
+- **part** — one unit of transcript content (text, reasoning, tool call, task, compaction, file); messages are ordered lists of parts.
+- **compaction** — summarizing old history into a synthetic part when context nears the model's window (`compaction.py`).
+- **provider / model string** — always `"provider/model-id"`; resolution order in `providers/registry.py`.
+- **known provider** — an entry in `providers/known.py` with connection recipe + curated models; drives the ⚡ providers GUI.
+- **auth record** — per-provider credential in `~/.crew/auth.json`: `{"type": "api"|"oauth", ...}`.
+- **model fallback** — automatic switch to a comparable connected model after repeated failures (`providers/fallback.py`).
+- **permission mode** — session-wide Safe / Ask / Full-auto toggle layered under per-tool config rules (`permissions.py`).
+- **subagent session** — child session created by the task tool; `parent_session_id` set, shown nested in the sidebar.

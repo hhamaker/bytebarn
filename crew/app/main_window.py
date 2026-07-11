@@ -166,6 +166,24 @@ class MainWindow(QMainWindow):
             asyncio.ensure_future(self._event_loop()),
             asyncio.ensure_future(self._watch_files()),
         ]
+        self._maybe_first_run()
+
+    def _maybe_first_run(self) -> None:
+        """One-time welcome wizard; "onboarded" flag persists the choice."""
+        if (self.engine.config.model_extra or {}).get("onboarded"):
+            return
+        from PySide6.QtWidgets import QApplication
+
+        if QApplication.instance().platformName() == "offscreen":
+            return  # headless tests/scripts: never block on a modal
+        from ..engine.config import patch_config_file
+        from .first_run_wizard import FirstRunWizard
+
+        wizard = FirstRunWizard(self)
+        wizard.prompt_picked.connect(self.prompt_bar.editor.setPlainText)
+        wizard.exec()
+        patch_config_file(self.engine.global_dir / "config.json", {"onboarded": True})
+        self.engine.reload_config()
 
     def closeEvent(self, event) -> None:
         """Window closed = application exits: stop the engine (aborts runs,
