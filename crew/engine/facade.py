@@ -14,6 +14,7 @@ from .events import (
     EventBus,
     PermissionAsked,
     QuestionAsked,
+    QueueUpdated,
     SessionUpdated,
     TaskFinished,
     TaskStarted,
@@ -47,6 +48,7 @@ class Engine:
         self._runs: dict[str, RunHandle] = {}
         self._files_read: dict[str, set[str]] = {}
         self._pending: dict[str, asyncio.Future] = {}  # permission/question futures
+        self._pending_permissions: set[str] = set()
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -112,6 +114,10 @@ class Engine:
         handle = self._runs.get(session_id)
         return bool(handle and handle.task and not handle.task.done())
 
+    def queue_depth(self, session_id: str) -> int:
+        handle = self._runs.get(session_id)
+        return len(handle.queued) if handle else 0
+
     # -- prompts -------------------------------------------------------------
 
     async def submit_prompt(
@@ -136,6 +142,7 @@ class Engine:
 
         if self.is_running(session_id):
             self._runs[session_id].queued.append(rendered)
+            self.bus.emit(QueueUpdated(session_id=session_id, depth=len(self._runs[session_id].queued)))
             return
 
         message = await self.store.add_message(session_id, "user")
@@ -170,6 +177,7 @@ class Engine:
         if not handle or not handle.queued:
             return
         text = handle.queued.pop(0)
+        self.bus.emit(QueueUpdated(session_id=session_id, depth=len(handle.queued)))
         session = await self.store.get_session(session_id)
         message = await self.store.add_message(session_id, "user")
         await self.store.add_part(message.id, "text", {"text": text})
@@ -181,6 +189,7 @@ class Engine:
         handle = self._runs.get(session_id)
         if handle:
             handle.queued.clear()
+            self.bus.emit(QueueUpdated(session_id=session_id, depth=0))
             handle.abort.set()
             if handle.task and not handle.task.done():
                 handle.task.cancel()
@@ -198,10 +207,24 @@ class Engine:
     # -- permissions & questions ----------------------------------------------
 
     def policy_for(self, agent: AgentDef) -> PermissionPolicy:
-        """Effective permission policy: config + agent overrides + session mode."""
+        """Effective permission policy: config + agent overrides + session mode.
+
+        The mode is read live so switching to Full-auto mid-run applies to
+        tool calls of runs that started earlier."""
         return PermissionPolicy(
-            self.config.permission, agent.permission, session_mode=self.session_mode
+            self.config.permission, agent.permission,
+            session_mode=lambda: self.session_mode,
         )
+
+    def set_session_mode(self, mode: str) -> None:
+        """Change the session permission mode; Full-auto also releases every
+        permission prompt currently waiting on the user."""
+        from .permissions import FULL_AUTO
+
+        self.session_mode = mode
+        if mode == FULL_AUTO:
+            for request_id in list(self._pending_permissions):
+                self.answer_permission(request_id, "allow")
 
     async def ask_permission(
         self, session_id: str, tool: str, arg: str, input: dict, policy: PermissionPolicy
@@ -211,6 +234,7 @@ class Engine:
         request_id = uuid.uuid4().hex
         future: asyncio.Future = asyncio.get_event_loop().create_future()
         self._pending[request_id] = future
+        self._pending_permissions.add(request_id)
         self.bus.emit(PermissionAsked(
             session_id=session_id, request_id=request_id, tool=tool, arg=arg, input=input
         ))
@@ -230,6 +254,7 @@ class Engine:
 
     def answer_permission(self, request_id: str, answer: str) -> None:
         """Resolve a pending permission.asked event ("allow"/"allow_always"/"deny")."""
+        self._pending_permissions.discard(request_id)
         future = self._pending.pop(request_id, None)
         if future and not future.done():
             future.set_result(answer)

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import sys
-from pathlib import Path
+import encodings.idna  # noqa: F401 — preload: frozen apps can fail codec
+import sys             # lookup ("unknown encoding: idna") when a network
+from pathlib import Path  # thread triggers the first import
 
 import qasync
 from PySide6.QtWidgets import QApplication, QFileDialog

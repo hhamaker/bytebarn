@@ -64,7 +64,22 @@
         "python3 << 'EOF'\nimport os\nimport glob\n\nfiles = sorted(glob.glob(os.path.expanduser(\"~/.crew/tool-output/*.txt\")))\n\ncategories = [\n    \"Documentation\",\n    \"UX\", \n    \"Visual Design\",\n    \"Configuration\",\n    \"Animation\"\n]\n\nwith open(\"improvements.md\", \"w\") as out:\n    item_num = 1\n    for i, filepath in enumerate(files):\n        category = categories[i] if i < len(categories) else \"Unknown\"\n        out.write(f\"# {category}\\n\\n\")\n        with open(filepath, \"r\") as f:\n            for line in f:\n                line = line.strip()\n                if line and line[0].isdigit():\n                    parts = line.split(\". \", 1)\n                    if len(parts) == 2:\n                        text = parts[1]\n                        out.write(f\"{item_num}. {text}\\n\")\n                        item_num += 1\n        out.write(\"\\n\")\n\nprint(f\"Created improvements.md with {item_num-1} items\")\nEOF*",
         "head -100 improvements.md | tail -20*",
         "wc -l improvements.md && grep -c \"^# \" improvements.md && tail -5 improvements.md*",
-        "ls -la improvements.md*"
+        "ls -la improvements.md*",
+        "tail -30 crew/app/prompt_bar.py*",
+        "tail -30 tests/app/test_ui_smoke.py*",
+        "QT_QPA_PLATFORM=offscreen .venv/bin/pytest tests/app/test_ui_smoke.py tests/engine/test_runner.py -q*"
+      ],
+      "deny": []
+    },
+    "edit": {
+      "default": "ask",
+      "allow": [
+        "crew/engine/events.py",
+        "crew/engine/facade.py",
+        "crew/app/prompt_bar.py",
+        "crew/app/main_window.py",
+        "crew/app/transcript.py",
+        "tests/app/test_ui_smoke.py"
       ],
       "deny": []
     }

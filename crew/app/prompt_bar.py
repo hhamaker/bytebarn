@@ -9,6 +9,7 @@ from PySide6.QtGui import QFontMetrics, QKeyEvent
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
+    QLabel,
     QListWidget,
     QListWidgetItem,
     QPlainTextEdit,
@@ -100,11 +101,15 @@ class PromptBar(QWidget):
         self.send_button = QPushButton("Send")
         self.send_button.setToolTip("Enter to send · Shift+Enter for a newline · Esc to stop")
         self.send_button.clicked.connect(self._submit_or_abort)
+        self.queue_label = QLabel()
+        self.queue_label.setStyleSheet("color:#e5c07b; padding:0 6px;")
+        self.queue_label.hide()
 
         controls = QHBoxLayout()
         controls.addWidget(self.agent_combo)
         controls.addWidget(self.provider_combo)
         controls.addWidget(self.model_combo)
+        controls.addWidget(self.queue_label)
         controls.addStretch(1)
         controls.addWidget(self.send_button)
 
@@ -279,3 +284,11 @@ class PromptBar(QWidget):
         if not provider or provider.startswith("⚡") or not model_id:
             return ""
         return f"{provider}/{model_id}"
+
+    def set_queue_depth(self, depth: int) -> None:
+        if depth <= 0:
+            self.queue_label.clear()
+            self.queue_label.hide()
+        else:
+            self.queue_label.setText(f"{depth} queued · Esc drops queue")
+            self.queue_label.show()

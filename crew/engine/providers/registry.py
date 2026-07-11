@@ -93,7 +93,14 @@ class ProviderRegistry:
         else:
             from .openai_compat import OpenAICompatProvider
 
-            prov = OpenAICompatProvider(name=name, api_key=api_key, base_url=base_url)
+            headers = None
+            if "api.cloudflare.com" in (base_url or ""):
+                # Workers AI streams claim gzip but send plain bytes ->
+                # "Error -3 while decompressing data"; ask for identity
+                headers = {"Accept-Encoding": "identity"}
+            prov = OpenAICompatProvider(
+                name=name, api_key=api_key, base_url=base_url, headers=headers
+            )
         self._providers[name] = prov
         return prov
 

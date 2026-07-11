@@ -9,7 +9,7 @@ layer over global config. Session presets map to blanket policies.
 from __future__ import annotations
 
 from fnmatch import fnmatch
-from typing import Any
+from typing import Any, Callable
 
 from .config import PermissionRule, normalize_permission
 
@@ -37,14 +37,20 @@ class PermissionPolicy:
         self,
         config_permission: dict[str, Any] | None = None,
         agent_permission: dict[str, Any] | None = None,
-        session_mode: str = ASK_MODE,
+        session_mode: str | Callable[[], str] = ASK_MODE,
     ):
         merged: dict[str, Any] = dict(config_permission or {})
         merged.update(agent_permission or {})
         self.rules: dict[str, PermissionRule] = {
             tool: normalize_permission(v) for tool, v in merged.items()
         }
-        self.session_mode = session_mode
+        # a callable makes the mode *live*: policies are created when a run
+        # starts, but a Full-auto switch must apply to runs already going
+        self._session_mode = session_mode
+
+    @property
+    def session_mode(self) -> str:
+        return self._session_mode() if callable(self._session_mode) else self._session_mode
 
     def resolve(self, tool: str, arg: str = "") -> str:
         """Return "allow" | "ask" | "deny" for a tool call.

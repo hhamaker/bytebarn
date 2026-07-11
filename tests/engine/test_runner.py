@@ -418,3 +418,41 @@ async def test_model_fallback_disabled_by_config(tmp_path):
         assert calls["n"] == 1
     finally:
         await eng.stop()
+
+
+async def test_full_auto_switch_releases_pending_permission(engine):
+    import asyncio
+
+    from crew.engine.events import PermissionAsked
+    from crew.engine.permissions import FULL_AUTO
+    from crew.engine.providers.fake import FakeProvider, text_turn, tool_turn
+
+    # config in the fixture allows bash, so force ask via agent override
+    engine.config.permission["bash"] = "ask"
+    _install(engine, [tool_turn("c1", "bash", {"command": "echo hi"}), text_turn("done")])
+    events = engine.bus.queue()
+    session = await engine.new_session()
+    await engine.submit_prompt(session.id, "run echo")
+
+    # wait for the permission ask (no UI answering it)
+    request_id = None
+    for _ in range(100):
+        try:
+            event = events.get_nowait()
+        except asyncio.QueueEmpty:
+            await asyncio.sleep(0.02)
+            continue
+        if isinstance(event, PermissionAsked):
+            request_id = event.request_id
+            break
+    assert request_id is not None
+    assert engine._pending_permissions
+
+    # user flips to Full-auto -> pending ask resolves itself, run completes
+    engine.set_session_mode(FULL_AUTO)
+    assert not engine._pending_permissions
+    await engine._runs[session.id].task
+
+    history = await engine.store.session_parts(session.id)
+    tool_parts = [p for _, parts in history for p in parts if p.type == "tool"]
+    assert tool_parts and tool_parts[0].data["status"] == "done"

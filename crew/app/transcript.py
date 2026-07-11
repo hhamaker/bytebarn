@@ -64,20 +64,49 @@ class ToolCard(_Card):
         icon = _STATUS_ICON.get(status, "?")
         color = _STATUS_COLOR.get(status, "#888")
         tool = data.get("tool", "")
-        title = data.get("title") or self._summarize_input(tool, data.get("input", {}))
-        self.header.setText(f"{icon} {tool}  {title[:90]}")
+        inp = data.get("input", {}) or {}
+        title = data.get("title") or self._summarize_input(tool, inp)
+        if tool == "task" and inp.get("agent"):
+            title = f"{inp['agent']} — {title}"
+        self._subagent_id = data.get("subagent_session_id", "") or self._subagent_id
+        header = f"{icon} {tool}  {title[:90]}"
+        if self._subagent_id:
+            header += "  ↗ open"
+        self.header.setText(header)
+        self.header.setToolTip("Open subagent session" if self._subagent_id else "")
         self.header.setStyleSheet(
             f"QPushButton {{ border: none; text-align: left; padding: 2px; color: {color}; }}"
         )
         self.set_accent(color)
-        input_html = escape(str(data.get("input", "")))[:2000]
-        output = data.get("output", "")
+        input_html = self._pretty_input(tool, inp)[:2000]
+        output = data.get("output", "") or ""
+        truncated = len(output) >= 4000
         output_html = escape(output[:4000]) if output else "<i>(no output yet)</i>"
+        if truncated:
+            output_html += "\n… (truncated)"
+        out_style = "color:#e06c75" if status == "error" else ""
         self.body.setText(
             f"<div style='color:#aaa'><b>input:</b> {input_html}</div>"
-            f"<div style='white-space:pre-wrap; font-family:monospace; font-size:12px'>{output_html}</div>"
+            f"<div style='white-space:pre-wrap; font-family:monospace; font-size:12px; {out_style}'>{output_html}</div>"
         )
-        self._subagent_id = data.get("subagent_session_id", "")
+        if status == "error":
+            self.body.setVisible(True)
+            self.body.show()
+
+    @staticmethod
+    def _pretty_input(tool: str, inp: dict) -> str:
+        if tool == "bash" and "command" in inp:
+            return f"<span style='font-family:monospace'>{escape(str(inp['command']))}</span>"
+        if tool in ("read", "write", "edit", "glob") and ("path" in inp or "pattern" in inp):
+            return escape(str(inp.get("path") or inp.get("pattern")))
+        if tool == "webfetch" and "url" in inp:
+            return escape(str(inp["url"]))
+        if tool == "task":
+            return escape(f"{inp.get('agent','')} — {inp.get('description','')}".strip(" —"))
+        if tool == "question" and "question" in inp:
+            return escape(str(inp["question"]))
+        pairs = [f"{k}: {v}" for k, v in inp.items()]
+        return escape("\n".join(pairs)) if pairs else ""
 
     @staticmethod
     def _summarize_input(tool: str, input_data: dict) -> str:
@@ -106,7 +135,7 @@ class CompactionCard(_Card):
 
 
 class TextBlock(QLabel):
-    def __init__(self, text: str, user: bool):
+    def __init__(self, text: str, user: bool, queued: bool = False):
         super().__init__()
         self.setTextFormat(Qt.RichText)
         self.setWordWrap(True)
@@ -114,17 +143,18 @@ class TextBlock(QLabel):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         self._user = user
         if user:
-            self.setStyleSheet(
-                "QLabel { background-color: #2c313c; color: #e6e6e6;"
-                " border-radius: 6px; padding: 8px; }"
-            )
+            style = "QLabel { background-color: #2c313c; color: #e6e6e6; border-radius: 6px; padding: 8px; }"
+            if queued:
+                style = "QLabel { background-color: #2c313c; color: #e6e6e6; border-radius: 6px; padding: 8px; border: 1px dashed #e5c07b; }"
+            self.setStyleSheet(style)
         else:
             self.setStyleSheet("QLabel { padding: 4px; }")
-        self.update_text(text)
+        self.update_text(text, queued)
 
-    def update_text(self, text: str) -> None:
+    def update_text(self, text: str, queued: bool = False) -> None:
         if self._user:
-            self.setText(escape(text).replace("\n", "<br>"))
+            prefix = "<span style='color:#e5c07b'>[queued]</span> " if queued else ""
+            self.setText(prefix + escape(text).replace("\n", "<br>"))
         else:
             self.setText(render_markdown(text))
 
@@ -234,14 +264,14 @@ class Transcript(QScrollArea):
         elif isinstance(widget, TextBlock):
             widget.update_text(data.get("text", ""))
 
-    def add_user_text(self, part_id: str, text: str) -> None:
-        self._add_part("user", part_id, "text", {"text": text})
+    def add_user_text(self, part_id: str, text: str, queued: bool = False) -> None:
+        self._add_part("user", part_id, "text", {"text": text, "_queued": queued})
 
     def _add_part(self, role: str, part_id: str, part_type: str, data: dict[str, Any]) -> None:
         self._dismiss_welcome()
         widget: QWidget | None = None
         if part_type == "text":
-            widget = TextBlock(data.get("text", ""), user=role == "user")
+            widget = TextBlock(data.get("text", ""), user=role == "user", queued=bool(data.get("_queued")))
         elif part_type == "reasoning":
             widget = ReasoningCard(data.get("text", ""))
         elif part_type in ("tool", "task"):

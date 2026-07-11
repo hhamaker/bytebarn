@@ -234,6 +234,14 @@ class Runner:
                 return
             failures = 0
             if not outcome["tool_calls"]:
+                if not outcome.get("had_text"):
+                    # a 200 with no content renders as nothing — say so
+                    await self._notice(
+                        session, message.id,
+                        f"⚠ {model} returned an empty response. If this keeps"
+                        " happening, pick a different model — this one may not"
+                        " support chat completions.",
+                    )
                 await self._maybe_compact(session, outcome, info, system)
                 return
 
@@ -330,7 +338,8 @@ class Runner:
              "part_id": calls[cid]["part_id"], "data": calls[cid].get("data", {})}
             for cid in order if calls[cid].get("part_id")
         ]
-        return {"tool_calls": tool_calls, "usage": usage, "error": error, "message_id": message_id}
+        return {"tool_calls": tool_calls, "usage": usage, "error": error,
+                "message_id": message_id, "had_text": bool(text_buf.strip())}
 
     # ------------------------------------------------------------------
     async def _execute_tool_calls(self, session, tool_calls, tool_map, policy, ctx) -> None:

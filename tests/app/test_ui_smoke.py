@@ -192,3 +192,36 @@ def test_transcript_image_attachment_preview(qapp, tmp_path):
     # non-image attachments keep the paperclip line
     t.on_part_updated("f2", "file", {"path": str(tmp_path / "notes.txt")}, role="user")
     assert isinstance(t._part_widgets["f2"], TextBlock)
+
+
+def test_tool_card_autoexpands_error(qapp):
+    from crew.app.transcript import Transcript
+
+    t = Transcript()
+    t.on_part_updated("p", "tool", {"tool": "bash", "status": "error",
+        "input": {"command": "false"}, "output": "exit 1"})
+    card = t._part_widgets["p"]
+    # body should have been forced visible in update_data
+    assert not card.body.isHidden()
+    assert "exit 1" in card.body.text()
+
+
+def test_tool_card_pretty_bash_input(qapp):
+    from crew.app.transcript import Transcript
+
+    t = Transcript()
+    t.on_part_updated("p", "tool", {"tool": "bash", "status": "done",
+        "input": {"command": "echo hi"}, "output": "hi"})
+    card = t._part_widgets["p"]
+    assert "echo hi" in card.header.text() or "echo hi" in card.body.text()
+
+
+def test_prompt_bar_queue_depth(qapp):
+    from crew.app.prompt_bar import PromptBar
+
+    bar = PromptBar()
+    bar.set_queue_depth(2)
+    assert "2 queued" in bar.queue_label.text()
+    assert not bar.queue_label.isHidden()
+    bar.set_queue_depth(0)
+    assert bar.queue_label.isHidden()

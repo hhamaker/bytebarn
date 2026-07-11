@@ -11,11 +11,16 @@ $PY -c "import PyInstaller" 2>/dev/null || .venv/bin/pip install pyinstaller
 
 $PY scripts/make_icns.py build/Crew.icns
 
+# hidden imports: PyInstaller misses the idna codec + package, which kills
+# every HTTPS request in the bundle ("unknown encoding: idna" / generic
+# "Connection error." from the provider SDKs)
 $PY -m PyInstaller \
   --noconfirm --clean --windowed \
   --name Crew \
   --icon build/Crew.icns \
   --add-data "assets:assets" \
+  --hidden-import encodings.idna \
+  --collect-submodules idna \
   --osx-bundle-identifier dev.crew.app \
   scripts/app_entry.py
 

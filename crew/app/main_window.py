@@ -22,6 +22,7 @@ from ..engine.events import (
     PartUpdated,
     PermissionAsked,
     QuestionAsked,
+    QueueUpdated,
     RunFinished,
     SessionUpdated,
     TaskFinished,
@@ -233,12 +234,20 @@ class MainWindow(QMainWindow):
                     if event.session_id == self.current_session_id:
                         self.prompt_bar.set_running(False)
                         self.crew_stage.handle_event(event)
+                        self.prompt_bar.set_queue_depth(self.engine.queue_depth(event.session_id))
                     await self._refresh_sessions()
                     await self._refresh_git()
+                elif isinstance(event, QueueUpdated):
+                    if event.session_id == self.current_session_id:
+                        self.prompt_bar.set_queue_depth(event.depth)
                 elif isinstance(event, PermissionAsked):
-                    dialog = PermissionDialog(event.tool, event.arg, event.input, self)
-                    dialog.exec()
-                    self.engine.answer_permission(event.request_id, dialog.verdict)
+                    if self.engine.session_mode == FULL_AUTO:
+                        # switched to Full-auto after the ask was queued
+                        self.engine.answer_permission(event.request_id, "allow")
+                    else:
+                        dialog = PermissionDialog(event.tool, event.arg, event.input, self)
+                        dialog.exec()
+                        self.engine.answer_permission(event.request_id, dialog.verdict)
                 elif isinstance(event, QuestionAsked):
                     dialog = QuestionDialog(event.question, event.options, self)
                     dialog.exec()
@@ -267,8 +276,17 @@ class MainWindow(QMainWindow):
         for base in (self.engine.global_dir, self.engine.project_dir / ".crew"):
             base.mkdir(parents=True, exist_ok=True)
             paths.append(str(base))
+        def _relevant(_change, path: str) -> bool:
+            # the global dir also holds crew.db*/auth.json — DB writes must
+            # not trigger config reload storms on every message
+            return (
+                path.endswith("config.json")
+                or "/agent/" in path
+                or "/command/" in path
+            )
+
         try:
-            async for _changes in awatch(*paths):
+            async for _changes in awatch(*paths, watch_filter=_relevant):
                 self.engine.reload_config()
                 self.engine.bus.emit(AgentRegistryChanged())
         except Exception:
@@ -295,6 +313,7 @@ class MainWindow(QMainWindow):
         todos = await self.engine.store.get_todos(session_id)
         self.todo_strip.set_todos([{"content": t.content, "status": t.status} for t in todos])
         self.prompt_bar.set_running(self.engine.is_running(session_id))
+        self.prompt_bar.set_queue_depth(self.engine.queue_depth(session_id))
         self.back_button.setVisible(session.parent_session_id is not None)
         self._update_header(session)
         self._refresh_pickers(session.agent, session.model)
@@ -374,8 +393,9 @@ class MainWindow(QMainWindow):
     def _submit(self, text: str) -> None:
         if not self.current_session_id:
             return
+        queued = self.engine.is_running(self.current_session_id)
         self.prompt_bar.set_running(True)
-        self.transcript.add_user_text(f"local-{id(text)}", self._display_text(text))
+        self.transcript.add_user_text(f"local-{id(text)}", self._display_text(text), queued=queued)
         self._fire(self.engine.submit_prompt(
             self.current_session_id, text,
             agent=_AGENT_INTERNAL.get(
@@ -474,7 +494,8 @@ class MainWindow(QMainWindow):
         self.status_git.setText(out.decode().strip() or "no git")
 
     def _mode_changed(self, index: int) -> None:
-        self.engine.session_mode = [SAFE, ASK_MODE, FULL_AUTO][index]
+        # set_session_mode also releases permission prompts already waiting
+        self.engine.set_session_mode([SAFE, ASK_MODE, FULL_AUTO][index])
 
     # ------------------------------------------------------------------ dialogs
 

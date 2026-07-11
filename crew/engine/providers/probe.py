@@ -104,6 +104,13 @@ def _parse_model_ids(data) -> list[str]:
         if isinstance(item, str):
             ids.append(item)
         elif isinstance(item, dict):
+            # Cloudflare tags each model with a task — only chat-capable
+            # models belong in the picker (skip whisper/embeddings/images)
+            task = item.get("task")
+            if isinstance(task, dict):
+                task_name = str(task.get("name", ""))
+                if task_name and "text generation" not in task_name.lower():
+                    continue
             model_id = item.get("id")
             name = item.get("name")
             # Cloudflare-style listings: "id" is an opaque UUID, "name" is the
@@ -131,14 +138,28 @@ async def fetch_models(name: str, config: Config, auth: AuthStore) -> list[str]:
         return []
     if "Authorization" not in headers and "x-api-key" not in headers and not (spec and spec.local):
         return []
+    ids: list[str] = []
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.get(url, headers=headers)
-    except httpx.HTTPError:
-        return []
-    if response.status_code != 200:
-        return []
-    try:
-        return sorted(set(_parse_model_ids(response.json())))
-    except ValueError:
-        return []
+            if "models/search" in url:
+                # Cloudflare paginates (~50/page) — walk all pages, else
+                # anything past page 1 (GLM, newer models) never shows up
+                for page in range(1, 11):
+                    response = await client.get(
+                        url, headers=headers,
+                        params={"per_page": 100, "page": page},
+                    )
+                    if response.status_code != 200:
+                        break
+                    data = response.json()
+                    items = data.get("result") or []
+                    ids.extend(_parse_model_ids(data))
+                    if len(items) < 100:
+                        break
+            else:
+                response = await client.get(url, headers=headers)
+                if response.status_code == 200:
+                    ids.extend(_parse_model_ids(response.json()))
+    except (httpx.HTTPError, ValueError):
+        return sorted(set(ids))
+    return sorted(set(ids))

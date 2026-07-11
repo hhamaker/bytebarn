@@ -48,3 +48,14 @@ def test_allow_always_session_effect():
     assert p.resolve("bash", "git status") == ASK
     p.with_added_allow("bash", "git status*")
     assert p.resolve("bash", "git status --short") == ALLOW
+
+
+def test_session_mode_is_live_when_callable():
+    from crew.engine.permissions import ASK_MODE, FULL_AUTO, PermissionPolicy
+
+    mode = {"value": ASK_MODE}
+    policy = PermissionPolicy({}, {}, session_mode=lambda: mode["value"])
+    assert policy.resolve("bash", "rm -rf /tmp/x") == "ask"
+    # flipping the mode mid-run affects an already-created policy
+    mode["value"] = FULL_AUTO
+    assert policy.resolve("bash", "rm -rf /tmp/x") == "allow"

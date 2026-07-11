@@ -419,8 +419,12 @@ async def test_fetch_models_parses_provider_shapes(tmp_path, monkeypatch):
         if "cloudflare" in url:
             # real CF shape: opaque UUID id + human-usable name
             return httpx.Response(200, json={"result": [
-                {"id": "01564c52-8717-47dc-8efd-907a2ca18301", "name": "@cf/x"},
-                {"id": "01bc2fb0-4bca-4598-b985-d2584a3f46c0", "name": "@cf/a"},
+                {"id": "01564c52-8717-47dc-8efd-907a2ca18301", "name": "@cf/x",
+                 "task": {"name": "Text Generation"}},
+                {"id": "01bc2fb0-4bca-4598-b985-d2584a3f46c0", "name": "@cf/a",
+                 "task": {"name": "Text Generation"}},
+                {"id": "02c16efa-29f5-4304-8e6c-3d188889f875", "name": "@cf/whisper",
+                 "task": {"name": "Automatic Speech Recognition"}},
             ]})
         if "11434" in url:
             return httpx.Response(200, json={"data": [{"id": "qwen3:30b"}]})
@@ -440,3 +444,48 @@ async def test_fetch_models_parses_provider_shapes(tmp_path, monkeypatch):
     assert await probe.fetch_models("ollama", cfg, auth) == ["qwen3:30b"]  # no key needed
     # planned or unreachable -> empty, never raises
     assert await probe.fetch_models("github-copilot", cfg, auth) in ([], ["gpt-4o"]) or True
+
+
+async def test_fetch_models_cloudflare_paginates(tmp_path, monkeypatch):
+    import httpx
+
+    from crew.engine.auth import AuthStore
+    from crew.engine.providers import probe
+
+    pages: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = int(request.url.params.get("page", "1"))
+        pages.append(page)
+        if page == 1:
+            result = [{"id": f"00000000-0000-0000-0000-{i:012d}",
+                       "name": f"@cf/model-{i:03d}",
+                       "task": {"name": "Text Generation"}} for i in range(100)]
+        else:
+            result = [{"id": "99999999-0000-0000-0000-000000000000",
+                       "name": "@cf/zai-org/glm-5.2",
+                       "task": {"name": "Text Generation"}}]
+        return httpx.Response(200, json={"result": result})
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(probe.httpx, "AsyncClient",
+                        lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "acct")
+    cfg = Config()
+    auth = AuthStore(tmp_path)
+    auth.set("cloudflare", {"type": "api", "key": "c"})
+
+    models = await probe.fetch_models("cloudflare", cfg, auth)
+    assert pages == [1, 2]                      # walked past page 1
+    assert "@cf/zai-org/glm-5.2" in models      # page-2 model included
+    assert len(models) == 101
+
+
+def test_cloudflare_provider_disables_compression(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "abc123")
+    cfg = Config(provider={})
+    reg = ProviderRegistry(cfg, global_dir=tmp_path)
+    reg.auth.set("cloudflare", {"type": "api", "key": "cf-key"})
+    provider, _, _ = reg.resolve("cloudflare/@cf/zai-org/glm-5.2")
+    # Workers AI streaming mislabels gzip; identity avoids zlib error -3
+    assert provider._client.default_headers.get("Accept-Encoding") == "identity"

@@ -96,6 +96,13 @@ class AgentRegistryChanged(EngineEvent):
     name: str = "agent.registry.changed"
 
 
+@dataclass
+class QueueUpdated(EngineEvent):
+    session_id: str = ""
+    depth: int = 0
+    name: str = "queue.updated"
+
+
 class EventBus:
     """Fan-out async event bus; each subscriber gets every event."""
 
