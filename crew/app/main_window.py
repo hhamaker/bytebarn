@@ -233,6 +233,7 @@ class MainWindow(QMainWindow):
                     self._running.discard(event.session_id)
                     if event.session_id == self.current_session_id:
                         self.prompt_bar.set_running(False)
+                        self.transcript.dismiss_thinking()
                         self.crew_stage.handle_event(event)
                         self.prompt_bar.set_queue_depth(self.engine.queue_depth(event.session_id))
                     await self._refresh_sessions()

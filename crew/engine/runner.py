@@ -125,6 +125,25 @@ def history_to_messages(history: list[tuple[Any, list[Any]]]) -> list[Msg]:
     return msgs
 
 
+def _hard_failure(error: str) -> tuple[bool, bool]:
+    """(skip_retry, provider_dead) for an error message.
+
+    Out-of-credit and auth failures poison the whole provider — every model
+    there shares the balance/key, so retrying or picking a sibling model is
+    wasted. Model-not-found is hard for the model but the provider is fine.
+    """
+    e = error.lower()
+    provider_dead = any(s in e for s in (
+        "insufficient balance", "insufficient_quota", "exceeded your current quota",
+        "credit", "billing", "payment required", "402",
+        "invalid api key", "invalid_api_key", "invalid x-api-key", "401",
+    ))
+    model_dead = any(s in e for s in (
+        "model_not_found", "does not exist", "model not found", "404",
+    ))
+    return (provider_dead or model_dead, provider_dead)
+
+
 @dataclass
 class RunHandle:
     task: asyncio.Task | None = None
@@ -180,6 +199,7 @@ class Runner:
         fb_after = max(1, int(fb_conf.get("after", 2)))
         failures = 0
         models_tried = [model]
+        dead_providers: set[str] = set()
 
         for _step in range(agent.steps):
             if handle.abort.is_set():
@@ -201,24 +221,44 @@ class Runner:
             if outcome["error"]:
                 await store.update_message(message.id, error=outcome["error"])
                 failures += 1
-                if fb_enabled and failures < fb_after:
+                skip_retry, provider_dead = _hard_failure(outcome["error"])
+                if provider_dead:
+                    dead_providers.add(model.split("/", 1)[0])
+                if fb_enabled and failures < fb_after and not skip_retry:
                     await self._notice(
                         session, message.id,
                         f"⚠ {model} failed ({failures}/{fb_after}): {outcome['error'][:200]}"
                         " — trying again",
                     )
                     continue
-                alt = engine.fallback_model(model, models_tried) if fb_enabled else None
+                # pick a stand-in, skipping providers known dead (credits/keys)
+                alt = None
+                if fb_enabled:
+                    exclude = list(models_tried)
+                    for _ in range(16):
+                        candidate = engine.fallback_model(model, exclude)
+                        if candidate is None:
+                            break
+                        if candidate.split("/", 1)[0] in dead_providers:
+                            exclude.append(candidate)
+                            continue
+                        alt = candidate
+                        break
                 if alt:
+                    why = "is out of credits or unavailable" if skip_retry \
+                        else f"failed {failures}×"
                     await self._notice(
                         session, message.id,
-                        f"⤷ {model} failed {failures}× — switching to comparable"
+                        f"⤷ {model} {why} — switching to comparable"
                         f" model {alt} for the rest of this task",
                     )
                     model = alt
                     models_tried.append(alt)
                     provider, model_id, info = engine.providers.resolve(model)
                     failures = 0
+                    # persist: the session now *uses* the working model, so the
+                    # next prompt starts there instead of re-walking dead ones
+                    await store.update_session(session.id, model=alt)
                     self.engine.bus.emit(SessionUpdated(session_id=session.id))
                     continue
                 # no stand-in available: surface the failure in the transcript
@@ -277,7 +317,7 @@ class Runner:
             provider, req, on_retry=lambda a, d: self._emit_retry(session)
         ):
             if isinstance(event, TextDelta):
-                text_buf += event.text
+                text_buf += event.text if isinstance(event.text, str) else str(event.text)
                 if text_part is None:
                     text_part = await store.add_part(message_id, "text", {"text": ""})
                 if len(text_buf) - flushed >= _FLUSH_EVERY:
@@ -285,7 +325,7 @@ class Runner:
                     flushed = len(text_buf)
                 emit_part(text_part.id, "text", {"text": text_buf}, delta=event.text)
             elif isinstance(event, ReasoningDelta):
-                reasoning_buf += event.text
+                reasoning_buf += event.text if isinstance(event.text, str) else str(event.text)
                 if reasoning_part is None:
                     reasoning_part = await store.add_part(message_id, "reasoning", {"text": ""})
                 emit_part(reasoning_part.id, "reasoning", {"text": reasoning_buf}, delta=event.text)
@@ -294,7 +334,9 @@ class Runner:
                 order.append(event.call_id)
             elif isinstance(event, ToolCallDelta):
                 if event.call_id in calls:
-                    calls[event.call_id]["json"] += event.json_fragment
+                    fragment = event.json_fragment
+                    calls[event.call_id]["json"] += (
+                        fragment if isinstance(fragment, str) else json.dumps(fragment))
             elif isinstance(event, ToolCallEnd):
                 call = calls.get(event.call_id)
                 if call is None:

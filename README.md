@@ -137,7 +137,9 @@ live critter preview per agent. Sessions are managed from the sidebar:
 right-click one to **close** (archive) or **delete** it, subagents and all.
 
 Custom commands: `.crew/command/foo.md` with a `$ARGUMENTS` template →
-`/foo`. Built-ins: `/goal`, `/compact`, `/new`, `/model`, `/agents`.
+`/foo`. Built-ins: `/init` (analyze the repo and write AGENTS.md — loaded
+into every agent's system prompt), `/goal`, `/compact`, `/new`, `/model`,
+`/agents`.
 
 ## Permissions
 

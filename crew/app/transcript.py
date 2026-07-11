@@ -205,6 +205,45 @@ class _Welcome(QWidget):
         layout.addStretch(2)
 
 
+class _Thinking(QWidget):
+    """Animated "thinking…" row shown between submit and the first token."""
+
+    def __init__(self, agent: str, color: str):
+        super().__init__()
+        from PySide6.QtCore import QTimer
+
+        from .sprites import critter_pixmap
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 2, 4, 2)
+        row = QWidget()
+        from PySide6.QtWidgets import QHBoxLayout
+
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 0, 0, 0)
+        icon = QLabel()
+        icon.setPixmap(critter_pixmap(agent, color, scale=2))
+        self._text = QLabel()
+        self._text.setStyleSheet("color:#8f96a3; font-style:italic;")
+        h.addWidget(icon)
+        h.addWidget(self._text)
+        h.addStretch(1)
+        layout.addWidget(row)
+
+        self._agent = agent
+        self._ticks = 0
+        self._timer = QTimer(self)
+        self._timer.setInterval(350)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start()
+        self._tick()
+
+    def _tick(self) -> None:
+        self._ticks += 1
+        dots = "." * (1 + self._ticks % 3)
+        self._text.setText(f"{self._agent} is thinking{dots}")
+
+
 class Transcript(QScrollArea):
     open_session = Signal(str)
 
@@ -218,6 +257,7 @@ class Transcript(QScrollArea):
         self.setWidget(self._container)
         self._part_widgets: dict[str, QWidget] = {}
         self._welcome: QWidget | None = None
+        self._thinking: QWidget | None = None
         self._autoscroll = True
         self.verticalScrollBar().valueChanged.connect(self._on_scroll)
         self.verticalScrollBar().rangeChanged.connect(self._on_range)
@@ -227,6 +267,7 @@ class Transcript(QScrollArea):
     def clear_all(self) -> None:
         self._part_widgets.clear()
         self._welcome = None
+        self._thinking = None
         while self._layout.count():
             item = self._layout.takeAt(0)
             if item.widget():
@@ -242,6 +283,19 @@ class Transcript(QScrollArea):
             self._welcome = _Welcome()
             self._layout.setAlignment(Qt.AlignVCenter)
             self._layout.addWidget(self._welcome)
+
+    def show_thinking(self, agent: str, color: str = "#98c379") -> None:
+        """Waiting-for-first-token indicator; dropped when content arrives."""
+        self.dismiss_thinking()
+        self._dismiss_welcome()
+        self._thinking = _Thinking(agent, color)
+        self._layout.addWidget(self._thinking)
+
+    def dismiss_thinking(self) -> None:
+        if self._thinking is not None:
+            self._layout.removeWidget(self._thinking)
+            self._thinking.deleteLater()
+            self._thinking = None
 
     def _dismiss_welcome(self) -> None:
         if self._welcome is not None:
@@ -269,6 +323,8 @@ class Transcript(QScrollArea):
 
     def _add_part(self, role: str, part_id: str, part_type: str, data: dict[str, Any]) -> None:
         self._dismiss_welcome()
+        if role != "user":
+            self.dismiss_thinking()
         widget: QWidget | None = None
         if part_type == "text":
             widget = TextBlock(data.get("text", ""), user=role == "user", queued=bool(data.get("_queued")))

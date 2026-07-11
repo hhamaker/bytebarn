@@ -19,6 +19,41 @@ $ARGUMENTS
 
 Orchestrate this goal to completion. Restate the goal in one sentence, write a todo plan, pick the best-fit subagents from the available agent types, and delegate the work — parallel where independent, sequential where dependent. Track todos as tasks start and finish, verify results before marking anything done, and finish with a short summary of what each agent accomplished."""
 
+INIT_TEMPLATE = """\
+Analyze this codebase and create an AGENTS.md file that will be loaded into
+every agent's system prompt when working in this repository.
+
+$ARGUMENTS
+
+Explore first: read the README, build/config files (pyproject.toml,
+package.json, Makefile, Cargo.toml, ...), the directory layout, and a few
+representative source files. Check for existing agent instructions
+(CLAUDE.md, .cursorrules, .github/copilot-instructions.md) and fold in the
+important parts.
+
+Then write AGENTS.md at the project root containing:
+
+1. **Commands** — how to build, run tests (including a single test), lint,
+   and start the project. Real commands from this repo, not guesses.
+2. **Architecture** — the big picture that takes reading multiple files to
+   learn: layers, boundaries, where things live, how the pieces talk.
+3. **Conventions** — project-specific rules an agent must follow (code
+   style that differs from defaults, required workflows, files not to touch).
+
+Rules: be concise; skip generic advice ("write tests", "handle errors");
+don't list every file — only what makes an agent productive faster. If
+AGENTS.md already exists, improve it instead of overwriting blindly.
+
+Start with this exact header:
+
+```
+# AGENTS.md
+
+This file guides AI coding agents working in this repository.
+```
+
+When done, show a short summary of what you put in it."""
+
 
 @dataclass
 class CommandDef:
@@ -40,6 +75,11 @@ def builtin_commands() -> dict[str, CommandDef]:
             name="goal", builtin=True, agent="orchestrator",
             description="Hand a goal to the orchestrator, which casts a crew of subagents",
             template=GOAL_TEMPLATE,
+        ),
+        "init": CommandDef(
+            name="init", builtin=True, agent="build",
+            description="Analyze the project and create AGENTS.md instructions for agents",
+            template=INIT_TEMPLATE,
         ),
         "compact": CommandDef(
             name="compact", builtin=True, action="compact",

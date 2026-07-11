@@ -456,3 +456,81 @@ async def test_full_auto_switch_releases_pending_permission(engine):
     history = await engine.store.session_parts(session.id)
     tool_parts = [p for _, parts in history for p in parts if p.type == "tool"]
     assert tool_parts and tool_parts[0].data["status"] == "done"
+
+
+async def test_out_of_credit_switches_immediately_and_skips_provider(engine):
+    from crew.engine.providers.base import ErrorEv
+    from crew.engine.providers.fake import FakeProvider, text_turn
+
+    class Broke:
+        name = "fake"
+
+        async def stream(self, req):
+            yield ErrorEv("Error code: 402 - {'error': {'message': 'Insufficient Balance'}}")
+
+    engine.providers.register("fake", Broke())
+    engine.providers.register("backup", FakeProvider([text_turn("saved")]))
+    offers = ["fake/sibling-model", "backup/rescue-1"]  # same provider first
+
+    def fallback(model, exclude):
+        for offer in offers:
+            if offer not in exclude:
+                return offer
+        return None
+
+    engine.fallback_model = fallback
+    session = await engine.new_session()
+    await _run_and_wait(engine, session, "hi")
+
+    history = await engine.store.session_parts(session.id)
+    texts = [p.data.get("text", "")
+             for m, parts in history if m.role == "assistant" for p in parts if p.type == "text"]
+    # no wasted retry of a broke provider, and its sibling model was skipped
+    assert not any("trying again" in t for t in texts)
+    assert any("out of credits or unavailable" in t and "backup/rescue-1" in t for t in texts)
+    assert not any("fake/sibling-model" in t for t in texts)
+    assert any("saved" in t for t in texts)
+    # the switch sticks: next prompts start on the working model
+    updated = await engine.store.get_session(session.id)
+    assert updated.model == "backup/rescue-1"
+
+
+async def test_non_string_stream_fragments_do_not_crash(engine):
+    from crew.engine.providers.base import Done, TextDelta, Usage
+
+    class WeirdTypes:
+        name = "fake"
+
+        async def stream(self, req):
+            yield TextDelta("answer: ")
+            yield TextDelta(42)  # Cloudflare-style non-string delta
+            yield Usage(1, 1)
+            yield Done()
+
+    engine.providers.register("fake", WeirdTypes())
+    session = await engine.new_session()
+    await _run_and_wait(engine, session, "hi")
+
+    history = await engine.store.session_parts(session.id)
+    texts = [p.data.get("text", "")
+             for m, parts in history if m.role == "assistant" for p in parts if p.type == "text"]
+    assert any(t == "answer: 42" for t in texts)
+    assert not any("concatenate" in t for t in texts)
+
+
+async def test_init_command_routes_to_build_with_template(engine):
+    from crew.engine.providers.fake import FakeProvider, text_turn
+
+    _install(engine, [text_turn("AGENTS.md written")])
+    session = await engine.new_session(agent="chat")
+    await _run_and_wait(engine, session, "/init focus on the engine layer")
+
+    updated = await engine.store.get_session(session.id)
+    assert updated.agent == "build"  # /init routes to the build agent
+    history = await engine.store.session_parts(session.id)
+    user_texts = [p.data.get("text", "")
+                  for m, parts in history if m.role == "user" for p in parts if p.type == "text"]
+    rendered = user_texts[0]
+    assert "create an AGENTS.md file" in rendered
+    assert "focus on the engine layer" in rendered   # $ARGUMENTS substituted
+    assert "# AGENTS.md" in rendered

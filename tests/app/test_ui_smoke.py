@@ -225,3 +225,18 @@ def test_prompt_bar_queue_depth(qapp):
     assert not bar.queue_label.isHidden()
     bar.set_queue_depth(0)
     assert bar.queue_label.isHidden()
+
+
+def test_thinking_indicator_lifecycle(qapp):
+    from crew.app.transcript import Transcript, _Thinking
+
+    t = Transcript()
+    t.show_thinking("chat", "#d19a66")
+    assert isinstance(t._thinking, _Thinking)
+    # assistant content replaces the indicator; user parts don't
+    t.on_part_updated("u1", "text", {"text": "hi"}, role="user")
+    assert t._thinking is not None
+    t.on_part_updated("a1", "text", {"text": "reply"}, role="assistant")
+    assert t._thinking is None
+    # explicit dismissal is idempotent
+    t.dismiss_thinking()
