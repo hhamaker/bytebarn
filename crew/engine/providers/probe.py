@@ -49,6 +49,10 @@ def _endpoint_and_headers(
         from .github_copilot_oauth import COPILOT_HEADERS
 
         headers.update(COPILOT_HEADERS)
+    # Cloudflare's OpenAI-compat endpoint has no GET /models (405); its
+    # native models listing lives next door under /ai/models/search
+    if name == "cloudflare" and "/ai/v1" in base:
+        return base.replace("/ai/v1", "/ai/models/search"), headers
     return f"{base}/models", headers
 
 
@@ -72,11 +76,56 @@ async def probe_provider(name: str, config: Config, auth: AuthStore) -> tuple[bo
     if response.status_code == 200:
         try:
             data = response.json()
-            items = data.get("data", data.get("models", []))
+            items = data.get("data") or data.get("models") or data.get("result") or []
             count = len(items) if isinstance(items, list) else 0
             return True, f"connected — {count} models visible"
         except ValueError:
             return True, "connected"
     if response.status_code in (401, 403):
         return False, f"auth failed (HTTP {response.status_code}) — check the key"
+    if response.status_code == 405:
+        # endpoint exists but has no model listing (route matched, wrong
+        # method) — the chat endpoint itself will still work
+        return True, "connected — endpoint reachable (no model listing)"
     return False, f"HTTP {response.status_code}: {response.text[:120]}"
+
+
+def _parse_model_ids(data) -> list[str]:
+    items = data.get("data") or data.get("models") or data.get("result") or []
+    ids: list[str] = []
+    for item in items if isinstance(items, list) else []:
+        if isinstance(item, str):
+            ids.append(item)
+        elif isinstance(item, dict):
+            model_id = item.get("id") or item.get("name")
+            if isinstance(model_id, str):
+                ids.append(model_id)
+    return ids
+
+
+async def fetch_models(name: str, config: Config, auth: AuthStore) -> list[str]:
+    """Live model ids from the provider's listing endpoint ([] on any failure).
+
+    This is what makes the pickers show *everything* a provider offers —
+    including whatever an Ollama/LM Studio server currently has loaded —
+    rather than only the curated list.
+    """
+    spec = KNOWN_PROVIDERS.get(name)
+    if spec and spec.planned:
+        return []
+    url, headers = _endpoint_and_headers(name, config, auth)
+    if "${" in url:
+        return []
+    if "Authorization" not in headers and "x-api-key" not in headers and not (spec and spec.local):
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(url, headers=headers)
+    except httpx.HTTPError:
+        return []
+    if response.status_code != 200:
+        return []
+    try:
+        return sorted(set(_parse_model_ids(response.json())))
+    except ValueError:
+        return []

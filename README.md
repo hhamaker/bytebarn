@@ -161,8 +161,16 @@ Engine and UI meet only through the async event stream (`crew/engine/events.py`)
 and the `Engine` facade — enforced by a test that imports the engine with Qt
 poisoned.
 
+## Packaging (macOS)
+
+```bash
+./scripts/build_macos_app.sh --install   # builds dist/Crew.app, copies to /Applications
+```
+
+Uses PyInstaller; the app icon is rendered from the in-app sprite art.
+Launching from the Dock opens a project-picker dialog.
+
 ## Known gaps (v1)
 
 - `@file` completion inserts the path; image attachment parts are stored but
   not previewed in the transcript.
-- Packaging (PyInstaller/Briefcase) not wired; run from the venv.

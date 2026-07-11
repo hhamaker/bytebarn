@@ -16,7 +16,9 @@ if TYPE_CHECKING:
     from ..events import EventBus
     from ..store import Store
 
-_PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "assets" / "prompts"
+from ..resources import prompts_dir
+
+_PROMPTS_DIR = prompts_dir()
 
 TRUNCATE_AT = 30_000
 

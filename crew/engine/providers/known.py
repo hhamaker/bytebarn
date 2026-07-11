@@ -185,6 +185,26 @@ def is_connected(status: str) -> bool:
     return status.startswith("connected") or status == "local"
 
 
+def connected_providers(config: "Config", auth: "AuthStore") -> list[str]:
+    """Provider ids the user can reach right now (known + hand-configured)."""
+    out = [
+        spec.id for spec in KNOWN_PROVIDERS.values()
+        if is_connected(connection_status(spec, config, auth))
+    ]
+    for name, pconf in config.provider.items():
+        if name in out or name in KNOWN_PROVIDERS:
+            continue
+        if pconf.resolve_key() or pconf.base_url:
+            out.append(name)
+    return out
+
+
+def curated_models(provider_id: str) -> list[str]:
+    """The hand-picked model ids for a known provider (may be empty)."""
+    spec = KNOWN_PROVIDERS.get(provider_id)
+    return list(spec.models) if spec else []
+
+
 def available_models(config: "Config", auth: "AuthStore") -> list[str]:
     """"provider/model" strings for connected providers only.
 

@@ -51,8 +51,19 @@ class AgentEditor(QDialog):
         self.badge = QLabel("")
         self.preview = QLabel("")
         self.preview.setFixedHeight(64)
+        # two-stage model picker: "(default)" or provider -> live model list
+        self.provider_combo = QComboBox()
+        self.provider_combo.currentTextChanged.connect(self._provider_changed)
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
+        self.model_combo.setToolTip("Model list is fetched live from the provider")
+        # long model ids: keep the field wide and the popup wide enough to read
+        from PySide6.QtWidgets import QSizePolicy
+
+        self.model_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.model_combo.setMinimumWidth(260)
+        self.model_combo.view().setMinimumWidth(380)
+        self.provider_combo.setMinimumWidth(120)
         self._reload_models()
         self.description = QLineEdit()
         self.prompt = QPlainTextEdit()
@@ -83,7 +94,10 @@ class AgentEditor(QDialog):
         header.addWidget(self.preview)
         header.addWidget(self.badge, 1)
         form.addRow(header)
-        form.addRow("model", self.model_combo)
+        model_row = QHBoxLayout()
+        model_row.addWidget(self.provider_combo)
+        model_row.addWidget(self.model_combo, 1)
+        form.addRow("model", model_row)
         form.addRow("description", self.description)
         form.addRow("prompt", self.prompt)
         form.addRow("temperature", self.temperature)
@@ -107,15 +121,74 @@ class AgentEditor(QDialog):
 
     # ------------------------------------------------------------------
 
-    def _reload_models(self) -> None:
-        from ..engine.providers.known import available_models
+    _DEFAULT = "(default)"
 
-        current = self.model_combo.currentText()
+    def _reload_models(self, model: str = "") -> None:
+        """Rebuild provider list; select the provider/model of ``model``."""
+        from ..engine.providers.known import connected_providers
+
+        provider, _, model_id = model.partition("/")
+        providers = connected_providers(self.engine.config, self.engine.providers.auth)
+        self.provider_combo.blockSignals(True)
+        self.provider_combo.clear()
+        self.provider_combo.addItem(self._DEFAULT)
+        self.provider_combo.addItems(providers)
+        if provider in providers:
+            self.provider_combo.setCurrentText(provider)
+        else:
+            self.provider_combo.setCurrentIndex(0)
+            model_id = ""
+        self.provider_combo.blockSignals(False)
+        self._set_provider_models(self.provider_combo.currentText(), model_id)
+
+    def _set_provider_models(self, provider: str, current_id: str = "") -> None:
+        from ..engine.providers.known import curated_models
+
+        self.model_combo.blockSignals(True)
         self.model_combo.clear()
-        self.model_combo.addItem("")  # = default
-        for model in available_models(self.engine.config, self.engine.providers.auth):
-            self.model_combo.addItem(model)
-        self.model_combo.setCurrentText(current)
+        if provider == self._DEFAULT or not provider:
+            self.model_combo.setEnabled(False)
+            self.model_combo.blockSignals(False)
+            return
+        self.model_combo.setEnabled(True)
+        models = curated_models(provider)
+        if current_id and current_id not in models:
+            models.insert(0, current_id)
+        self.model_combo.addItems(models)
+        if current_id:
+            self.model_combo.setCurrentText(current_id)
+        self.model_combo.blockSignals(False)
+        # live list replaces the curated one when the fetch lands
+        import asyncio
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:  # no running loop (offscreen tests)
+            return
+        loop.create_task(self._load_live_models(provider))
+
+    async def _load_live_models(self, provider: str) -> None:
+        live = await self.engine.list_models(provider)
+        if not live or self.provider_combo.currentText() != provider:
+            return
+        keep = self.model_combo.currentText()
+        merged = list(dict.fromkeys(([keep] if keep and keep not in live else []) + live))
+        self.model_combo.blockSignals(True)
+        self.model_combo.clear()
+        self.model_combo.addItems(merged)
+        self.model_combo.setCurrentText(keep or (merged[0] if merged else ""))
+        self.model_combo.blockSignals(False)
+
+    def _provider_changed(self, provider: str) -> None:
+        self._set_provider_models(provider)
+
+    def _selected_model(self) -> str:
+        """Full "provider/model-id", or "" when (default)."""
+        provider = self.provider_combo.currentText()
+        model_id = self.model_combo.currentText().strip()
+        if provider == self._DEFAULT or not provider or not model_id:
+            return ""
+        return f"{provider}/{model_id}"
 
     def _reload_list(self) -> None:
         self.agent_list.clear()
@@ -127,6 +200,9 @@ class AgentEditor(QDialog):
                 label += "  [native]"
             item = QListWidgetItem(label)
             item.setData(Qt.UserRole, agent.name)
+            from PySide6.QtGui import QIcon
+
+            item.setIcon(QIcon(critter_pixmap(agent.name, agent.color or "#98c379", scale=2)))
             self.agent_list.addItem(item)
 
     def _on_select(self, item: QListWidgetItem, _prev=None) -> None:
@@ -139,7 +215,7 @@ class AgentEditor(QDialog):
         if overridden:
             badge += " + overrides"
         self.badge.setText(f"<b>{agent.name}</b> — {badge}")
-        self.model_combo.setCurrentText(agent.model or "")
+        self._reload_models(agent.model or "")
         self.description.setText(agent.description)
         self.prompt.setPlainText(agent.prompt)
         self.temperature.setValue(agent.temperature if agent.temperature is not None else 0.0)
@@ -183,7 +259,7 @@ class AgentEditor(QDialog):
             if new != old and new not in ("", None):
                 updates[f"agent.{agent.name}.{key}"] = new
 
-        diff("model", self.model_combo.currentText().strip(), agent.model or "")
+        diff("model", self._selected_model(), agent.model or "")
         diff("description", self.description.text().strip(), agent.description)
         diff("prompt", self.prompt.toPlainText().strip(), agent.prompt)
         if self.temperature.value() > 0 and self.temperature.value() != (agent.temperature or 0):

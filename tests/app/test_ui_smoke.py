@@ -138,13 +138,37 @@ def test_agent_editor_and_provider_manager_build(qapp, tmp_path):
     editor = AgentEditor(engine)
     assert editor.agent_list.count() >= 5  # built-ins
     editor.agent_list.setCurrentRow(0)
-    assert editor.model_combo.count() >= 1
+    # "(default)" always present; model combo disabled until a provider is picked
+    assert editor.provider_combo.itemText(0) == "(default)"
+    assert not editor.model_combo.isEnabled()
 
     manager = ProviderManager(engine)
     assert manager.provider_list.count() >= 10
     manager.provider_list.setCurrentRow(0)
-    # saving a key flips status to connected and grows the model list
-    before = editor.model_combo.count()
+    # connect a provider -> it appears in the picker with its curated models
     engine.providers.auth.set("groq", {"type": "api", "key": "gsk-test"})
-    editor._reload_models()
-    assert editor.model_combo.count() > before
+    editor._reload_models("groq/llama-3.3-70b-versatile")
+    assert editor.provider_combo.currentText() == "groq"
+    assert editor.model_combo.isEnabled()
+    assert editor._selected_model() == "groq/llama-3.3-70b-versatile"
+
+
+def test_prompt_bar_two_stage_picker(qapp):
+    from crew.app.prompt_bar import PromptBar
+
+    bar = PromptBar()
+    picked: list[str] = []
+    bar.model_changed.connect(picked.append)
+
+    bar.set_providers(["groq", "ollama"], "groq")
+    bar.set_models(["llama-3.3-70b-versatile", "llama-3.1-8b-instant"], "")
+    assert bar.provider_combo.currentText() == "groq"
+    assert bar.current_model() == "groq/llama-3.3-70b-versatile"
+
+    bar.model_combo.setCurrentIndex(1)
+    assert picked[-1] == "groq/llama-3.1-8b-instant"
+
+    # empty state: no combined model, guidance placeholder
+    bar.set_providers([], "")
+    bar.set_models([], "")
+    assert bar.current_model() == ""

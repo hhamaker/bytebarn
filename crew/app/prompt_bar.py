@@ -68,7 +68,8 @@ class PromptBar(QWidget):
     submitted = Signal(str)          # prompt text
     aborted = Signal()
     agent_changed = Signal(str)
-    model_changed = Signal(str)
+    provider_changed = Signal(str)   # provider id
+    model_changed = Signal(str)      # full "provider/model-id"
     action_requested = Signal(str)   # built-in command actions (compact/new/...)
 
     def __init__(self, commands=None, project_dir: Path | None = None):
@@ -84,16 +85,25 @@ class PromptBar(QWidget):
         self.agent_combo = QComboBox()
         self.agent_combo.setToolTip("Agent for this session — /agents to edit them")
         self.agent_combo.currentTextChanged.connect(self.agent_changed)
+        # two-stage model picker: provider first, then that provider's models
+        self.provider_combo = QComboBox()
+        self.provider_combo.setToolTip("Provider — connect more via ⚡ providers")
+        self.provider_combo.currentTextChanged.connect(self.provider_changed)
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
-        self.model_combo.setToolTip("Model for this session — connect more via ⚡ providers")
-        self.model_combo.currentTextChanged.connect(self.model_changed)
+        self.model_combo.setToolTip("Model — list is fetched live from the provider")
+        self.model_combo.setMinimumWidth(240)
+        self.model_combo.view().setMinimumWidth(380)
+        self.provider_combo.setMinimumWidth(110)
+        self.model_combo.currentTextChanged.connect(
+            lambda _: self.model_changed.emit(self.current_model()))
         self.send_button = QPushButton("Send")
         self.send_button.setToolTip("Enter to send · Shift+Enter for a newline · Esc to stop")
         self.send_button.clicked.connect(self._submit_or_abort)
 
         controls = QHBoxLayout()
         controls.addWidget(self.agent_combo)
+        controls.addWidget(self.provider_combo)
         controls.addWidget(self.model_combo)
         controls.addStretch(1)
         controls.addWidget(self.send_button)
@@ -237,16 +247,35 @@ class PromptBar(QWidget):
             self.agent_combo.setCurrentText(current)
         self.agent_combo.blockSignals(False)
 
+    def set_providers(self, providers: list[str], current: str) -> None:
+        self.provider_combo.blockSignals(True)
+        self.provider_combo.clear()
+        self.provider_combo.addItems(providers)
+        if not providers:
+            self.provider_combo.addItem("⚡ connect a provider")
+        elif current in providers:
+            self.provider_combo.setCurrentText(current)
+        self.provider_combo.blockSignals(False)
+
     def set_models(self, models: list[str], current: str) -> None:
+        """``models`` are bare model ids for the selected provider."""
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
         self.model_combo.addItems(models)
         if not models:
-            # nothing connected: make the problem visible instead of showing a
-            # default model that cannot actually run
             self.model_combo.setCurrentText("")
             if self.model_combo.lineEdit():
-                self.model_combo.lineEdit().setPlaceholderText("no providers — open ⚡ providers")
+                self.model_combo.lineEdit().setPlaceholderText("no models — check connection")
         elif current:
             self.model_combo.setCurrentText(current)
+        else:
+            self.model_combo.setCurrentIndex(0)
         self.model_combo.blockSignals(False)
+
+    def current_model(self) -> str:
+        """Full "provider/model-id" string, or "" when incomplete."""
+        provider = self.provider_combo.currentText()
+        model_id = self.model_combo.currentText().strip()
+        if not provider or provider.startswith("⚡") or not model_id:
+            return ""
+        return f"{provider}/{model_id}"

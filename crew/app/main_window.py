@@ -31,7 +31,7 @@ from ..engine.events import (
 )
 from ..engine.facade import Engine
 from ..engine.permissions import ASK_MODE, FULL_AUTO, SAFE
-from ..engine.providers.known import available_models
+from ..engine.providers.known import connected_providers, curated_models
 from .agent_editor import AgentEditor
 from .crew_stage import CrewStage
 from .permission_dialog import PermissionDialog
@@ -41,6 +41,12 @@ from .session_list import SessionList
 from .settings import SettingsDialog
 from .todo_strip import TodoStrip
 from .transcript import Transcript
+
+
+# UI display names for agents: the app itself is the orchestrator, so the
+# picker offers "goal" mode instead of exposing the internal agent name
+_AGENT_DISPLAY = {"orchestrator": "goal"}
+_AGENT_INTERNAL = {v: k for k, v in _AGENT_DISPLAY.items()}
 
 
 class MainWindow(QMainWindow):
@@ -140,6 +146,7 @@ class MainWindow(QMainWindow):
         self.prompt_bar.submitted.connect(self._submit)
         self.prompt_bar.aborted.connect(lambda: self._fire(self._abort()))
         self.prompt_bar.agent_changed.connect(self._agent_changed)
+        self.prompt_bar.provider_changed.connect(self._provider_changed)
         self.prompt_bar.model_changed.connect(self._model_changed)
         self.prompt_bar.action_requested.connect(self._action)
 
@@ -161,8 +168,22 @@ class MainWindow(QMainWindow):
         ]
 
     def closeEvent(self, event) -> None:
+        """Window closed = application exits: stop the engine (aborts runs,
+        closes the DB), then quit Qt so the qasync loop unwinds."""
         for task in getattr(self, "_tasks", []):
             task.cancel()
+
+        async def _shutdown() -> None:
+            from PySide6.QtWidgets import QApplication
+
+            try:
+                await self.engine.stop()
+            except Exception:
+                pass
+            QApplication.instance().quit()
+
+        asyncio.ensure_future(_shutdown())
+        event.accept()
         super().closeEvent(event)
 
     # ------------------------------------------------------------------ events
@@ -308,7 +329,8 @@ class MainWindow(QMainWindow):
         ) or "#98c379"
         self.header_icon.setPixmap(critter_pixmap(session.agent, color, scale=2))
         self.header_title.setText(f"<b>{session.title or 'New session'}</b>")
-        meta = f"{session.agent} · {session.model or self.engine.config.model}"
+        meta = (f"{_AGENT_DISPLAY.get(session.agent, session.agent)}"
+                f" · {session.model or self.engine.config.model}")
         if self.engine.is_running(session.id):
             meta += "   <span style='color:#e5c07b'>● working…</span>"
         self.header_meta.setText(meta)
@@ -338,8 +360,10 @@ class MainWindow(QMainWindow):
         self.transcript.add_user_text(f"local-{id(text)}", self._display_text(text))
         self._fire(self.engine.submit_prompt(
             self.current_session_id, text,
-            agent=self.prompt_bar.agent_combo.currentText() or None,
-            model=self.prompt_bar.model_combo.currentText() or None,
+            agent=_AGENT_INTERNAL.get(
+                self.prompt_bar.agent_combo.currentText(),
+                self.prompt_bar.agent_combo.currentText()) or None,
+            model=self.prompt_bar.current_model() or None,
         ))
 
     @staticmethod
@@ -362,6 +386,7 @@ class MainWindow(QMainWindow):
             self._open_agent_editor()
 
     def _agent_changed(self, agent: str) -> None:
+        agent = _AGENT_INTERNAL.get(agent, agent)
         if self.current_session_id and agent:
             self._fire(self.engine.store.update_session(self.current_session_id, agent=agent))
 
@@ -372,10 +397,45 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ pickers & status
 
     def _refresh_pickers(self, agent: str = "", model: str = "") -> None:
-        agents = [a.name for a in self.engine.agents.primaries()]
-        self.prompt_bar.set_agents(agents, agent or "build")
-        models = available_models(self.engine.config, self.engine.providers.auth)
-        self.prompt_bar.set_models(models, model or self.engine.config.model)
+        agents = [_AGENT_DISPLAY.get(a.name, a.name) for a in self.engine.agents.primaries()]
+        self.prompt_bar.set_agents(agents, _AGENT_DISPLAY.get(agent, agent) or "build")
+
+        # two-stage picker: connected providers, then that provider's models
+        model = model or self.engine.config.model
+        provider, _, model_id = model.partition("/")
+        providers = connected_providers(self.engine.config, self.engine.providers.auth)
+        if provider not in providers:
+            provider = providers[0] if providers else ""
+            model_id = ""
+        self.prompt_bar.set_providers(providers, provider)
+        self._set_provider_models(provider, model_id)
+
+    def _set_provider_models(self, provider: str, current_id: str = "") -> None:
+        """Curated list immediately, live-fetched full list when it arrives."""
+        if not provider:
+            self.prompt_bar.set_models([], "")
+            return
+        curated = curated_models(provider)
+        if current_id and current_id not in curated:
+            curated.insert(0, current_id)
+        self.prompt_bar.set_models(curated, current_id or (curated[0] if curated else ""))
+        self._fire(self._load_live_models(provider))
+
+    async def _load_live_models(self, provider: str) -> None:
+        live = await self.engine.list_models(provider)
+        if not live or self.prompt_bar.provider_combo.currentText() != provider:
+            return  # provider changed meanwhile, or nothing better than curated
+        keep = self.prompt_bar.model_combo.currentText()
+        merged = list(dict.fromkeys(([keep] if keep and keep not in live else []) + live))
+        self.prompt_bar.set_models(merged, keep or (merged[0] if merged else ""))
+
+    def _provider_changed(self, provider: str) -> None:
+        if not provider or provider.startswith("⚡"):
+            return
+        self._set_provider_models(provider)
+        model = self.prompt_bar.current_model()
+        if self.current_session_id and model:
+            self._fire(self.engine.store.update_session(self.current_session_id, model=model))
 
     async def _refresh_cost(self) -> None:
         if not self.current_session_id:

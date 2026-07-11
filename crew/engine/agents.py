@@ -15,7 +15,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .config import GLOBAL_DIR, Config
 
-_PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "assets" / "prompts"
+from .resources import prompts_dir
+
+_PROMPTS_DIR = prompts_dir()
 
 
 class AgentDef(BaseModel):

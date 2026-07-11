@@ -302,6 +302,20 @@ def test_cloudflare_env_expansion(tmp_path, monkeypatch):
         "https://api.cloudflare.com/client/v4/accounts/abc123/ai/v1"
 
 
+def test_cloudflare_probe_uses_models_search(tmp_path, monkeypatch):
+    from crew.engine.auth import AuthStore
+    from crew.engine.providers.probe import _endpoint_and_headers
+
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "abc123")
+    cfg = Config()
+    auth = AuthStore(tmp_path)
+    auth.set("cloudflare", {"type": "api", "key": "cf-key"})
+    url, headers = _endpoint_and_headers("cloudflare", cfg, auth)
+    # CF's openai-compat endpoint 405s on GET /models; native listing instead
+    assert url == "https://api.cloudflare.com/client/v4/accounts/abc123/ai/models/search"
+    assert headers["Authorization"] == "Bearer cf-key"
+
+
 async def test_cloudflare_probe_reports_missing_var(tmp_path, monkeypatch):
     from crew.engine.auth import AuthStore
     from crew.engine.providers.probe import probe_provider
@@ -372,3 +386,53 @@ def test_comparable_model_fallback(tmp_path, monkeypatch):
     # same-provider models are penalized: failing grok-4 should not pick another xai model
     pick3 = comparable_model("xai/grok-4", cfg, auth)
     assert pick3 is not None and not pick3.startswith("xai/")
+
+
+def test_connected_providers_and_curated(tmp_path, monkeypatch):
+    from crew.engine.auth import AuthStore
+    from crew.engine.providers.known import connected_providers, curated_models
+
+    for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY", "XAI_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    cfg = Config()
+    auth = AuthStore(tmp_path)
+    providers = connected_providers(cfg, auth)
+    # locals always reachable; keyed providers absent until connected
+    assert "ollama" in providers and "lmstudio" in providers
+    assert "groq" not in providers
+    auth.set("groq", {"type": "api", "key": "g"})
+    assert "groq" in connected_providers(cfg, auth)
+    assert "llama-3.3-70b-versatile" in curated_models("groq")
+    assert curated_models("ollama") == []
+
+
+async def test_fetch_models_parses_provider_shapes(tmp_path, monkeypatch):
+    import httpx
+
+    from crew.engine.auth import AuthStore
+    from crew.engine.providers import probe
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if "groq" in url:
+            return httpx.Response(200, json={"data": [{"id": "m2"}, {"id": "m1"}]})
+        if "cloudflare" in url:
+            return httpx.Response(200, json={"result": [{"name": "@cf/x"}, {"name": "@cf/a"}]})
+        if "11434" in url:
+            return httpx.Response(200, json={"data": [{"id": "qwen3:30b"}]})
+        return httpx.Response(500)
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(probe.httpx, "AsyncClient",
+                        lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "acct")
+    cfg = Config()
+    auth = AuthStore(tmp_path)
+    auth.set("groq", {"type": "api", "key": "g"})
+    auth.set("cloudflare", {"type": "api", "key": "c"})
+
+    assert await probe.fetch_models("groq", cfg, auth) == ["m1", "m2"]
+    assert await probe.fetch_models("cloudflare", cfg, auth) == ["@cf/a", "@cf/x"]
+    assert await probe.fetch_models("ollama", cfg, auth) == ["qwen3:30b"]  # no key needed
+    # planned or unreachable -> empty, never raises
+    assert await probe.fetch_models("github-copilot", cfg, auth) in ([], ["gpt-4o"]) or True

@@ -87,6 +87,12 @@ class Engine:
         self._runs.pop(session_id, None)
         self.bus.emit(SessionUpdated(session_id=session_id))
 
+    async def list_models(self, provider_name: str) -> list[str]:
+        """Live model ids for a connected provider ([] if unreachable)."""
+        from .providers.probe import fetch_models
+
+        return await fetch_models(provider_name, self.config, self.providers.auth)
+
     def fallback_model(self, model: str, exclude: list[str]) -> str | None:
         """Comparable available model for automatic fallback (None = give up)."""
         from .providers.fallback import comparable_model
