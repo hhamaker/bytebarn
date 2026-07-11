@@ -50,8 +50,9 @@ def comparable_model(
         if not info.supports_tools:
             return _UNUSABLE
         cost_gap = abs(info.cost_out - cur.cost_out)
-        # the failing model's provider is suspect: prefer a different one
-        same_provider_penalty = 5.0 if provider == cur_provider else 0.0
+        # the failing model's provider is suspect (outage, quota, bad key):
+        # a different provider always beats a closer cost match on the same one
+        same_provider_penalty = 1000.0 if provider == cur_provider else 0.0
         return cost_gap + same_provider_penalty
 
     best = min(candidates, key=score)

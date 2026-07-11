@@ -107,8 +107,8 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
                 "@cf/qwen/qwen2.5-coder-32b-instruct",
                 "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
             ),
-            note="Set the CLOUDFLARE_ACCOUNT_ID env var, or replace"
-                 " ${CLOUDFLARE_ACCOUNT_ID} in the base URL with your account id.",
+            note="Paste your account id in the IDs field below (find it at"
+                 " dash.cloudflare.com → Workers & Pages, right sidebar).",
         ),
         ProviderSpec(
             id="cloudflare-ai-gateway", label="Cloudflare AI Gateway",
@@ -119,8 +119,8 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
                 "openai/gpt-4o", "anthropic/claude-sonnet-4-5",
                 "google-ai-studio/gemini-2.5-flash",
             ),
-            note="One gateway in front of many upstreams. Set CLOUDFLARE_ACCOUNT_ID"
-                 " and CLOUDFLARE_GATEWAY_ID env vars, or edit the base URL.",
+            note="One gateway in front of many upstreams. Paste your account id"
+                 " and gateway id in the IDs fields below.",
         ),
         ProviderSpec(
             id="ollama", label="Ollama (local)", base_url="http://localhost:11434/v1",

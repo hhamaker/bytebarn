@@ -151,6 +151,14 @@ class ProviderManager(QDialog):
         url_row.addWidget(self.base_url_edit, 1)
         url_row.addWidget(save_url)
 
+        # per-provider ids (Cloudflare account/gateway): one field per
+        # ${PLACEHOLDER} in the provider's base URL
+        self.ids_container = QWidget()
+        self.ids_layout = QHBoxLayout(self.ids_container)
+        self.ids_layout.setContentsMargins(0, 0, 0, 0)
+        self.id_edits: dict[str, QLineEdit] = {}
+        self.ids_label = QLabel("IDs")
+
         self.oauth_button = QPushButton("🌐 Log in via web")
         self.oauth_button.setToolTip(
             "No API key needed — sign in with your account in the browser")
@@ -166,6 +174,7 @@ class ProviderManager(QDialog):
         form.addRow(self.note)
         form.addRow(self.key_link)
         form.addRow("API key", key_row)
+        form.addRow(self.ids_label, self.ids_container)
         form.addRow("base URL", url_row)
         form.addRow(self.oauth_button)
         form.addRow(self.test_button)
@@ -225,6 +234,68 @@ class ProviderManager(QDialog):
             self.oauth_button.setText("🌐 Log in via web")
         self.test_button.setEnabled(not spec.planned)
         self.test_result.setText("")
+        self._rebuild_id_fields(spec)
+
+    def _rebuild_id_fields(self, spec: ProviderSpec) -> None:
+        """One friendly input per ${PLACEHOLDER} in the provider's base URL
+        (e.g. Cloudflare account id) — nicer than hand-editing the URL."""
+        import re
+
+        while self.ids_layout.count():
+            item = self.ids_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self.id_edits.clear()
+
+        placeholders = re.findall(r"\$\{([A-Z0-9_]+)\}", spec.base_url or "")
+        show = bool(placeholders)
+        self.ids_label.setVisible(show)
+        self.ids_container.setVisible(show)
+        if not show:
+            return
+
+        # prefill from a previously saved URL by matching it against the template
+        saved = ""
+        pconf = self.engine.config.provider.get(spec.id)
+        if pconf and pconf.base_url and "${" not in pconf.base_url:
+            saved = pconf.base_url
+        pattern = re.escape(spec.base_url)
+        for var in placeholders:
+            pattern = pattern.replace(re.escape("${" + var + "}"), f"(?P<{var}>[^/]+)")
+        match = re.fullmatch(pattern, saved) if saved else None
+
+        import os
+
+        for var in placeholders:
+            edit = QLineEdit()
+            label = var.replace("CLOUDFLARE_", "").replace("_", " ").lower()
+            edit.setPlaceholderText(label)
+            edit.setToolTip(f"Fills ${{{var}}} in the base URL (env var {var} also works)")
+            value = (match.group(var) if match else "") or os.environ.get(var, "")
+            edit.setText(value)
+            self.id_edits[var] = edit
+            self.ids_layout.addWidget(edit, 1)
+        save_ids = QPushButton("Save IDs")
+        save_ids.clicked.connect(self._save_ids)
+        self.ids_layout.addWidget(save_ids)
+
+    def _save_ids(self) -> None:
+        spec = self._current
+        if spec is None or not self.id_edits:
+            return
+        url = spec.base_url or ""
+        for var, edit in self.id_edits.items():
+            value = edit.text().strip()
+            if not value:
+                self.test_result.setText(f"enter a value for {var.lower().replace('_', ' ')}")
+                return
+            url = url.replace("${" + var + "}", value)
+        patch_config_file(self.engine.global_dir / "config.json", {
+            f"provider.{spec.id}.base_url": url,
+            f"provider.{spec.id}.api": spec.api,
+        })
+        self.base_url_edit.setText(url)
+        self._after_change("IDs saved — base URL filled in")
 
     # ------------------------------------------------------------------
 

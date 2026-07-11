@@ -37,11 +37,13 @@ Type `/goal add a --verbose flag to the CLI and test it` in the prompt bar:
 2. It casts a crew from the available subagents (`general`, `explore`, plus
    any you drop into `.crew/agent/*.md`) and delegates tasks — in parallel
    when independent.
-3. The **crew stage** appears: one pixel-art critter per subagent (species
-   by stable hash of the agent name, tinted with its configured color),
-   ropes to the crowned orchestrator, pulse dots while working, worried
-   brows on retry, happy eyes when done, sleeping critters for todos not
-   yet delegated. Click a critter to open its session; back button returns.
+3. The **crew stage** appears: one pixel-art critter per subagent, roped to
+   the crowned orchestrator, with a live headline (working/done/failed/queued
+   counts + elapsed time + the todo in progress) and a per-critter status
+   line (live tool activity, ✓ done, ✗ failed badges). Known agent types get
+   signature looks (explore is a bunny, testers wear goggles, reviewers wear
+   glasses, planners wear hats…); custom agents get a stable species +
+   accessory from their name. Click a critter to open its session.
 4. The orchestrator verifies results and reports a per-agent summary.
 
 ## Configuration
@@ -70,6 +72,46 @@ tolerated; in-app edits patch files key-by-key, preserving your comments.
 Any OpenAI-compatible endpoint works (LM Studio, Ollama, OpenRouter, Groq)
 via `base_url` + `"api": "openai"`.
 
+### Provider connections (⚡ providers in the status bar)
+
+Pick a provider, paste a key or **🌐 log in via web**, hit *Test connection*:
+
+| Provider | Auth | Notes |
+|---|---|---|
+| Anthropic (Claude) | API key or web login | sign in with a Claude Pro/Max account |
+| OpenAI | API key / `OPENAI_API_KEY` | |
+| xAI (Grok) | API key or web login | browser code confirmation |
+| Groq | API key / `GROQ_API_KEY` | |
+| OpenRouter | API key / `OPENROUTER_API_KEY` | one key, many models |
+| Google (Gemini) | API key / `GEMINI_API_KEY` | |
+| Mistral | API key / `MISTRAL_API_KEY` | |
+| DeepSeek | API key / `DEEPSEEK_API_KEY` | |
+| Together AI | API key / `TOGETHER_API_KEY` | |
+| Cerebras | API key / `CEREBRAS_API_KEY` | |
+| Cloudflare Workers AI | API key / `CLOUDFLARE_API_KEY` | needs `CLOUDFLARE_ACCOUNT_ID` |
+| Cloudflare AI Gateway | API key / `CLOUDFLARE_API_KEY` | needs account + `CLOUDFLARE_GATEWAY_ID` |
+| Ollama | none | local, `http://localhost:11434/v1` |
+| LM Studio | none | local, `http://localhost:1234/v1` |
+| GitHub Copilot | web login | GitHub device code — needs a Copilot subscription |
+
+Web login flavors: xAI and Copilot show a short code to confirm in the
+browser (auto-copied to your clipboard; the dialog closes itself on
+approval). Anthropic opens claude.ai's consent page, which shows a code you
+paste back. Tokens refresh automatically. Keys go to `~/.crew/auth.json`
+(0600) — never project config. Model pickers only list models from
+connected providers.
+
+### Model fallback
+
+If a model keeps failing mid-run (outage, quota), Crew retries once, then
+switches to a comparable connected model — closest cost tier, different
+provider preferred — announces the switch in the transcript, and keeps
+going. Tune or disable it:
+
+```jsonc
+"model_fallback": { "enabled": true, "after": 2 }
+```
+
 ### Custom agents: drop in a file, the crew grows
 
 `.crew/agent/tester.md` (hot-reloaded, no restart):
@@ -89,6 +131,10 @@ You are the TESTER. ...
 The orchestrator sees every visible subagent's description in its task tool
 and picks accordingly. A file named after a built-in (`build`, `plan`,
 `orchestrator`, `general`, `explore`) merges over it.
+
+Prefer a GUI? **🐾 agents** in the status bar opens the agent editor with a
+live critter preview per agent. Sessions are managed from the sidebar:
+right-click one to **close** (archive) or **delete** it, subagents and all.
 
 Custom commands: `.crew/command/foo.md` with a `$ARGUMENTS` template →
 `/foo`. Built-ins: `/goal`, `/compact`, `/new`, `/model`, `/agents`.
@@ -117,7 +163,6 @@ poisoned.
 
 ## Known gaps (v1)
 
-- Theme/font settings are stored but light/dark palette switching is not applied yet.
 - `@file` completion inserts the path; image attachment parts are stored but
   not previewed in the transcript.
 - Packaging (PyInstaller/Briefcase) not wired; run from the venv.

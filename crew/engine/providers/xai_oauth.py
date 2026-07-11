@@ -18,6 +18,7 @@ import hashlib
 import secrets
 import time
 import urllib.parse
+from dataclasses import dataclass
 from typing import Any, Callable
 
 import httpx
@@ -28,6 +29,13 @@ import httpx
 CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"
 AUTHORIZE_URL = "https://auth.x.ai/oauth2/authorize"
 TOKEN_URL = "https://auth.x.ai/oauth2/token"
+# RFC 8628 device authorization grant — exposed by xAI's
+# /.well-known/openid-configuration as `device_authorization_endpoint`.
+# This is the flow xAI's own auth pages steer Grok-CLI logins toward
+# (the browser shows a short-code confirmation page), so it is the
+# default "log in via web" path.
+DEVICE_AUTHORIZATION_URL = "https://auth.x.ai/oauth2/device/code"
+DEVICE_CODE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
 SCOPE = "openid profile email offline_access grok-cli:access api:access"
 API_BASE_URL = "https://api.x.ai/v1"
 
@@ -154,7 +162,108 @@ def _record_from_tokens(tokens: dict[str, Any], prev_refresh: str | None = None)
 
 
 # ---------------------------------------------------------------------------
-# Loopback authorization-code flow
+# Device-code flow (RFC 8628) — the primary "log in via web" path
+# ---------------------------------------------------------------------------
+
+# Poll-loop bounds. xAI returns `interval`/`expires_in` in seconds but we
+# defend against missing or garbage values.
+_DEVICE_DEFAULT_INTERVAL = 5.0
+_DEVICE_MIN_INTERVAL = 1.0
+_DEVICE_SLOW_DOWN_INCREMENT = 5.0
+_DEVICE_DEFAULT_EXPIRES = 300.0
+_DEVICE_POLL_MARGIN = 3.0
+
+
+@dataclass
+class DeviceCode:
+    verification_uri: str
+    user_code: str
+    device_code: str
+    interval: float
+    expires_in: float
+    # xAI also returns a URL with the code pre-filled; open this one when present
+    verification_uri_complete: str = ""
+
+
+def _positive_seconds(value: Any, default: float) -> float:
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return default
+    return seconds if seconds > 0 else default
+
+
+async def request_device_code() -> DeviceCode:
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            DEVICE_AUTHORIZATION_URL,
+            headers=_auth_headers(),
+            data={"client_id": CLIENT_ID, "scope": SCOPE},
+        )
+    if resp.status_code >= 400:
+        raise RuntimeError(f"xAI device code request failed ({resp.status_code}): {resp.text}")
+    data = resp.json()
+    if not all(data.get(k) for k in ("device_code", "user_code", "verification_uri")):
+        raise RuntimeError("xAI device code response is missing required fields")
+    return DeviceCode(
+        verification_uri=data["verification_uri"],
+        user_code=data["user_code"],
+        device_code=data["device_code"],
+        interval=_positive_seconds(data.get("interval"), _DEVICE_DEFAULT_INTERVAL),
+        expires_in=_positive_seconds(data.get("expires_in"), _DEVICE_DEFAULT_EXPIRES),
+        verification_uri_complete=data.get("verification_uri_complete") or "",
+    )
+
+
+async def poll_device_code_token(
+    device: DeviceCode,
+    on_status: Callable[[str], Any] | None = None,
+) -> dict[str, Any]:
+    """Poll until the user approves the code in the browser; returns an oauth record."""
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + device.expires_in
+    interval = max(device.interval, _DEVICE_MIN_INTERVAL)
+    async with httpx.AsyncClient(timeout=30) as client:
+        while loop.time() < deadline:
+            resp = await client.post(
+                TOKEN_URL,
+                headers=_auth_headers(),
+                data={
+                    "grant_type": DEVICE_CODE_GRANT_TYPE,
+                    "client_id": CLIENT_ID,
+                    "device_code": device.device_code,
+                },
+            )
+            if resp.status_code < 400:
+                return _record_from_tokens(resp.json())
+            try:
+                body = resp.json()
+            except ValueError:
+                body = {}
+            error = body.get("error", "")
+            remaining = max(0.0, deadline - loop.time())
+            # RFC 8628 §3.5: authorization_pending = keep polling; slow_down =
+            # bump the interval by ≥5s and keep polling. Anything else is terminal.
+            if error == "authorization_pending":
+                if on_status:
+                    on_status("waiting for approval in the browser…")
+                await asyncio.sleep(min(interval + _DEVICE_POLL_MARGIN, remaining))
+                continue
+            if error == "slow_down":
+                interval += _DEVICE_SLOW_DOWN_INCREMENT
+                await asyncio.sleep(min(interval + _DEVICE_POLL_MARGIN, remaining))
+                continue
+            if error in ("access_denied", "authorization_denied"):
+                raise RuntimeError("login was denied")
+            if error == "expired_token":
+                raise RuntimeError("code expired — try logging in again")
+            detail = body.get("error_description") or error or resp.text[:120]
+            raise RuntimeError(f"xAI device token exchange failed ({resp.status_code}): {detail}")
+    raise TimeoutError("login timed out — try again")
+
+
+# ---------------------------------------------------------------------------
+# Loopback authorization-code flow (legacy fallback)
 # ---------------------------------------------------------------------------
 
 

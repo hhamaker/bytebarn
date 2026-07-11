@@ -324,3 +324,97 @@ async def test_goal_command_routes_to_orchestrator(engine):
     history = await _collect(engine, session.id)
     first_user_text = history[0][1][0].data["text"]
     assert "<goal>\nbuild the thing\n</goal>" in first_user_text
+
+
+async def test_provider_error_visible_in_transcript(engine):
+    from crew.engine.providers.base import ErrorEv
+
+    class Failing:
+        name = "fake"
+
+        async def stream(self, req):
+            yield ErrorEv("Could not resolve authentication method")
+
+    engine.providers.register("fake", Failing())
+    engine.fallback_model = lambda model, exclude: None  # no stand-in available
+    session = await engine.new_session()
+    await _run_and_wait(engine, session, "hi")
+
+    history = await _collect(engine, session.id)
+    assistant_parts = [p for m, parts in history if m.role == "assistant" for p in parts]
+    texts = [p.data.get("text", "") for p in assistant_parts if p.type == "text"]
+    # the error must appear as a visible transcript part, with the providers hint
+    assert any("⚠" in t and "authentication" in t.lower() for t in texts)
+    assert any("⚡ providers" in t for t in texts)
+
+
+async def test_model_fallback_switches_after_failures(engine):
+    from crew.engine.providers.base import ErrorEv
+    from crew.engine.providers.fake import FakeProvider, text_turn
+
+    class AlwaysFails:
+        name = "fake"
+
+        async def stream(self, req):
+            yield ErrorEv("500 upstream exploded")
+
+    engine.providers.register("fake", AlwaysFails())
+    backup = FakeProvider([text_turn("rescued by backup model")])
+    engine.providers.register("backup", backup)
+    engine.fallback_model = lambda model, exclude: (
+        "backup/rescue-1" if "backup/rescue-1" not in exclude else None
+    )
+
+    session = await engine.new_session()
+    await _run_and_wait(engine, session, "hi")
+
+    history = await _collect(engine, session.id)
+    texts = [p.data.get("text", "")
+             for m, parts in history if m.role == "assistant" for p in parts if p.type == "text"]
+    # failed twice (default after=2), then announced the switch, then succeeded
+    assert any("failed (1/2)" in t for t in texts)
+    assert any("switching to comparable model backup/rescue-1" in t for t in texts)
+    assert any("rescued by backup model" in t for t in texts)
+    # the successful turn is attributed to the backup model
+    models = [m.model for m, _ in history if m.role == "assistant"]
+    assert "rescue-1" in models
+
+
+async def test_model_fallback_disabled_by_config(tmp_path):
+    import json as _json
+
+    from crew.engine.facade import Engine
+    from crew.engine.providers.base import ErrorEv
+
+    proj = tmp_path / "proj2"
+    proj.mkdir()
+    gdir = tmp_path / "global2"
+    gdir.mkdir()
+    (gdir / "config.json").write_text(_json.dumps({
+        "model": "fake/model", "small_model": "small/model",
+        "model_fallback": {"enabled": False},
+    }))
+    eng = Engine(proj, db_path=tmp_path / "crew2.db", global_dir=gdir)
+    await eng.start()
+    try:
+        calls = {"n": 0}
+
+        class AlwaysFails:
+            name = "fake"
+
+            async def stream(self, req):
+                calls["n"] += 1
+                yield ErrorEv("boom")
+
+        eng.providers.register("fake", AlwaysFails())
+        from crew.engine.providers.fake import FakeProvider, text_turn
+
+        eng.providers.register("small", FakeProvider(lambda req: text_turn("t")))
+        eng.fallback_model = lambda model, exclude: "backup/never"
+        session = await eng.new_session()
+        await eng.submit_prompt(session.id, "hi")
+        await eng._runs[session.id].task
+        # disabled: one failed turn, no retry, no switch
+        assert calls["n"] == 1
+    finally:
+        await eng.stop()
