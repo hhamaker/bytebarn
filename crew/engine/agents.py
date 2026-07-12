@@ -175,5 +175,9 @@ class AgentRegistry:
         return [a for a in self.agents.values()
                 if a.mode in ("subagent", "all") and not a.hidden]
 
+    def color_of(self, name: str, default: str = "#98c379") -> str:
+        agent = self.agents.get(name)
+        return (agent.color if agent and agent.color else default)
+
     def subagent_descriptions(self) -> list[tuple[str, str]]:
         return [(a.name, a.description) for a in self.subagents()]

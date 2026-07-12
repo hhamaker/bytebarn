@@ -489,3 +489,46 @@ def test_cloudflare_provider_disables_compression(tmp_path, monkeypatch):
     provider, _, _ = reg.resolve("cloudflare/@cf/zai-org/glm-5.2")
     # Workers AI streaming mislabels gzip; identity avoids zlib error -3
     assert provider._client.default_headers.get("Accept-Encoding") == "identity"
+
+
+def test_bedrock_spec_and_registry(tmp_path, monkeypatch):
+    from crew.engine.providers.bedrock import BedrockProvider, resolve_region
+    from crew.engine.providers.known import KNOWN_PROVIDERS, connection_status
+    from crew.engine.auth import AuthStore
+
+    spec = KNOWN_PROVIDERS["bedrock"]
+    assert spec.api == "anthropic"
+    assert any("claude-sonnet" in m for m in spec.models)
+
+    monkeypatch.setenv("AWS_REGION", "eu-west-1")
+    assert resolve_region() == "eu-west-1"
+    monkeypatch.delenv("AWS_REGION", raising=False)
+    monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+    assert resolve_region() == "us-east-1"
+    assert resolve_region("ap-south-1") == "ap-south-1"
+
+    # env creds -> connected
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIA_TEST")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
+    cfg = Config()
+    auth = AuthStore(tmp_path)
+    assert connection_status(spec, cfg, auth) == "connected-env"
+
+    reg = ProviderRegistry(cfg, global_dir=tmp_path)
+    provider, model_id, info = reg.resolve(
+        "bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0")
+    assert isinstance(provider, BedrockProvider)
+    assert model_id.startswith("us.anthropic.claude-haiku")
+    assert info.cost_out == 5.0  # catalog entry present
+
+
+async def test_bedrock_probe_without_creds(tmp_path, monkeypatch):
+    from crew.engine.auth import AuthStore
+    from crew.engine.providers import bedrock
+    from crew.engine.providers.probe import probe_provider
+
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("AWS_PROFILE", raising=False)
+    monkeypatch.setattr(bedrock, "credentials_present", lambda: False)
+    ok, msg = await probe_provider("bedrock", Config(), AuthStore(tmp_path))
+    assert not ok and "AWS" in msg

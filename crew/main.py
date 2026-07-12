@@ -8,7 +8,7 @@ import sys             # lookup ("unknown encoding: idna") when a network
 from pathlib import Path  # thread triggers the first import
 
 import qasync
-from PySide6.QtWidgets import QApplication, QFileDialog
+from PySide6.QtWidgets import QApplication
 
 from .app.icon import app_icon
 from .app.main_window import MainWindow
@@ -24,13 +24,23 @@ def main() -> None:
     # so don't let Qt quit out from under the asyncio teardown
     app.setQuitOnLastWindowClosed(False)
 
+    # directories are per session now — no startup picker. Root the engine
+    # at the last folder the user worked in (or home) and let each session
+    # choose its own directory.
     if len(sys.argv) > 1:
         project_dir = Path(sys.argv[1]).resolve()
     else:
-        picked = QFileDialog.getExistingDirectory(None, "Open project directory")
-        if not picked:
-            sys.exit(0)
-        project_dir = Path(picked)
+        project_dir = Path.home()
+        try:
+            from .engine.config import GLOBAL_DIR, lenient_json_loads
+
+            cfg_path = GLOBAL_DIR / "config.json"
+            if cfg_path.exists():
+                last = lenient_json_loads(cfg_path.read_text()).get("last_project", "")
+                if last and Path(last).is_dir():
+                    project_dir = Path(last)
+        except Exception:
+            pass
 
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)

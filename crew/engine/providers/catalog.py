@@ -59,6 +59,10 @@ CATALOG: dict[str, ModelInfo] = {
     # Cerebras
     "llama-3.3-70b": ModelInfo(65_536, 8192, True, 0.85, 1.2),
     "qwen-3-32b": ModelInfo(65_536, 8192, True, 0.4, 0.8),
+    # AWS Bedrock (Claude; same list prices as first-party)
+    "us.anthropic.claude-sonnet-4-5-20250929-v1:0": ModelInfo(200_000, 64_000, True, 3.0, 15.0),
+    "us.anthropic.claude-haiku-4-5-20251001-v1:0": ModelInfo(200_000, 64_000, True, 1.0, 5.0),
+    "us.anthropic.claude-opus-4-1-20250805-v1:0": ModelInfo(200_000, 32_000, True, 15.0, 75.0),
     # Cloudflare Workers AI
     "@cf/meta/llama-3.3-70b-instruct-fp8-fast": ModelInfo(131_072, 8192, True, 0.29, 2.25),
     "@cf/qwen/qwen2.5-coder-32b-instruct": ModelInfo(32_768, 8192, True, 0.66, 1.0),

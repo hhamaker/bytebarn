@@ -240,3 +240,82 @@ def test_thinking_indicator_lifecycle(qapp):
     assert t._thinking is None
     # explicit dismissal is idempotent
     t.dismiss_thinking()
+
+
+def test_session_list_keyboard_navigation_selects(qapp):
+    from types import SimpleNamespace
+    import time as _time
+
+    from crew.app.session_list import SessionList
+
+    def sess(sid, agent="build"):
+        return SimpleNamespace(id=sid, title=sid, agent=agent, model="",
+                               updated_at=_time.time(), parent_session_id=None)
+
+    sl = SessionList()
+    picked: list[str] = []
+    sl.session_selected.connect(picked.append)
+    sl.populate([sess("a"), sess("b"), sess("c")], {}, set(), "a")
+    # populate itself must not emit (signals blocked during rebuild)
+    assert picked == []
+    # keyboard-style navigation: changing currentItem emits selection
+    sl.tree.setCurrentItem(sl.tree.topLevelItem(1))
+    assert picked == ["b"]
+    sl.tree.setCurrentItem(sl.tree.topLevelItem(2))
+    assert picked == ["b", "c"]
+
+
+def test_session_list_reselects_child_session(qapp):
+    from types import SimpleNamespace
+    import time as _time
+
+    from crew.app.session_list import SessionList
+
+    def sess(sid, parent=None):
+        return SimpleNamespace(id=sid, title=sid, agent="explore", model="",
+                               updated_at=_time.time(), parent_session_id=parent)
+
+    sl = SessionList()
+    parent = sess("p")
+    child = sess("c1", parent="p")
+    sl.populate([parent], {"p": [child]}, set(), "c1")
+    current = sl.tree.currentItem()
+    from PySide6.QtCore import Qt
+
+    assert current is not None and current.data(0, Qt.UserRole) == "c1"
+
+
+def test_agent_list_grouped_by_mode(qapp, tmp_path):
+    from PySide6.QtCore import Qt
+
+    from crew.app.agent_editor import AgentEditor
+    from crew.engine.facade import Engine
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=tmp_path / "g")
+    editor = AgentEditor(engine)
+
+    labels = [editor.agent_list.item(i).text() for i in range(editor.agent_list.count())]
+    assert any("PRIMARY" in l for l in labels)
+    assert any("SUBAGENTS" in l for l in labels)
+    # headers are not selectable and carry no agent
+    headers = [editor.agent_list.item(i) for i in range(editor.agent_list.count())
+               if editor.agent_list.item(i).data(Qt.UserRole) is None]
+    assert headers and all(not (h.flags() & Qt.ItemIsSelectable) for h in headers)
+    # primaries listed before subagents; explore (subagent) after build (primary)
+    names = [editor.agent_list.item(i).data(Qt.UserRole)
+             for i in range(editor.agent_list.count())]
+    assert names.index("build") < names.index("explore")
+
+
+def test_menu_bar_has_menus(qapp, tmp_path):
+    from crew.app.main_window import MainWindow
+    from crew.engine.facade import Engine
+
+    proj = tmp_path / "proj2"
+    proj.mkdir()
+    engine = Engine(proj, db_path=tmp_path / "db2.sqlite", global_dir=tmp_path / "g2")
+    window = MainWindow(engine)
+    titles = [a.menu().title() for a in window.menuBar().actions() if a.menu()]
+    assert titles == ["&File", "&Session", "&Tools", "&Help"]

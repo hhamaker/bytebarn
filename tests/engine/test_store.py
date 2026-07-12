@@ -92,3 +92,15 @@ async def test_delete_session_cascades(store, tmp_path):
     assert await store.get_session(child.id) is None
     assert await store.list_messages(parent.id) == []
     assert await store.get_todos(parent.id) == []
+
+
+async def test_session_directory_roundtrip(store, tmp_path):
+    proj = await store.open_project(str(tmp_path))
+    sess = await store.create_session(proj.id, directory="/some/other/dir")
+    got = await store.get_session(sess.id)
+    assert got.directory == "/some/other/dir"
+    # default: empty = project dir
+    plain = await store.create_session(proj.id)
+    assert (await store.get_session(plain.id)).directory == ""
+    await store.update_session(sess.id, directory="/moved")
+    assert (await store.get_session(sess.id)).directory == "/moved"

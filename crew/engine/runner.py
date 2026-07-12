@@ -190,7 +190,8 @@ class Runner:
         tool_map = {t.name: t for t in tools}
         ctx = self._make_context(session, agent, handle)
 
-        system = await build_system_prompt(agent, engine.project_dir, engine.config.instructions)
+        cwd = Path(session.directory) if session.directory else engine.project_dir
+        system = await build_system_prompt(agent, cwd, engine.config.instructions)
 
         # model fallback: after N consecutive failed turns, switch to a
         # comparable available model instead of giving up (spec-free QoL)
@@ -467,8 +468,9 @@ class Runner:
         async def run_subagent(agent: str, prompt: str, description: str, task_id: str | None) -> str:
             return await engine.run_subagent(session, agent, prompt, description, task_id)
 
+        session_dir = Path(session.directory) if session.directory else engine.project_dir
         return ToolContext(
-            cwd=engine.project_dir,
+            cwd=session_dir,
             session_id=session.id,
             store=engine.store,
             bus=engine.bus,

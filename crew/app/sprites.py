@@ -241,6 +241,25 @@ def draw_critter(
     painter.restore()
 
 
+DEFAULT_CAST = (("orchestrator", "#e5c07b"), ("build", "#61afef"),
+                ("explore", "#56b6c2"), ("general", "#98c379"))
+
+
+def crew_banner(cast=DEFAULT_CAST, scale: int = 4) -> QPixmap:
+    """Row of critters (welcome screen, first-run wizard, docs shots)."""
+    image = QImage((SPRITE_W + 6) * scale * len(cast), (SPRITE_H + 4) * scale,
+                   QImage.Format_ARGB32)
+    image.fill(0)
+    painter = QPainter(image)
+    for i, (name, color) in enumerate(cast):
+        species, accent = look_for(name)
+        draw_critter(painter, (i * (SPRITE_W + 6) + 3) * scale, 3 * scale, scale,
+                     species, QColor(color), state="done", accent=accent,
+                     crowned=name == "orchestrator")
+    painter.end()
+    return QPixmap.fromImage(image)
+
+
 def critter_pixmap(agent_name: str, color: str | QColor, scale: int = 4) -> QPixmap:
     """Standalone critter portrait (icons, previews)."""
     image = QImage((SPRITE_W + 2) * scale, (SPRITE_H + 3) * scale, QImage.Format_ARGB32)

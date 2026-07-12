@@ -72,38 +72,27 @@ async def poll_for_token(
     timeout: float = 900.0,
 ) -> dict[str, Any]:
     """Poll until the user approves in the browser; returns an oauth record."""
-    deadline = asyncio.get_event_loop().time() + timeout
-    interval = device.interval
-    async with httpx.AsyncClient(timeout=30) as client:
-        while True:
-            if asyncio.get_event_loop().time() > deadline:
-                raise TimeoutError("login timed out — try again")
-            response = await client.post(
-                ACCESS_TOKEN_URL,
-                headers={
-                    "Accept": "application/json",
-                    "Content-Type": "application/json",
-                    "User-Agent": USER_AGENT,
-                },
-                json={
-                    "client_id": CLIENT_ID,
-                    "device_code": device.device_code,
-                    "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-                },
-            )
-            if response.status_code != 200:
-                raise RuntimeError(f"token poll failed (HTTP {response.status_code})")
-            data = response.json()
-            token = data.get("access_token")
-            if token:
-                return {"type": "oauth", "access": token, "refresh": token, "expires": 0}
-            error = data.get("error")
-            if error == "authorization_pending":
-                if on_status:
-                    on_status("waiting for approval in the browser…")
-            elif error == "slow_down":
-                # RFC 8628 §3.5: add 5s, or take the server's new interval
-                interval = float(data.get("interval") or interval + 5)
-            elif error:
-                raise RuntimeError(data.get("error_description") or error)
-            await asyncio.sleep(interval + _POLL_MARGIN)
+    from .device_flow import poll_device_token
+
+    tokens = await poll_device_token(
+        ACCESS_TOKEN_URL,
+        {
+            "client_id": CLIENT_ID,
+            "device_code": device.device_code,
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+        },
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": USER_AGENT,
+        },
+        encoding="json",
+        interval=device.interval,
+        expires_in=timeout,
+        margin=_POLL_MARGIN,
+        client_factory=lambda **kw: httpx.AsyncClient(**kw),
+        on_status=on_status,
+        provider_label="GitHub",
+    )
+    token = tokens["access_token"]
+    return {"type": "oauth", "access": token, "refresh": token, "expires": 0}

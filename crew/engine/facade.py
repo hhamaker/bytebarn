@@ -73,9 +73,12 @@ class Engine:
 
     # -- sessions ------------------------------------------------------------
 
-    async def new_session(self, agent: str = "build", model: str = "") -> Session:
-        """Create a session in the current project and announce it."""
-        session = await self.store.create_session(self.project.id, agent=agent, model=model)
+    async def new_session(
+        self, agent: str = "build", model: str = "", directory: str = ""
+    ) -> Session:
+        """Create a session (optionally rooted in its own working directory)."""
+        session = await self.store.create_session(
+            self.project.id, agent=agent, model=model, directory=directory)
         self.bus.emit(SessionUpdated(session_id=session.id))
         return session
 
@@ -294,6 +297,7 @@ class Engine:
                 model=agent_def.model or "",
                 parent_session_id=parent.id,
                 title=description[:80],
+                directory=parent.directory,  # subagents work where the parent works
             )
         self.bus.emit(TaskStarted(
             session_id=parent.id, subagent_session_id=child.id,

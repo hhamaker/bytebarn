@@ -13,9 +13,13 @@ only network traffic is to the LLM providers you configure.
 python3.12 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 
-export ANTHROPIC_API_KEY=sk-...        # and/or OPENAI_API_KEY
-.venv/bin/python -m crew.main /path/to/your/project
+.venv/bin/python -m crew.main          # opens on your last-used folder
 ```
+
+Connect providers in-app (**⚡ providers**) — or export `ANTHROPIC_API_KEY`
+etc. before launching. Each session picks its own working directory via the
+**📁** button in the header (a path argument still works: `... crew.main
+/path/to/project`).
 
 No-GUI engine harness:
 
@@ -88,6 +92,7 @@ Pick a provider, paste a key or **🌐 log in via web**, hit *Test connection*:
 | DeepSeek | API key / `DEEPSEEK_API_KEY` | |
 | Together AI | API key / `TOGETHER_API_KEY` | |
 | Cerebras | API key / `CEREBRAS_API_KEY` | |
+| AWS Bedrock | AWS credential chain | region via `AWS_REGION`; boto3 optional for live lists |
 | Cloudflare Workers AI | API key / `CLOUDFLARE_API_KEY` | needs `CLOUDFLARE_ACCOUNT_ID` |
 | Cloudflare AI Gateway | API key / `CLOUDFLARE_API_KEY` | needs account + `CLOUDFLARE_GATEWAY_ID` |
 | Ollama | none | local, `http://localhost:11434/v1` |
@@ -170,7 +175,8 @@ poisoned.
 ```
 
 Uses PyInstaller; the app icon is rendered from the in-app sprite art.
-Launching from the Dock opens a project-picker dialog.
+Launching from the Dock opens straight into your last-used folder — each
+session picks its own working directory from there.
 
 ## Known gaps (v1)
 

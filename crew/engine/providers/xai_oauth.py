@@ -220,46 +220,27 @@ async def poll_device_code_token(
     on_status: Callable[[str], Any] | None = None,
 ) -> dict[str, Any]:
     """Poll until the user approves the code in the browser; returns an oauth record."""
-    loop = asyncio.get_event_loop()
-    deadline = loop.time() + device.expires_in
-    interval = max(device.interval, _DEVICE_MIN_INTERVAL)
-    async with httpx.AsyncClient(timeout=30) as client:
-        while loop.time() < deadline:
-            resp = await client.post(
-                TOKEN_URL,
-                headers=_auth_headers(),
-                data={
-                    "grant_type": DEVICE_CODE_GRANT_TYPE,
-                    "client_id": CLIENT_ID,
-                    "device_code": device.device_code,
-                },
-            )
-            if resp.status_code < 400:
-                return _record_from_tokens(resp.json())
-            try:
-                body = resp.json()
-            except ValueError:
-                body = {}
-            error = body.get("error", "")
-            remaining = max(0.0, deadline - loop.time())
-            # RFC 8628 §3.5: authorization_pending = keep polling; slow_down =
-            # bump the interval by ≥5s and keep polling. Anything else is terminal.
-            if error == "authorization_pending":
-                if on_status:
-                    on_status("waiting for approval in the browser…")
-                await asyncio.sleep(min(interval + _DEVICE_POLL_MARGIN, remaining))
-                continue
-            if error == "slow_down":
-                interval += _DEVICE_SLOW_DOWN_INCREMENT
-                await asyncio.sleep(min(interval + _DEVICE_POLL_MARGIN, remaining))
-                continue
-            if error in ("access_denied", "authorization_denied"):
-                raise RuntimeError("login was denied")
-            if error == "expired_token":
-                raise RuntimeError("code expired — try logging in again")
-            detail = body.get("error_description") or error or resp.text[:120]
-            raise RuntimeError(f"xAI device token exchange failed ({resp.status_code}): {detail}")
-    raise TimeoutError("login timed out — try again")
+    from .device_flow import poll_device_token
+
+    tokens = await poll_device_token(
+        TOKEN_URL,
+        {
+            "grant_type": DEVICE_CODE_GRANT_TYPE,
+            "client_id": CLIENT_ID,
+            "device_code": device.device_code,
+        },
+        headers=_auth_headers(),
+        encoding="form",
+        interval=device.interval,
+        expires_in=device.expires_in,
+        min_interval=_DEVICE_MIN_INTERVAL,
+        slow_down_increment=_DEVICE_SLOW_DOWN_INCREMENT,
+        margin=_DEVICE_POLL_MARGIN,
+        client_factory=lambda **kw: httpx.AsyncClient(**kw),
+        on_status=on_status,
+        provider_label="xAI",
+    )
+    return _record_from_tokens(tokens)
 
 
 # ---------------------------------------------------------------------------

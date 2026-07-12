@@ -534,3 +534,20 @@ async def test_init_command_routes_to_build_with_template(engine):
     assert "create an AGENTS.md file" in rendered
     assert "focus on the engine layer" in rendered   # $ARGUMENTS substituted
     assert "# AGENTS.md" in rendered
+
+
+async def test_session_directory_overrides_tool_cwd(engine, tmp_path):
+    from crew.engine.providers.fake import FakeProvider, text_turn, tool_turn
+
+    workdir = tmp_path / "elsewhere"
+    workdir.mkdir()
+    (workdir / "marker.txt").write_text("here")
+    _install(engine, [tool_turn("c1", "bash", {"command": "ls"}), text_turn("done")])
+
+    session = await engine.store.create_session(
+        engine.project.id, directory=str(workdir))
+    await _run_and_wait(engine, session, "list files")
+
+    history = await engine.store.session_parts(session.id)
+    tool_parts = [p for _, parts in history for p in parts if p.type == "tool"]
+    assert tool_parts and "marker.txt" in tool_parts[0].data["output"]

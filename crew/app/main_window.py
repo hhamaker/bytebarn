@@ -58,7 +58,7 @@ class MainWindow(QMainWindow):
         self._session_stack: list[str] = []  # for back-navigation into subagents
         self._running: set[str] = set()
 
-        self.setWindowTitle(f"Crew — {engine.project_dir.name}")
+        self.setWindowTitle("Crew")
         self.resize(1200, 800)
 
         # widgets
@@ -79,6 +79,10 @@ class MainWindow(QMainWindow):
         self.header_title = QLabel("")
         self.header_meta = QLabel("")
         self.header_meta.setStyleSheet("color: #8f96a3;")
+        self.dir_button = QPushButton("")
+        self.dir_button.setFlat(True)
+        self.dir_button.setToolTip("Working directory for this session — click to change")
+        self.dir_button.clicked.connect(self._pick_directory)
         header = QWidget()
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(8, 4, 8, 0)
@@ -87,6 +91,7 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(self.header_icon)
         header_layout.addWidget(self.header_title)
         header_layout.addWidget(self.header_meta, 1)
+        header_layout.addWidget(self.dir_button)
 
         right = QWidget()
         right_layout = QVBoxLayout(right)
@@ -123,8 +128,9 @@ class MainWindow(QMainWindow):
         agents_button.setFlat(True)
         agents_button.setToolTip("Manage agents: models, prompts, tools, colors")
         agents_button.clicked.connect(self._open_agent_editor)
-        settings_button = QPushButton("⚙")
+        settings_button = QPushButton("⚙ settings")
         settings_button.setFlat(True)
+        settings_button.setToolTip("Default models, permissions, theme")
         settings_button.clicked.connect(self._open_settings)
         self.statusBar().addWidget(self.status_project)
         self.statusBar().addWidget(QLabel("·"))
@@ -134,6 +140,8 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(agents_button)
         self.statusBar().addPermanentWidget(self.mode_combo)
         self.statusBar().addPermanentWidget(settings_button)
+
+        self._build_menus()
 
         # wiring
         self.session_list.session_selected.connect(self._open_session)
@@ -152,6 +160,117 @@ class MainWindow(QMainWindow):
         self.prompt_bar.action_requested.connect(self._action)
 
         self._refresh_pickers()
+
+    def _build_menus(self) -> None:
+        """Native menu bar (on macOS this fills the "Crew" application menu)."""
+        from PySide6.QtGui import QAction, QKeySequence
+
+        bar = self.menuBar()
+
+        file_menu = bar.addMenu("&File")
+        new_action = QAction("New Session", self)
+        new_action.setShortcut(QKeySequence.New)
+        new_action.triggered.connect(lambda: self._fire(self._new_session()))
+        close_action = QAction("Close Session", self)
+        close_action.setShortcut(QKeySequence("Ctrl+W"))
+        close_action.triggered.connect(
+            lambda: self.current_session_id
+            and self._fire(self._close_session(self.current_session_id)))
+        quit_action = QAction("Quit Crew", self)
+        quit_action.setShortcut(QKeySequence.Quit)
+        quit_action.setMenuRole(QAction.QuitRole)
+        quit_action.triggered.connect(self.close)
+        new_in_dir_action = QAction("New Session in Folder…", self)
+        new_in_dir_action.setShortcut(QKeySequence("Ctrl+Shift+N"))
+        new_in_dir_action.triggered.connect(self._new_session_in_folder)
+        file_menu.addAction(new_action)
+        file_menu.addAction(new_in_dir_action)
+        file_menu.addAction(close_action)
+        file_menu.addSeparator()
+        file_menu.addAction(quit_action)
+
+        session_menu = bar.addMenu("&Session")
+        stop_action = QAction("Stop Run", self)
+        stop_action.setShortcut(QKeySequence("Ctrl+."))
+        stop_action.triggered.connect(lambda: self._fire(self._abort()))
+        compact_action = QAction("Compact Context", self)
+        compact_action.triggered.connect(
+            lambda: self.current_session_id
+            and self._fire(self.engine.compact(self.current_session_id)))
+        delete_action = QAction("Delete Session…", self)
+        delete_action.triggered.connect(
+            lambda: self.current_session_id
+            and self._fire(self._delete_session(self.current_session_id)))
+        session_menu.addAction(stop_action)
+        session_menu.addAction(compact_action)
+        session_menu.addSeparator()
+        session_menu.addAction(delete_action)
+
+        tools_menu = bar.addMenu("&Tools")
+        providers_action = QAction("Providers…", self)
+        providers_action.setShortcut(QKeySequence("Ctrl+Shift+P"))
+        providers_action.triggered.connect(self._open_providers)
+        agents_action = QAction("Agents…", self)
+        agents_action.setShortcut(QKeySequence("Ctrl+Shift+A"))
+        agents_action.triggered.connect(self._open_agent_editor)
+        settings_action = QAction("Settings…", self)
+        settings_action.setShortcut(QKeySequence.Preferences)
+        settings_action.setMenuRole(QAction.PreferencesRole)  # macOS app menu
+        settings_action.triggered.connect(self._open_settings)
+        tools_menu.addAction(providers_action)
+        tools_menu.addAction(agents_action)
+        tools_menu.addSeparator()
+        tools_menu.addAction(settings_action)
+
+        help_menu = bar.addMenu("&Help")
+        shortcuts_action = QAction("Keyboard Shortcuts", self)
+        shortcuts_action.triggered.connect(self._show_shortcuts)
+        about_action = QAction("About Crew", self)
+        about_action.setMenuRole(QAction.AboutRole)  # macOS app menu
+        about_action.triggered.connect(self._show_about)
+        help_menu.addAction(shortcuts_action)
+        help_menu.addAction(about_action)
+
+    def _new_session_in_folder(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+
+        picked = QFileDialog.getExistingDirectory(
+            self, "Folder for the new session", str(self.engine.project_dir))
+        if not picked:
+            return
+
+        self._remember_project(picked)
+
+        async def create() -> None:
+            session = await self.engine.new_session(directory=picked)
+            await self._load_session(session.id)
+            await self._refresh_sessions()
+
+        self._fire(create())
+
+    def _show_shortcuts(self) -> None:
+        from PySide6.QtWidgets import QMessageBox
+
+        QMessageBox.information(self, "Keyboard Shortcuts", (
+            "<b>Prompt</b><br>"
+            "Enter — send · Shift+Enter — newline · Esc — stop run<br>"
+            "/ — command palette · @ — attach file<br><br>"
+            "<b>Sessions</b><br>"
+            "⌘N — new · ⌘W — close · ↑/↓ in sidebar — switch<br><br>"
+            "<b>Tools</b><br>"
+            "⌘⇧P — providers · ⌘⇧A — agents · ⌘, — settings"
+        ))
+
+    def _show_about(self) -> None:
+        from PySide6.QtWidgets import QMessageBox
+
+        QMessageBox.about(self, "About Crew", (
+            "<h3>Crew</h3>"
+            "<p>A local desktop app that runs AI coding agents — a crew of"
+            " pixel-art critters — against your own codebases.</p>"
+            "<p>Everything runs locally; the only network traffic is to the"
+            " LLM providers you connect.</p>"
+        ))
 
     # ------------------------------------------------------------------ startup
 
@@ -320,7 +439,41 @@ class MainWindow(QMainWindow):
         self._refresh_pickers(session.agent, session.model)
         await self._refresh_cost()
 
+    def _pick_directory(self) -> None:
+        if not self.current_session_id:
+            return
+        from PySide6.QtWidgets import QFileDialog
+
+        session_id = self.current_session_id
+        picked = QFileDialog.getExistingDirectory(
+            self, "Working directory for this session",
+            str(self.engine.project_dir))
+        if not picked:
+            return
+
+        self._remember_project(picked)
+
+        async def apply() -> None:
+            await self.engine.store.update_session(session_id, directory=picked)
+            session = await self.engine.store.get_session(session_id)
+            if session:
+                self._update_header(session)
+
+        self._fire(apply())
+
+    def _remember_project(self, path: str) -> None:
+        """Next app launch roots here (startup picker is gone)."""
+        from ..engine.config import patch_config_file
+
+        try:
+            patch_config_file(self.engine.global_dir / "config.json",
+                              {"last_project": path})
+        except Exception:
+            pass
+
     def _open_session(self, session_id: str) -> None:
+        if session_id == self.current_session_id:
+            return  # selection refreshes must not reload the transcript
         self._session_stack.clear()
         self._fire(self._load_session(session_id))
 
@@ -361,10 +514,7 @@ class MainWindow(QMainWindow):
     def _update_header(self, session) -> None:
         from .sprites import critter_pixmap
 
-        color = next(
-            (a.color for a in self.engine.agents.agents.values() if a.name == session.agent),
-            None,
-        ) or "#98c379"
+        color = self.engine.agents.color_of(session.agent)
         self.header_icon.setPixmap(critter_pixmap(session.agent, color, scale=2))
         self.header_title.setText(f"<b>{session.title or 'New session'}</b>")
         meta = (f"{_AGENT_DISPLAY.get(session.agent, session.agent)}"
@@ -372,14 +522,24 @@ class MainWindow(QMainWindow):
         if self.engine.is_running(session.id):
             meta += "   <span style='color:#e5c07b'>● working…</span>"
         self.header_meta.setText(meta)
+        directory = session.directory or str(self.engine.project_dir)
+        self.status_project.setText(directory)
+        self.setWindowTitle(f"Crew — {Path(directory).name}")
+        self.dir_button.setText(f"📁 {Path(directory).name}")
+        self.dir_button.setToolTip(
+            f"Working directory: {directory}\nClick to change (this session only)")
 
     async def _refresh_sessions(self) -> None:
         sessions = await self.engine.store.list_sessions(self.engine.project.id)
-        children = {}
-        for session in sessions:
-            kids = await self.engine.store.child_sessions(session.id)
-            if kids:
-                children[session.id] = kids
+        # one query for every child instead of one per session
+        everyone = await self.engine.store.list_sessions(
+            self.engine.project.id, include_children=True)
+        children: dict[str, list] = {}
+        for s in everyone:
+            if s.parent_session_id:
+                children.setdefault(s.parent_session_id, []).append(s)
+        for kids in children.values():
+            kids.sort(key=lambda s: s.created_at)
         running = {s.id for s in sessions if self.engine.is_running(s.id)} | self._running
         agent_colors = {a.name: a.color or "#98c379" for a in self.engine.agents.agents.values()}
         self.session_list.populate(
@@ -518,4 +678,9 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _fire(coro) -> None:
-        asyncio.ensure_future(coro)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:  # no loop (widget-only tests): drop silently
+            coro.close()
+            return
+        loop.create_task(coro)

@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS session (
     title TEXT NOT NULL DEFAULT '',
     agent TEXT NOT NULL DEFAULT 'build',
     model TEXT NOT NULL DEFAULT '',
+    directory TEXT NOT NULL DEFAULT '',
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
     archived INTEGER NOT NULL DEFAULT 0
@@ -85,6 +86,7 @@ class Session:
     created_at: float
     updated_at: float
     archived: bool
+    directory: str = ""   # per-session working dir ('' = project default)
 
 
 @dataclass
@@ -128,6 +130,12 @@ class Store:
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.execute("PRAGMA foreign_keys=ON")
         await self._db.executescript(_SCHEMA)
+        # migration: sessions gained a per-session working directory
+        cur = await self._db.execute("PRAGMA table_info(session)")
+        cols = [r[1] for r in await cur.fetchall()]
+        if "directory" not in cols:
+            await self._db.execute(
+                "ALTER TABLE session ADD COLUMN directory TEXT NOT NULL DEFAULT ''")
         await self._db.commit()
 
     async def close(self) -> None:
@@ -167,16 +175,18 @@ class Store:
         model: str = "",
         parent_session_id: str | None = None,
         title: str = "",
+        directory: str = "",
     ) -> Session:
         now = time.time()
         sid = _id()
         await self.db.execute(
             "INSERT INTO session (id, project_id, parent_session_id, title, agent, model,"
-            " created_at, updated_at, archived) VALUES (?,?,?,?,?,?,?,?,0)",
-            (sid, project_id, parent_session_id, title, agent, model, now, now),
+            " directory, created_at, updated_at, archived) VALUES (?,?,?,?,?,?,?,?,?,0)",
+            (sid, project_id, parent_session_id, title, agent, model, directory, now, now),
         )
         await self.db.commit()
-        return Session(sid, project_id, parent_session_id, title, agent, model, now, now, False)
+        return Session(sid, project_id, parent_session_id, title, agent, model,
+                       now, now, False, directory)
 
     async def get_session(self, session_id: str) -> Session | None:
         row = await self._fetchone("SELECT * FROM session WHERE id=?", (session_id,))
@@ -271,9 +281,31 @@ class Store:
         return [Part(r["id"], r["message_id"], r["idx"], r["type"], json.loads(r["json"])) for r in rows]
 
     async def session_parts(self, session_id: str) -> list[tuple[Message, list[Part]]]:
-        out = []
-        for msg in await self.list_messages(session_id):
-            out.append((msg, await self.list_parts(msg.id)))
+        """All messages with their parts in one JOIN — this is the runner's
+        per-step hot path; per-message queries made long sessions O(n²)."""
+        rows = await self._fetchall(
+            "SELECT m.id AS mid, m.session_id, m.role, m.created_at, m.model,"
+            " m.provider, m.tokens_in, m.tokens_out, m.cost, m.error,"
+            " p.id AS pid, p.idx, p.type AS ptype, p.json AS pjson"
+            " FROM message m LEFT JOIN part p ON p.message_id = m.id"
+            " WHERE m.session_id=?"
+            " ORDER BY m.created_at, m.id, p.idx",
+            (session_id,),
+        )
+        out: list[tuple[Message, list[Part]]] = []
+        current_id = None
+        for r in rows:
+            if r["mid"] != current_id:
+                current_id = r["mid"]
+                out.append((
+                    Message(r["mid"], r["session_id"], r["role"], r["created_at"],
+                            r["model"], r["provider"], r["tokens_in"], r["tokens_out"],
+                            r["cost"], r["error"]),
+                    [],
+                ))
+            if r["pid"] is not None:
+                out[-1][1].append(
+                    Part(r["pid"], r["mid"], r["idx"], r["ptype"], json.loads(r["pjson"])))
         return out
 
     # -- todo ---------------------------------------------------------------
@@ -297,8 +329,10 @@ class Store:
 
     @staticmethod
     def _session(r: aiosqlite.Row) -> Session:
+        directory = r["directory"] if "directory" in r.keys() else ""
         return Session(r["id"], r["project_id"], r["parent_session_id"], r["title"], r["agent"],
-                       r["model"], r["created_at"], r["updated_at"], bool(r["archived"]))
+                       r["model"], r["created_at"], r["updated_at"], bool(r["archived"]),
+                       directory)
 
     async def _fetchone(self, q: str, args: tuple = ()) -> aiosqlite.Row | None:
         cur = await self.db.execute(q, args)

@@ -26,6 +26,14 @@ class ProviderRegistry:
     def provider(self, name: str) -> Provider:
         if name in self._providers:
             return self._providers[name]
+        # providers with their own auth/transport get a dedicated factory —
+        # adding one is a single entry here, not another if/elif branch
+        factory = _SPECIAL_FACTORIES.get(name)
+        if factory is not None:
+            prov = factory(self)
+            if prov is not None:
+                self._providers[name] = prov
+                return prov
         pconf = self.config.provider.get(name)
         if pconf is None:
             # not configured by hand: fall back to the known-provider recipe
@@ -109,3 +117,19 @@ class ProviderRegistry:
             raise ValueError(f"model must be 'provider/id', got {model!r}")
         provider_name, model_id = model.split("/", 1)
         return self.provider(provider_name), model_id, model_info(model_id, self.extra_catalog)
+
+
+def _make_bedrock(reg: "ProviderRegistry"):
+    from .bedrock import BedrockProvider
+
+    pconf = reg.config.provider.get("bedrock")
+    region = getattr(pconf, "region", None) if pconf else None
+    if pconf and pconf.model_extra:
+        region = region or pconf.model_extra.get("region")
+    return BedrockProvider(region=region)
+
+
+# name -> factory(registry) -> Provider | None (None = fall through to generic)
+_SPECIAL_FACTORIES = {
+    "bedrock": _make_bedrock,
+}

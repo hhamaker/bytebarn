@@ -191,22 +191,49 @@ class AgentEditor(QDialog):
         return f"{provider}/{model_id}"
 
     def _reload_list(self) -> None:
-        self.agent_list.clear()
-        for agent in self.engine.agents.agents.values():
-            if agent.hidden and not self.show_hidden.isChecked():
-                continue
-            label = f"{agent.name}  ({agent.mode})"
-            if agent.builtin:
-                label += "  [native]"
-            item = QListWidgetItem(label)
-            item.setData(Qt.UserRole, agent.name)
-            from PySide6.QtGui import QIcon
+        from PySide6.QtGui import QColor, QFont, QIcon
 
-            item.setIcon(QIcon(critter_pixmap(agent.name, agent.color or "#98c379", scale=2)))
+        self.agent_list.clear()
+
+        def header(text: str) -> None:
+            item = QListWidgetItem(text)
+            item.setFlags(Qt.NoItemFlags)  # not selectable, not clickable
+            font = QFont()
+            font.setBold(True)
+            font.setPointSize(max(9, font.pointSize() - 1))
+            item.setFont(font)
+            item.setForeground(QColor("#8f96a3"))
             self.agent_list.addItem(item)
 
+        def add_agent(agent) -> None:
+            label = agent.name
+            if agent.builtin:
+                label += "  [native]"
+            if agent.name in self.engine.config.agent:
+                label += "  •"  # has overrides
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, agent.name)
+            item.setIcon(QIcon(critter_pixmap(agent.name, agent.color or "#98c379", scale=2)))
+            item.setToolTip(agent.description)
+            self.agent_list.addItem(item)
+
+        visible = [a for a in self.engine.agents.agents.values()
+                   if not a.hidden or self.show_hidden.isChecked()]
+        primaries = sorted((a for a in visible if a.mode in ("primary", "all")),
+                           key=lambda a: a.name)
+        subagents = sorted((a for a in visible if a.mode == "subagent"),
+                           key=lambda a: a.name)
+        if primaries:
+            header("PRIMARY — pickable in the prompt bar")
+            for agent in primaries:
+                add_agent(agent)
+        if subagents:
+            header("SUBAGENTS — delegated to by goal runs")
+            for agent in subagents:
+                add_agent(agent)
+
     def _on_select(self, item: QListWidgetItem, _prev=None) -> None:
-        if item is None:
+        if item is None or item.data(Qt.UserRole) is None:  # section header
             return
         agent = self.engine.agents.get(item.data(Qt.UserRole))
         self._current = agent

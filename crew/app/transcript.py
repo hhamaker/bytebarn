@@ -164,29 +164,14 @@ class _Welcome(QWidget):
 
     def __init__(self):
         super().__init__()
-        from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
-
-        from .sprites import SPRITE_H, SPRITE_W, draw_critter, look_for
+        from .sprites import crew_banner
 
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignCenter)
         layout.setSpacing(10)
 
-        scale = 4
-        cast = [("orchestrator", "#e5c07b"), ("build", "#61afef"),
-                ("explore", "#56b6c2"), ("general", "#98c379")]
-        image = QImage((SPRITE_W + 6) * scale * len(cast), (SPRITE_H + 4) * scale,
-                       QImage.Format_ARGB32)
-        image.fill(0)
-        painter = QPainter(image)
-        for i, (name, color) in enumerate(cast):
-            species, accent = look_for(name)
-            draw_critter(painter, (i * (SPRITE_W + 6) + 3) * scale, 3 * scale, scale,
-                         species, QColor(color), state="done", accent=accent,
-                         crowned=name == "orchestrator")
-        painter.end()
         sprites = QLabel()
-        sprites.setPixmap(QPixmap.fromImage(image))
+        sprites.setPixmap(crew_banner())
         sprites.setAlignment(Qt.AlignCenter)
 
         text = QLabel(

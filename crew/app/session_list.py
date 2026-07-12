@@ -47,6 +47,9 @@ class SessionList(QWidget):
         self.search.textChanged.connect(self._filter)
         self.tree = QTreeWidget()
         self.tree.setHeaderHidden(True)
+        # currentItemChanged covers keyboard navigation (up/down arrows),
+        # itemClicked alone misses it
+        self.tree.currentItemChanged.connect(self._on_current_changed)
         self.tree.itemClicked.connect(self._on_click)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._context_menu)
@@ -65,15 +68,23 @@ class SessionList(QWidget):
         current: str,
         agent_colors: dict[str, str] | None = None,
     ) -> None:
+        # rebuilding the tree moves currentItem around; that must not count
+        # as the user navigating
+        self.tree.blockSignals(True)
         self.tree.clear()
         for session in sessions:
             item = self._item(session, running, agent_colors)
             self.tree.addTopLevelItem(item)
             for child in children.get(session.id, []):
-                item.addChild(self._item(child, running, agent_colors))
+                child_item = self._item(child, running, agent_colors)
+                item.addChild(child_item)
+                if child.id == current:
+                    item.setExpanded(True)
+                    self.tree.setCurrentItem(child_item)
             if session.id == current:
                 self.tree.setCurrentItem(item)
                 item.setExpanded(True)
+        self.tree.blockSignals(False)
         self._filter(self.search.text())
 
     @staticmethod
@@ -99,6 +110,10 @@ class SessionList(QWidget):
 
     def _on_click(self, item: QTreeWidgetItem) -> None:
         self.session_selected.emit(item.data(0, Qt.UserRole))
+
+    def _on_current_changed(self, current: QTreeWidgetItem, _prev=None) -> None:
+        if current is not None:
+            self.session_selected.emit(current.data(0, Qt.UserRole))
 
     def _context_menu(self, pos: QPoint) -> None:
         item = self.tree.itemAt(pos)

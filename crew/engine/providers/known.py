@@ -98,6 +98,19 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
             models=("llama-3.3-70b", "qwen-3-32b"),
         ),
         ProviderSpec(
+            id="bedrock", label="AWS Bedrock", api="anthropic",
+            key_env="AWS_ACCESS_KEY_ID",
+            key_url="https://console.aws.amazon.com/iam/home#/security_credentials",
+            models=(
+                "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+                "us.anthropic.claude-opus-4-1-20250805-v1:0",
+            ),
+            note="Uses the standard AWS credential chain (env vars,"
+                 " ~/.aws/credentials, SSO). Region from AWS_REGION"
+                 " (default us-east-1). Install boto3 for live model lists.",
+        ),
+        ProviderSpec(
             id="cloudflare", label="Cloudflare Workers AI",
             base_url="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1",
             key_env="CLOUDFLARE_API_KEY",
@@ -172,6 +185,10 @@ def connection_status(spec: ProviderSpec, config: "Config", auth: "AuthStore") -
     pconf = config.provider.get(spec.id)
     if pconf and pconf.resolve_key():
         return "connected-env" if not pconf.api_key else "connected-key"
+    if spec.id == "bedrock":
+        from .bedrock import credentials_present
+
+        return "connected-env" if credentials_present() else "disconnected"
     if spec.local:
         return "local"
     import os

@@ -61,6 +61,17 @@ async def probe_provider(name: str, config: Config, auth: AuthStore) -> tuple[bo
     spec = KNOWN_PROVIDERS.get(name)
     if spec and spec.planned:
         return False, f"{spec.label} is not connectable yet ({spec.note})"
+    if name == "bedrock":
+        from .bedrock import credentials_present, list_bedrock_models, resolve_region
+
+        if not credentials_present():
+            return False, ("no AWS credentials found — set AWS_ACCESS_KEY_ID/"
+                           "AWS_SECRET_ACCESS_KEY or configure ~/.aws")
+        live = await list_bedrock_models()
+        if live:
+            return True, f"connected — {len(live)} models in {resolve_region()}"
+        return True, (f"credentials found (region {resolve_region()});"
+                      " install boto3 for live model listing")
     url, headers = _endpoint_and_headers(name, config, auth)
     if "${" in url:
         missing = url[url.index("${") + 2 : url.index("}")]
@@ -133,6 +144,10 @@ async def fetch_models(name: str, config: Config, auth: AuthStore) -> list[str]:
     spec = KNOWN_PROVIDERS.get(name)
     if spec and spec.planned:
         return []
+    if name == "bedrock":
+        from .bedrock import list_bedrock_models
+
+        return await list_bedrock_models()
     url, headers = _endpoint_and_headers(name, config, auth)
     if "${" in url:
         return []
