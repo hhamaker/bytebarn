@@ -351,17 +351,18 @@ class MainWindow(QMainWindow):
                         self._running.discard(event.subagent_session_id)
                     await self._refresh_sessions()
                 elif isinstance(event, RunFinished):
-                    # on_run_finished may already have started the next queued run
+                    self._running.discard(event.session_id)
+                    # Parent may already have promoted a queued prompt (runner
+                    # runs on_run_finished before emitting run.finished).
                     still = self.engine.is_running(event.session_id)
                     if still:
                         self._running.add(event.session_id)
-                    else:
-                        self._running.discard(event.session_id)
                     if event.session_id == self.current_session_id:
                         self.prompt_bar.set_running(still)
                         self.transcript.dismiss_thinking()
+                        self.transcript.finalize_streaming()
                         if still:
-                            # queued prompt just promoted
+                            # queued prompt just promoted — keep stage/cast alive
                             self.transcript.promote_queued()
                             agent = self.prompt_bar.agent_combo.currentText() or "agent"
                             internal = _AGENT_INTERNAL.get(agent, agent)
@@ -370,10 +371,17 @@ class MainWindow(QMainWindow):
                             self._set_activity("thinking…")
                         else:
                             self._set_activity("")
-                        self.crew_stage.handle_event(event)
+                            # only tear down the crew when this session is idle
+                            self.crew_stage.handle_event(event)
                         self.prompt_bar.set_queue_depth(self.engine.queue_depth(event.session_id))
+                    elif not still:
+                        # subagent finished while viewing parent: stage keeps the
+                        # member via task.finished; never forward child run.finished
+                        pass
                     await self._refresh_sessions()
-                    await self._refresh_git()
+                    # git status only when the open session goes idle
+                    if event.session_id == self.current_session_id and not still:
+                        await self._refresh_git()
                 elif isinstance(event, QueueUpdated):
                     if event.session_id == self.current_session_id:
                         self.prompt_bar.set_queue_depth(event.depth)
@@ -636,21 +644,39 @@ class MainWindow(QMainWindow):
     def _submit(self, text: str) -> None:
         if not self.current_session_id:
             return
-        queued = self.engine.is_running(self.current_session_id)
+        session_id = self.current_session_id
+        queued = self.engine.is_running(session_id)
         self.prompt_bar.set_running(True)
         self.transcript.add_user_text(f"local-{id(text)}", self._display_text(text), queued=queued)
         agent_label = self.prompt_bar.agent_combo.currentText() or "agent"
         agent = _AGENT_INTERNAL.get(agent_label, agent_label)
         if not queued:
-            color = self.engine.agents.color_of(agent)
-            self.transcript.show_thinking(agent_label, color)
-            self._set_activity("thinking…")
-            self._running.add(self.current_session_id)
-        self._fire(self.engine.submit_prompt(
-            self.current_session_id, text,
-            agent=agent or None,
-            model=self.prompt_bar.current_model() or None,
-        ))
+            try:
+                color = self.engine.agents.color_of(agent)
+                self.transcript.show_thinking(agent_label, color)
+                self._set_activity("thinking…")
+            except Exception:
+                pass
+            self._running.add(session_id)
+
+        async def _do_submit() -> None:
+            try:
+                await self.engine.submit_prompt(
+                    session_id, text,
+                    agent=agent or None,
+                    model=self.prompt_bar.current_model() or None,
+                )
+            except Exception:
+                # Don't leave the Stop button stuck if submit never started a run.
+                if not self.engine.is_running(session_id):
+                    self._running.discard(session_id)
+                    if self.current_session_id == session_id:
+                        self.prompt_bar.set_running(False)
+                        self.transcript.dismiss_thinking()
+                        self._set_activity("")
+                raise
+
+        self._fire(_do_submit())
 
     @staticmethod
     def _display_text(text: str) -> str:
@@ -658,7 +684,9 @@ class MainWindow(QMainWindow):
 
     async def _abort(self) -> None:
         if self.current_session_id:
-            await self.engine.abort(self.current_session_id)
+            sid = self.current_session_id
+            await self.engine.abort(sid)
+            self._running.discard(sid)
             self.prompt_bar.set_running(False)
             self.transcript.dismiss_thinking()
             self._set_activity("")

@@ -38,11 +38,13 @@ class StageState:
     current_todo: str = ""                             # in-progress todo content
     active: bool = False
     started_at: float = 0.0
+    owner_session_id: str = ""  # parent/orchestrator session that owns this cast
 
     def on_event(self, event: Any, agent_colors: dict[str, str] | None = None) -> bool:
         """Apply an engine event; returns True if the stage changed."""
         name = getattr(event, "name", "")
         if name == "task.started":
+            self.owner_session_id = event.session_id or self.owner_session_id
             color = (agent_colors or {}).get(event.agent, "#98c379")
             member = CrewMember(
                 session_id=event.subagent_session_id,
@@ -72,6 +74,7 @@ class StageState:
                 return True
             return False
         if name == "todo.updated":
+            self.owner_session_id = event.session_id or self.owner_session_id
             self.waiting = [t["content"] for t in event.todos if t["status"] == "pending"]
             self.current_todo = next(
                 (t["content"] for t in event.todos if t["status"] == "in_progress"), "")
@@ -81,13 +84,18 @@ class StageState:
                 self._activate()
             return True
         if name == "run.finished":
-            # orchestrator run over -> stage hides and resets
+            # Only the owning parent session may tear down the stage. Subagent
+            # run.finished events must not wipe the cast mid-goal.
+            sid = getattr(event, "session_id", "") or ""
+            if self.owner_session_id and sid and sid != self.owner_session_id:
+                return False
             self.members.clear()
             self.order.clear()
             self.waiting.clear()
             self.current_todo = ""
             self.active = False
             self.started_at = 0.0
+            self.owner_session_id = ""
             return True
         return False
 

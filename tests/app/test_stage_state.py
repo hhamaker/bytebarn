@@ -66,6 +66,18 @@ def test_run_finished_resets():
     assert not state.active and not state.members and not state.waiting
 
 
+def test_child_run_finished_does_not_reset_stage():
+    """Subagent run.finished must not wipe the parent cast mid-goal."""
+    state = _state()
+    state.on_event(TaskStarted(session_id="p", subagent_session_id="c1", agent="g", description="t"))
+    assert state.active and "c1" in state.members
+    changed = state.on_event(RunFinished(session_id="c1"))
+    assert changed is False
+    assert state.active and "c1" in state.members
+    state.on_event(RunFinished(session_id="p"))
+    assert not state.active and not state.members
+
+
 def test_species_stable():
     from crew.app.sprites import SPECIES, species_for
 
