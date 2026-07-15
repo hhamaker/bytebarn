@@ -153,6 +153,19 @@ def test_agent_editor_and_provider_manager_build(qapp, tmp_path):
     assert editor._selected_model() == "groq/llama-3.3-70b-versatile"
 
 
+def test_skill_editor_builds(qapp, tmp_path):
+    from crew.app.skill_editor import SkillEditor
+    from crew.engine.facade import Engine
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=tmp_path / "global")
+    editor = SkillEditor(engine)
+    # just constructing should be enough to prove imports & layout
+    assert editor.list is not None
+    assert editor.body is not None
+
+
 def test_prompt_bar_two_stage_picker(qapp):
     from crew.app.prompt_bar import PromptBar
 

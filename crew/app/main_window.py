@@ -248,12 +248,15 @@ class MainWindow(QMainWindow):
         agents_action = QAction("Agents…", self)
         agents_action.setShortcut(QKeySequence("Ctrl+Shift+A"))
         agents_action.triggered.connect(self._open_agent_editor)
+        skills_action = QAction("Skills…", self)
+        skills_action.triggered.connect(self._open_skill_editor)
         settings_action = QAction("Settings…", self)
         settings_action.setShortcut(QKeySequence.Preferences)
         settings_action.setMenuRole(QAction.PreferencesRole)  # macOS app menu
         settings_action.triggered.connect(self._open_settings)
         tools_menu.addAction(providers_action)
         tools_menu.addAction(agents_action)
+        tools_menu.addAction(skills_action)
         tools_menu.addSeparator()
         tools_menu.addAction(settings_action)
 
@@ -1017,6 +1020,12 @@ class MainWindow(QMainWindow):
 
     def _open_agent_editor(self) -> None:
         editor = AgentEditor(self.engine, self)
+        editor.exec()
+
+    def _open_skill_editor(self) -> None:
+        from .skill_editor import SkillEditor
+
+        editor = SkillEditor(self.engine, self)
         editor.exec()
 
     # ------------------------------------------------------------------ util
