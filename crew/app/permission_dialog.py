@@ -42,7 +42,7 @@ def _render_input(tool: str, input_data: dict[str, Any]) -> str:
 
 
 class PermissionDialog(QDialog):
-    """Returns via .verdict: "allow" | "allow_always" | "deny"."""
+    """Returns via .verdict: "allow" | "allow_always" | "deny" | "full_auto"."""
 
     def __init__(self, tool: str, arg: str, input_data: dict[str, Any], parent=None):
         super().__init__(parent)
@@ -57,16 +57,19 @@ class PermissionDialog(QDialog):
         allow = QPushButton("Allow once")
         always = QPushButton("Allow always")
         deny = QPushButton("Deny")
+        full_auto = QPushButton("Switch to Full-auto & Allow")
         deny.setDefault(True)
         allow.clicked.connect(lambda: self._finish("allow"))
         always.clicked.connect(lambda: self._finish("allow_always"))
         deny.clicked.connect(lambda: self._finish("deny"))
+        full_auto.clicked.connect(lambda: self._finish("full_auto"))
 
         buttons = QHBoxLayout()
         buttons.addStretch(1)
         buttons.addWidget(deny)
         buttons.addWidget(always)
         buttons.addWidget(allow)
+        buttons.addWidget(full_auto)
 
         layout = QVBoxLayout(self)
         layout.addWidget(body)

@@ -10,6 +10,7 @@ from typing import Any
 from .agents import AgentDef, AgentRegistry
 from .commands import CommandRegistry
 from .config import GLOBAL_DIR, Config, load_config, patch_config_file
+from .skills import SkillRegistry
 from .events import (
     EventBus,
     PermissionAsked,
@@ -41,6 +42,7 @@ class Engine:
         self.providers = ProviderRegistry(self.config, self.global_dir)
         self.agents = AgentRegistry(self.config, self.project_dir, self.global_dir)
         self.commands = CommandRegistry(self.project_dir, self.global_dir)
+        self.skills = SkillRegistry(self.project_dir, self.global_dir)
         self.runner = Runner(self)
         self.session_mode = ASK_MODE
         self.project = None
@@ -70,15 +72,22 @@ class Engine:
         self.providers = ProviderRegistry(self.config, self.global_dir)
         self.agents = AgentRegistry(self.config, self.project_dir, self.global_dir)
         self.commands.reload()
+        self.skills.reload()
 
     # -- sessions ------------------------------------------------------------
 
+    def list_skills(self):
+        """Return list of Skill(name, body, source) for both global and project."""
+        return self.skills.list()
+
     async def new_session(
-        self, agent: str = "build", model: str = "", directory: str = ""
+        self, agent: str = "build", model: str = "", directory: str = "",
+        project_id: str | None = None,
     ) -> Session:
         """Create a session (optionally rooted in its own working directory)."""
+        pid = project_id or self.project.id
         session = await self.store.create_session(
-            self.project.id, agent=agent, model=model, directory=directory)
+            pid, agent=agent, model=model, directory=directory)
         self.bus.emit(SessionUpdated(session_id=session.id))
         return session
 

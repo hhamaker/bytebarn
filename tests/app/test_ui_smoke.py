@@ -267,47 +267,135 @@ def test_text_block_streams_plain_then_markdown(qapp):
     assert "bold" in block.text()
 
 
-def test_session_list_keyboard_navigation_selects(qapp):
+def _proj(pid="p1", name="Proj", path="/x"):
+    from types import SimpleNamespace
+    return SimpleNamespace(id=pid, name=name, path=path)
+
+
+def _sess(sid, agent="build", children=None):
     from types import SimpleNamespace
     import time as _time
+    return SimpleNamespace(id=sid, title=sid, agent=agent, model="",
+                           updated_at=_time.time(), created_at=_time.time(),
+                           parent_session_id=None, children=children or [])
 
+
+def test_session_list_keyboard_navigation_selects(qapp):
     from crew.app.session_list import SessionList
-
-    def sess(sid, agent="build"):
-        return SimpleNamespace(id=sid, title=sid, agent=agent, model="",
-                               updated_at=_time.time(), parent_session_id=None)
 
     sl = SessionList()
     picked: list[str] = []
     sl.session_selected.connect(picked.append)
-    sl.populate([sess("a"), sess("b"), sess("c")], {}, set(), "a")
-    # populate itself must not emit (signals blocked during rebuild)
-    assert picked == []
-    # keyboard-style navigation: changing currentItem emits selection
+    # single project -> sessions flat at top level
+    sl.populate([_proj()], {"p1": [_sess("a"), _sess("b"), _sess("c")]}, set(), "a")
+    assert picked == []  # populate blocks signals
     sl.tree.setCurrentItem(sl.tree.topLevelItem(1))
     assert picked == ["b"]
     sl.tree.setCurrentItem(sl.tree.topLevelItem(2))
     assert picked == ["b", "c"]
 
 
-def test_session_list_reselects_child_session(qapp):
-    from types import SimpleNamespace
-    import time as _time
+def test_session_list_groups_by_project(qapp):
+    from PySide6.QtCore import Qt
 
     from crew.app.session_list import SessionList
 
-    def sess(sid, parent=None):
-        return SimpleNamespace(id=sid, title=sid, agent="explore", model="",
-                               updated_at=_time.time(), parent_session_id=parent)
-
     sl = SessionList()
-    parent = sess("p")
-    child = sess("c1", parent="p")
-    sl.populate([parent], {"p": [child]}, set(), "c1")
-    current = sl.tree.currentItem()
+    projs = [_proj("p1", "Alpha"), _proj("p2", "Beta")]
+    sl.populate(projs, {"p1": [_sess("a")], "p2": [_sess("b")]}, set(), "a")
+    # two projects -> two project nodes at the top level
+    assert sl.tree.topLevelItemCount() == 2
+    top0 = sl.tree.topLevelItem(0)
+    assert top0.data(0, Qt.UserRole + 1) == "project"
+    assert top0.childCount() == 1
+
+
+def test_session_list_shows_project_folders(qapp):
     from PySide6.QtCore import Qt
 
-    assert current is not None and current.data(0, Qt.UserRole) == "c1"
+    from crew.app.session_list import SessionList
+
+    sl = SessionList()
+    projs = [_proj("p1", "Alpha"), _proj("p2", "Beta")]
+    # a project owns folders which render as folder nodes beneath it
+    sl.populate(projs, {"p1": [_sess("a")], "p2": []}, set(), "a",
+                None, {"p1": ["/code/foo", "/code/bar"]})
+    top0 = sl.tree.topLevelItem(0)
+    kinds = [top0.child(i).data(0, Qt.UserRole + 1) for i in range(top0.childCount())]
+    assert kinds.count("folder") == 2 and "session" in kinds
+    folder = next(top0.child(i) for i in range(top0.childCount())
+                  if top0.child(i).data(0, Qt.UserRole + 1) == "folder")
+    assert folder.data(0, Qt.UserRole + 2) == "p1"          # owning project
+    assert folder.data(0, Qt.UserRole) in ("/code/foo", "/code/bar")
+
+
+def test_session_list_folder_signals(qapp):
+    from crew.app.session_list import SessionList
+
+    sl = SessionList()
+    added: list = []
+    removed: list = []
+    sl.add_folder_to_project.connect(added.append)
+    sl.remove_folder_from_project.connect(lambda p, f: removed.append((p, f)))
+    sl.add_folder_to_project.emit("p1")
+    sl.remove_folder_from_project.emit("p1", "/code/foo")
+    assert added == ["p1"]
+    assert removed == [("p1", "/code/foo")]
+
+
+def test_session_list_delete_key_removes_folder(qapp, monkeypatch):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeyEvent
+
+    from crew.app.session_list import SessionList
+
+    sl = SessionList()
+    removed: list = []
+    sl.remove_folder_from_project.connect(lambda p, f: removed.append((p, f)))
+    sl.populate([_proj("p1", "Alpha"), _proj("p2", "Beta")],
+                {"p1": [_sess("a")], "p2": []}, set(), "a",
+                None, {"p1": ["/code/foo"]})
+    top0 = sl.tree.topLevelItem(0)
+    folder = next(top0.child(i) for i in range(top0.childCount())
+                  if top0.child(i).data(0, Qt.UserRole + 1) == "folder")
+    sl.tree.setCurrentItem(folder)
+    monkeypatch.setattr(sl, "_confirm_remove_folder", lambda: True)
+
+    event = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Delete, Qt.NoModifier)
+    sl.keyPressEvent(event)
+    assert removed == [("p1", "/code/foo")]
+
+
+def test_session_list_project_rename_delete_signals(qapp, monkeypatch):
+    from crew.app.session_list import SessionList
+
+    sl = SessionList()
+    renamed: list = []
+    deleted: list = []
+    sl.rename_project.connect(renamed.append)
+    sl.delete_project.connect(deleted.append)
+    sl.populate([_proj("p1", "Alpha")], {"p1": []}, set(), "", None, {})
+    top = sl.tree.topLevelItem(0)
+    # context menu would emit; test the signals directly
+    sl.rename_project.emit("p1")
+    sl.delete_project.emit("p1")
+    assert renamed == ["p1"]
+    assert deleted == ["p1"]
+
+
+def test_session_list_multi_select_delete(qapp):
+    from crew.app.session_list import SessionList
+
+    sl = SessionList()
+    emitted: list[list] = []
+    sl.delete_sessions.connect(emitted.append)
+    sl.populate([_proj()], {"p1": [_sess("a"), _sess("b"), _sess("c")]}, set(), "a")
+    for i in range(3):
+        sl.tree.topLevelItem(i).setSelected(True)
+    ids = sl._selected_session_ids()
+    assert set(ids) == {"a", "b", "c"}
+    sl.delete_sessions.emit(ids)
+    assert emitted == [["a", "b", "c"]]
 
 
 def test_agent_list_grouped_by_mode(qapp, tmp_path):
@@ -343,7 +431,7 @@ def test_menu_bar_has_menus(qapp, tmp_path):
     engine = Engine(proj, db_path=tmp_path / "db2.sqlite", global_dir=tmp_path / "g2")
     window = MainWindow(engine)
     titles = [a.menu().title() for a in window.menuBar().actions() if a.menu()]
-    assert titles == ["&File", "&Session", "&Tools", "&Help"]
+    assert titles == ["&File", "&Projects", "&Session", "&Tools", "&Help"]
 
 
 async def test_new_session_requires_directory(qapp, tmp_path, monkeypatch):

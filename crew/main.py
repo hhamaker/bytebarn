@@ -17,6 +17,19 @@ from .engine.facade import Engine
 
 
 def main() -> None:
+    # On macOS, a frozen /Applications/Crew.app bundle can inject its own Qt
+    # frameworks, colliding with the venv's PySide6 and causing force-quit.
+    # Ensure the running interpreter's Qt is first in the dynamic linker path.
+    import os
+    from pathlib import Path as _P
+
+    venv_qt = _P(sys.prefix) / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages" / "PySide6" / "Qt" / "lib"
+    if venv_qt.exists():
+        cur = os.environ.get("DYLD_FRAMEWORK_PATH", "")
+        os.environ["DYLD_FRAMEWORK_PATH"] = str(venv_qt) + (":" + cur if cur else "")
+        cur_lib = os.environ.get("DYLD_LIBRARY_PATH", "")
+        os.environ["DYLD_LIBRARY_PATH"] = str(venv_qt) + (":" + cur_lib if cur_lib else "")
+
     app = QApplication(sys.argv)
     app.setApplicationName("Crew")
     app.setWindowIcon(app_icon())

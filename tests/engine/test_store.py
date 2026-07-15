@@ -18,6 +18,34 @@ async def test_project_roundtrip(store, tmp_path):
     assert p2.name == "proj"
 
 
+async def test_project_folders(store, tmp_path):
+    proj = await store.add_project("catalog:Multi", name="Multi")
+    assert await store.list_project_folders(proj.id) == []
+
+    await store.add_project_folder(proj.id, tmp_path / "a")
+    await store.add_project_folder(proj.id, tmp_path / "b")
+    await store.add_project_folder(proj.id, tmp_path / "a")  # dup ignored
+    folders = await store.list_project_folders(proj.id)
+    assert folders == sorted([str(tmp_path / "a"), str(tmp_path / "b")])
+
+    await store.remove_project_folder(proj.id, tmp_path / "a")
+    assert await store.list_project_folders(proj.id) == [str(tmp_path / "b")]
+
+
+async def test_rename_and_delete_project(store, tmp_path):
+    p = await store.add_project("catalog:Test", name="Old")
+    sess = await store.create_session(p.id, title="s1")
+    await store.add_project_folder(p.id, tmp_path)
+
+    await store.rename_project(p.id, "New")
+    renamed = await store.list_projects()
+    assert renamed[0].name == "New"
+
+    await store.delete_project(p.id)
+    assert await store.list_projects() == []
+    assert await store.list_sessions(p.id) == []
+
+
 async def test_session_message_parts_ordering(store, tmp_path):
     proj = await store.open_project(str(tmp_path))
     sess = await store.create_session(proj.id, agent="build", model="a/m")

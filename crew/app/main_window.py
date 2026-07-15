@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QSplitter,
     QVBoxLayout,
@@ -41,7 +42,6 @@ from ..engine.providers.known import connected_providers, curated_models
 from .agent_editor import AgentEditor
 from .crew_stage import CrewStage
 from .permission_dialog import PermissionDialog
-from .project_manager import ProjectManagerDialog
 from .prompt_bar import PromptBar
 from .question_dialog import QuestionDialog
 from .session_list import SessionList
@@ -70,7 +70,11 @@ class MainWindow(QMainWindow):
 
         # widgets
         self.session_list = SessionList()
-        self.session_list.new_project.connect(self._new_project)
+        self.session_list.new_project.connect(self._create_catalog_project)
+        self.session_list.rename_project.connect(self._rename_project)
+        self.session_list.delete_project.connect(self._delete_project)
+        self.session_list.add_folder_to_project.connect(self._add_folder_to_project)
+        self.session_list.remove_folder_from_project.connect(self._remove_folder_from_project)
         self.transcript = Transcript()
         self.crew_stage = CrewStage()
         self.todo_strip = TodoStrip()
@@ -124,8 +128,6 @@ class MainWindow(QMainWindow):
 
         # status bar
         self.status_project = QLabel(str(engine.project_dir))
-        self.status_project.setCursor(Qt.PointingHandCursor)
-        self.status_project.mousePressEvent = lambda e: self._project_menu()
         self.status_git = QLabel("")
         self.status_cost = QLabel("")
         self.mode_combo = QComboBox()
@@ -152,10 +154,6 @@ class MainWindow(QMainWindow):
         settings_button.setFlat(True)
         settings_button.setToolTip("Default models, permissions, theme")
         settings_button.clicked.connect(self._open_settings)
-        projects_button = QPushButton("Projects")
-        projects_button.setFlat(True)
-        projects_button.setToolTip("Switch or manage known projects")
-        projects_button.clicked.connect(self._open_project_manager)
         self.statusBar().addWidget(self.status_project)
         self.statusBar().addWidget(QLabel("·"))
         self.statusBar().addWidget(self.status_git)
@@ -164,19 +162,21 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(agents_button)
         self.statusBar().addPermanentWidget(self.mode_combo)
         self.statusBar().addPermanentWidget(settings_button)
-        self.statusBar().addPermanentWidget(projects_button)
 
         self._build_menus()
 
         # wiring
         self.session_list.session_selected.connect(self._open_session)
-        self.session_list.new_session.connect(lambda: self._fire(self._new_session()))
+        self.session_list.new_session.connect(self._prompt_new_session)
         self.session_list.close_session.connect(
             lambda sid: self._fire(self._close_session(sid)))
         self.session_list.delete_session.connect(
             lambda sid: self._fire(self._delete_session(sid)))
+        self.session_list.delete_sessions.connect(
+            lambda ids: self._fire(self._delete_sessions(ids)))
         self.session_list.rename_session.connect(self._rename_session)
         self.session_list.move_session_to_project.connect(self._move_session_to_project)
+        self.session_list.session_moved_to_project.connect(self._on_session_moved)
         self.transcript.open_session.connect(self._open_child)
         self.crew_stage.open_session.connect(self._open_child)
         self.prompt_bar.submitted.connect(self._submit)
@@ -188,6 +188,13 @@ class MainWindow(QMainWindow):
 
         self._refresh_pickers()
 
+    def closeEvent(self, event):
+        # ensure the asyncio loop receives a quit signal when the window closes
+        from PySide6.QtWidgets import QApplication
+
+        QApplication.instance().quit()
+        super().closeEvent(event)
+
     def _build_menus(self) -> None:
         """Native menu bar (on macOS this fills the "Crew" application menu)."""
         from PySide6.QtGui import QAction, QKeySequence
@@ -197,7 +204,7 @@ class MainWindow(QMainWindow):
         file_menu = bar.addMenu("&File")
         new_action = QAction("New Session…", self)
         new_action.setShortcut(QKeySequence.New)
-        new_action.triggered.connect(lambda: self._fire(self._new_session()))
+        new_action.triggered.connect(self._prompt_new_session)
         close_action = QAction("Close Session", self)
         close_action.setShortcut(QKeySequence("Ctrl+W"))
         close_action.triggered.connect(
@@ -213,7 +220,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(quit_action)
 
         projects_menu = bar.addMenu("&Projects")
-        new_proj = QAction("New/Open Project…", self)
+        new_proj = QAction("New Project…", self)
         new_proj.triggered.connect(self._new_project)
         projects_menu.addAction(new_proj)
 
@@ -277,31 +284,88 @@ class MainWindow(QMainWindow):
         return None
 
     def _new_project(self) -> None:
-        d = self._pick_project_dir()
-        if not d:
+        self._create_catalog_project()
+
+    def _create_catalog_project(self) -> None:
+        name, ok = QInputDialog.getText(self, "New project", "Project name:")
+        name = name.strip()
+        if not ok or not name:
             return
-        self.engine.create_project(Path(d))
-        asyncio.ensure_future(self._refresh_sessions())
 
-    def _project_menu(self) -> None:
-        from PySide6.QtWidgets import QMenu
-        projects = []
-        try:
-            with open(self.engine.global_dir / "config.json") as f:
-                cfg = json.loads("".join([c for c in f if not c.strip().startswith("//")]))
-            projects = [Path(p) for p in cfg.get("recent_projects", [])][:5]
-        except Exception:
-            pass
-        menu = QMenu(self)
-        for p in projects:
-            menu.addAction(str(p), lambda p=p: self._switch_project(p))
-        menu.addSeparator()
-        menu.addAction("New/Open…", self._new_project)
-        menu.exec(self.status_project.mapToGlobal(self.status_project.rect().bottomLeft()))
+        folders = self._prompt_folders(
+            "Add folders to this project (Cancel to skip)")
 
-    def _switch_project(self, path: Path) -> None:
-        self.engine.create_project(path)
-        asyncio.ensure_future(self._refresh_sessions())
+        async def run() -> None:
+            project = await self.engine.store.add_project(f"catalog:{name}", name=name)
+            for folder in folders:
+                await self.engine.store.add_project_folder(project.id, folder)
+            await self._refresh_sessions()
+
+        self._fire(run())
+
+    def _rename_project(self, project_id: str) -> None:
+        async def run() -> None:
+            current = ""
+            for p in await self.engine.store.list_projects():
+                if p.id == project_id:
+                    current = p.name or ""
+                    break
+            new_name, ok = QInputDialog.getText(
+                self, "Rename project", "New name:", text=current)
+            new_name = new_name.strip()
+            if ok and new_name and new_name != current:
+                await self.engine.store.rename_project(project_id, new_name)
+                await self._refresh_sessions()
+
+        self._fire(run())
+
+    def _delete_project(self, project_id: str) -> None:
+        async def run() -> None:
+            await self.engine.store.delete_project(project_id)
+            if self.engine.project and self.engine.project.id == project_id:
+                # current project deleted; nothing to do, window will stay open
+                pass
+            await self._refresh_sessions()
+
+        self._fire(run())
+
+    def _prompt_folders(self, caption: str) -> list[str]:
+        """Prompt repeatedly for folders; returns the chosen set."""
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+
+        chosen: list[str] = []
+        while True:
+            start = chosen[-1] if chosen else (self._last_project() or str(Path.home()))
+            path = QFileDialog.getExistingDirectory(self, caption, start)
+            if not path:
+                break
+            if path not in chosen:
+                chosen.append(path)
+            more = QMessageBox.question(
+                self, "Add folder", "Add another folder?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if more != QMessageBox.Yes:
+                break
+        return chosen
+
+    def _add_folder_to_project(self, project_id: str) -> None:
+        folders = self._prompt_folders("Add a folder to this project")
+        if not folders:
+            return
+
+        async def run() -> None:
+            for folder in folders:
+                await self.engine.store.add_project_folder(project_id, folder)
+            await self._refresh_sessions()
+
+        self._fire(run())
+
+    def _remove_folder_from_project(self, project_id: str, path: str) -> None:
+        async def run() -> None:
+            await self.engine.store.remove_project_folder(project_id, path)
+            await self._refresh_sessions()
+
+        self._fire(run())
 
     def _show_shortcuts(self) -> None:
         from PySide6.QtWidgets import QMessageBox
@@ -341,11 +405,20 @@ class MainWindow(QMainWindow):
             asyncio.ensure_future(self._event_loop()),
             asyncio.ensure_future(self._watch_files()),
         ]
+        # modals (welcome wizard, first-launch directory picker) must run from
+        # the Qt loop, not nested inside this asyncio task, or qasync warns
+        # "Cannot enter into task while another task is being executed".
+        self._had_sessions = bool(sessions)
+        from PySide6.QtCore import QTimer
+
+        QTimer.singleShot(0, self._post_bootstrap)
+
+    def _post_bootstrap(self) -> None:
         self._maybe_first_run()
         # first launch (or all sessions deleted): a session needs a directory,
         # so open the picker instead of silently defaulting somewhere
-        if not sessions and (self.engine.config.model_extra or {}).get("onboarded"):
-            await self._new_session()
+        if not self._had_sessions and (self.engine.config.model_extra or {}).get("onboarded"):
+            self._prompt_new_session()
 
     def _show_no_session(self) -> None:
         """No session open: welcome screen, prompt disabled, empty header."""
@@ -375,25 +448,6 @@ class MainWindow(QMainWindow):
         wizard.exec()
         patch_config_file(self.engine.global_dir / "config.json", {"onboarded": True})
         self.engine.reload_config()
-
-    def closeEvent(self, event) -> None:
-        """Window closed = application exits: stop the engine (aborts runs,
-        closes the DB), then quit Qt so the qasync loop unwinds."""
-        for task in getattr(self, "_tasks", []):
-            task.cancel()
-
-        async def _shutdown() -> None:
-            from PySide6.QtWidgets import QApplication
-
-            try:
-                await self.engine.stop()
-            except Exception:
-                pass
-            QApplication.instance().quit()
-
-        asyncio.ensure_future(_shutdown())
-        event.accept()
-        super().closeEvent(event)
 
     # ------------------------------------------------------------------ events
 
@@ -516,7 +570,17 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ sessions
 
-    async def _new_session(self, directory: str | None = None) -> None:
+    def _prompt_new_session(self, target_project_id: str | None = None) -> None:
+        """Sync entry: pick a directory (modal, from the Qt loop), then create.
+
+        The modal picker must run outside an asyncio task, or qasync warns
+        about task re-entry while other tasks (file watcher) are pending.
+        """
+        directory = self._prompt_directory("Choose a working directory for the new session")
+        if directory:
+            self._fire(self._new_session(directory=directory, project_id=target_project_id))
+
+    async def _new_session(self, directory: str | None = None, project_id: str | None = None) -> None:
         """Create a session. A working directory must be chosen explicitly —
         if not passed in, prompt for one; cancelling aborts creation."""
         if directory is None:
@@ -525,7 +589,7 @@ class MainWindow(QMainWindow):
                 return
         self._remember_project(directory)
         session = await self.engine.new_session(
-            model=self._default_model(), directory=directory)
+            model=self._default_model(), directory=directory, project_id=project_id)
         await self._load_session(session.id)
         await self._refresh_sessions()
 
@@ -626,29 +690,41 @@ class MainWindow(QMainWindow):
         await self.engine.delete_session(session_id)
         await self._after_session_removed(session_id)
 
+    async def _delete_sessions(self, session_ids: list[str]) -> None:
+        for sid in session_ids:
+            await self.engine.delete_session(sid)
+        for sid in session_ids:
+            self._session_stack = [s for s in self._session_stack if s != sid]
+        if self.current_session_id in session_ids:
+            await self._after_session_removed(self.current_session_id or "")
+        else:
+            await self._refresh_sessions()
+
     def _rename_session(self, session_id: str) -> None:
         title, ok = QInputDialog.getText(self, "Rename session", "New title:")
         if ok and title:
-            asyncio.ensure_future(self.engine.store.update_session(session_id, title=title))
-            asyncio.ensure_future(self._refresh_sessions())
+            async def apply() -> None:
+                await self.engine.store.update_session(session_id, title=title)
+                await self._refresh_sessions()
+            self._fire(apply())
 
     def _move_session_to_project(self, session_id: str) -> None:
-        projects = asyncio.get_event_loop().run_until_complete(
-            self.engine.store.list_projects()
-        )
-        if not projects:
-            return
-        names = [p.name for p in projects]
-        choice, ok = QInputDialog.getItem(
-            self, "Move to project", "Destination:", names, 0, False
-        )
-        if not ok:
-            return
-        proj = next(p for p in projects if p.name == choice)
-        asyncio.ensure_future(
-            self.engine.store.update_session_project(session_id, proj.id)
-        )
-        asyncio.ensure_future(self._refresh_sessions())
+        async def run() -> None:
+            projects = await self.engine.store.list_projects()
+            if not projects:
+                QMessageBox.information(
+                    self, "Move to project",
+                    "No projects yet — create one with + Project first.")
+                return
+            names = [p.name for p in projects]
+            choice, ok = QInputDialog.getItem(
+                self, "Move to project", "Destination:", names, 0, False)
+            if not ok:
+                return
+            proj = next(p for p in projects if p.name == choice)
+            await self.engine.store.update_session_project(session_id, proj.id)
+            await self._refresh_sessions()
+        self._fire(run())
 
     async def _after_session_removed(self, session_id: str) -> None:
         """If the removed session was open, move to the next one (or a new one)."""
@@ -660,8 +736,11 @@ class MainWindow(QMainWindow):
             current_gone = current is None or current.archived
         if current_gone:
             self.current_session_id = None
-            sessions = await self.engine.store.list_sessions(self.engine.project.id)
+            sessions: list = []
+            for p in await self.engine.store.list_projects():
+                sessions.extend(await self.engine.store.list_sessions(p.id))
             if sessions:
+                sessions.sort(key=lambda s: s.updated_at, reverse=True)
                 await self._load_session(sessions[0].id)
             else:
                 # nothing left — don't force a folder picker on the user here;
@@ -729,20 +808,32 @@ class MainWindow(QMainWindow):
             self._set_activity(detail)
 
     async def _refresh_sessions(self) -> None:
-        sessions = await self.engine.store.list_sessions(self.engine.project.id)
-        # one query for every child instead of one per session
-        everyone = await self.engine.store.list_sessions(
-            self.engine.project.id, include_children=True)
+        projects = await self.engine.store.list_projects()
+        # load every project's sessions so moved/grouped sessions all show
+        sessions: list = []
+        for p in projects:
+            sessions.extend(await self.engine.store.list_sessions(p.id, include_children=True))
+        sessions_by_project: dict[str, list] = {}
         children: dict[str, list] = {}
-        for s in everyone:
+        for s in sessions:
             if s.parent_session_id:
                 children.setdefault(s.parent_session_id, []).append(s)
+            else:
+                sessions_by_project.setdefault(s.project_id, []).append(s)
         for kids in children.values():
             kids.sort(key=lambda s: s.created_at)
+        for sess_list in sessions_by_project.values():
+            sess_list.sort(key=lambda s: s.updated_at, reverse=True)
+            for s in sess_list:
+                s.children = children.get(s.id, [])
         running = {s.id for s in sessions if self.engine.is_running(s.id)} | self._running
         agent_colors = {a.name: a.color or "#98c379" for a in self.engine.agents.agents.values()}
+        folders_by_project: dict[str, list] = {}
+        for p in projects:
+            folders_by_project[p.id] = await self.engine.store.list_project_folders(p.id)
         self.session_list.populate(
-            sessions, children, running, self.current_session_id or "", agent_colors)
+            projects, sessions_by_project, running, self.current_session_id or "",
+            agent_colors, folders_by_project)
         if self.current_session_id:
             current = await self.engine.store.get_session(self.current_session_id)
             if current:
@@ -804,7 +895,7 @@ class MainWindow(QMainWindow):
         if action == "compact" and self.current_session_id:
             self._fire(self.engine.compact(self.current_session_id))
         elif action == "new_session":
-            self._fire(self._new_session())
+            self._prompt_new_session()
         elif action == "open_model_picker":
             self.prompt_bar.model_combo.showPopup()
         elif action == "open_agent_editor":
@@ -908,6 +999,10 @@ class MainWindow(QMainWindow):
         from ..engine.config import patch_config_file
         patch_config_file(self.engine.global_dir / "config.json", {"session_mode": mode})
 
+    def _on_session_moved(self, session_id: str, project_id: str | None) -> None:
+        asyncio.ensure_future(self.engine.store.update_session_project(session_id, project_id))
+        asyncio.ensure_future(self._refresh_sessions())
+
     # ------------------------------------------------------------------ dialogs
 
     def _open_settings(self) -> None:
@@ -924,11 +1019,6 @@ class MainWindow(QMainWindow):
         editor = AgentEditor(self.engine, self)
         editor.exec()
 
-    def _open_project_manager(self) -> None:
-        dlg = ProjectManagerDialog(self.engine, self)
-        dlg.project_switched.connect(lambda p: self._fire(self._refresh_sessions()))
-        dlg.exec()
-
     # ------------------------------------------------------------------ util
 
     @staticmethod
@@ -939,3 +1029,12 @@ class MainWindow(QMainWindow):
             coro.close()
             return
         loop.create_task(coro)
+
+    def closeEvent(self, event) -> None:
+        for task in getattr(self, "_tasks", []):
+            task.cancel()
+        asyncio.ensure_future(self.engine.stop())
+        from PySide6.QtWidgets import QApplication
+        QApplication.instance().quit()
+        event.accept()
+        super().closeEvent(event)

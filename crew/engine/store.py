@@ -18,6 +18,11 @@ CREATE TABLE IF NOT EXISTS project (
     name TEXT NOT NULL,
     last_opened_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS project_folder (
+    project_id TEXT NOT NULL REFERENCES project(id),
+    path TEXT NOT NULL,
+    PRIMARY KEY (project_id, path)
+);
 CREATE TABLE IF NOT EXISTS session (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES project(id),
@@ -58,6 +63,7 @@ CREATE TABLE IF NOT EXISTS todo (
     PRIMARY KEY (session_id, idx)
 );
 CREATE INDEX IF NOT EXISTS idx_session_project ON session(project_id);
+CREATE INDEX IF NOT EXISTS idx_project_folder ON project_folder(project_id);
 CREATE INDEX IF NOT EXISTS idx_session_parent ON session(parent_session_id);
 CREATE INDEX IF NOT EXISTS idx_message_session ON message(session_id);
 CREATE INDEX IF NOT EXISTS idx_part_message ON part(message_id);
@@ -196,6 +202,47 @@ class Store:
         )
         await self.db.commit()
         return Project(pid, path_str, name, now)
+
+    async def rename_project(self, project_id: str, new_name: str) -> None:
+        now = time.time()
+        await self.db.execute(
+            "UPDATE project SET name=?, last_opened_at=? WHERE id=?",
+            (new_name, now, project_id),
+        )
+        await self.db.commit()
+
+    async def delete_project(self, project_id: str) -> None:
+        # delete folders first (FK not enforced on this table)
+        await self.db.execute("DELETE FROM project_folder WHERE project_id=?", (project_id,))
+        # delete all sessions under the project (cascades via FK on message/todo)
+        sessions = await self._fetchall("SELECT id FROM session WHERE project_id=?", (project_id,))
+        for (sid,) in sessions:
+            await self.delete_session(sid)
+        await self.db.execute("DELETE FROM project WHERE id=?", (project_id,))
+        await self.db.commit()
+
+    # -- project folders ----------------------------------------------------
+
+    async def list_project_folders(self, project_id: str) -> list[str]:
+        rows = await self._fetchall(
+            "SELECT path FROM project_folder WHERE project_id=? ORDER BY path",
+            (project_id,),
+        )
+        return [r["path"] for r in rows]
+
+    async def add_project_folder(self, project_id: str, path: Path | str) -> None:
+        await self.db.execute(
+            "INSERT OR IGNORE INTO project_folder (project_id, path) VALUES (?,?)",
+            (project_id, str(path)),
+        )
+        await self.db.commit()
+
+    async def remove_project_folder(self, project_id: str, path: Path | str) -> None:
+        await self.db.execute(
+            "DELETE FROM project_folder WHERE project_id=? AND path=?",
+            (project_id, str(path)),
+        )
+        await self.db.commit()
 
     # -- session ------------------------------------------------------------
 
