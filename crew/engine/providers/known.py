@@ -31,6 +31,7 @@ class ProviderSpec:
     oauth_kind: str = ""         # "loopback" (browser redirect) | "device" (enter a code)
     planned: bool = False        # listed but not connectable yet
     note: str = ""
+    id_fields: tuple[str, ...] = ()
 
 
 KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
@@ -109,6 +110,7 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
             note="Uses the standard AWS credential chain (env vars,"
                  " ~/.aws/credentials, SSO). Region from AWS_REGION"
                  " (default us-east-1). Install boto3 for live model lists.",
+            id_fields=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         ),
         ProviderSpec(
             id="cloudflare", label="Cloudflare Workers AI",

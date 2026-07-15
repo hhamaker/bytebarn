@@ -247,7 +247,10 @@ class ProviderManager(QDialog):
                 item.widget().deleteLater()
         self.id_edits.clear()
 
-        placeholders = re.findall(r"\$\{([A-Z0-9_]+)\}", spec.base_url or "")
+        if spec.id_fields:
+            placeholders = list(spec.id_fields)
+        else:
+            placeholders = re.findall(r"\$\{([A-Z0-9_]+)\}", spec.base_url or "")
         show = bool(placeholders)
         self.ids_label.setVisible(show)
         self.ids_container.setVisible(show)
