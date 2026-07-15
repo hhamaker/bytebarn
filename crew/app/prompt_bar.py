@@ -84,6 +84,7 @@ class PromptBar(QWidget):
         self.editor.installEventFilter(self)
         self.editor.textChanged.connect(self._on_text_changed)
         self.agent_combo = QComboBox()
+        self.agent_combo.setMinimumWidth(85)
         self.agent_combo.setToolTip("Agent for this session — /agents to edit them")
         self.agent_combo.currentTextChanged.connect(self.agent_changed)
         # two-stage model picker: provider first, then that provider's models
@@ -127,7 +128,11 @@ class PromptBar(QWidget):
     def _resize_editor(self) -> None:
         metrics = QFontMetrics(self.editor.font())
         lines = min(max(self.editor.document().blockCount(), 1), _MAX_LINES)
-        height = metrics.lineSpacing() * lines + 14
+        doc_margin = self.editor.document().documentMargin()
+        frame = self.editor.frameWidth()
+        cm = self.editor.contentsMargins()
+        extra = 2 * doc_margin + 2 * frame + cm.top() + cm.bottom()
+        height = metrics.lineSpacing() * lines + extra
         self.editor.setFixedHeight(height)
 
     # -- events -------------------------------------------------------------

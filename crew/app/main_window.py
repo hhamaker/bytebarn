@@ -118,6 +118,9 @@ class MainWindow(QMainWindow):
         self.status_cost = QLabel("")
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["Safe", "Ask", "Full-auto"])
+        self.mode_combo.setMinimumWidth(90)
+        self.mode_combo.setSizePolicy(self.mode_combo.sizePolicy().horizontalPolicy(),
+                                      self.mode_combo.sizePolicy().verticalPolicy())
         self.mode_combo.setCurrentIndex(1)
         self.mode_combo.currentIndexChanged.connect(self._mode_changed)
         self.mode_combo.setToolTip(
