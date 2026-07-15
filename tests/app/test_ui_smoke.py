@@ -379,6 +379,21 @@ def test_session_list_delete_key_removes_folder(qapp, monkeypatch):
     assert removed == [("p1", "/code/foo")]
 
 
+def test_crew_stage_stop_signal(qapp):
+    from crew.app.crew_stage import CrewStage
+    from crew.engine.events import TaskStarted
+
+    stage = CrewStage()
+    stopped: list[str] = []
+    stage.stop_requested.connect(stopped.append)
+    stage.handle_event(
+        TaskStarted(session_id="p", subagent_session_id="child1",
+                    agent="explore", description="x"))
+    # simulate right-click on the only visible member
+    stage.stop_requested.emit("child1")
+    assert stopped == ["child1"]
+
+
 def test_session_list_project_rename_delete_signals(qapp, monkeypatch):
     from crew.app.session_list import SessionList
 

@@ -179,6 +179,8 @@ class MainWindow(QMainWindow):
         self.session_list.session_moved_to_project.connect(self._on_session_moved)
         self.transcript.open_session.connect(self._open_child)
         self.crew_stage.open_session.connect(self._open_child)
+        self.crew_stage.stop_requested.connect(
+            lambda sid: self._fire(self._abort(sid)))
         self.prompt_bar.submitted.connect(self._submit)
         self.prompt_bar.aborted.connect(lambda: self._fire(self._abort()))
         self.prompt_bar.agent_changed.connect(self._agent_changed)
@@ -608,12 +610,14 @@ class MainWindow(QMainWindow):
             return
         self.current_session_id = session_id
         self._activity = "working…" if self.engine.is_running(session_id) else ""
-        history = await self.engine.store.session_parts(session_id)
-        rows = []
-        for message, parts in history:
-            for part in parts:
-                rows.append((message, part))
+        # load the most recent page first (lazy loading)
+        history = await self.engine.store.session_parts(session_id, limit=50)
         self.transcript.load_history(history)
+        self._loaded_before = history[0][0].created_at if history else None
+        self._full_history_loaded = len(history) < 50
+
+        # attach lazy loader
+        self.transcript.request_older = lambda: self._fire(self._load_older_history())
         todos = await self.engine.store.get_todos(session_id)
         self.todo_strip.set_todos([{"content": t.content, "status": t.status} for t in todos])
         self.prompt_bar.set_running(self.engine.is_running(session_id))
@@ -622,6 +626,21 @@ class MainWindow(QMainWindow):
         self._update_header(session)
         self._refresh_pickers(session.agent, session.model)
         await self._refresh_cost()
+
+    async def _load_older_history(self) -> None:
+        if getattr(self, "_full_history_loaded", False) or not self.current_session_id:
+            return
+        before = self.transcript.oldest_timestamp() or getattr(self, "_loaded_before", None)
+        if before is None:
+            return
+        older = await self.engine.store.session_parts(
+            self.current_session_id, limit=50, before=before
+        )
+        if not older:
+            self._full_history_loaded = True
+            return
+        self.transcript.append_older(older)
+        self._loaded_before = older[0][0].created_at
 
     def _pick_directory(self) -> None:
         if not self.current_session_id:

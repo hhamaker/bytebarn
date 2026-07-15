@@ -282,6 +282,7 @@ class Transcript(QScrollArea):
         self._autoscroll = True
         self.verticalScrollBar().valueChanged.connect(self._on_scroll)
         self.verticalScrollBar().rangeChanged.connect(self._on_range)
+        self.request_older = None  # set by MainWindow
 
     # -- loading ----------------------------------------------------------
 
@@ -299,11 +300,49 @@ class Transcript(QScrollArea):
         self.clear_all()
         for message, parts in history:
             for part in parts:
+                if not hasattr(part, "data"):
+                    continue
+                part.data["_created_at"] = message.created_at
                 self._add_part(message.role, part.id, part.type, part.data, streaming=False)
         if not self._part_widgets:
             self._welcome = _Welcome()
             self._layout.setAlignment(Qt.AlignVCenter)
             self._layout.addWidget(self._welcome)
+
+    # ------------------------------------------------------------------
+    # lazy / incremental loading helpers
+    # ------------------------------------------------------------------
+    def append_older(self, older: list[tuple[Any, list[Any]]]) -> None:
+        """Prepend an older page of history (used for lazy loading)."""
+        if not older:
+            return
+        # remember current scroll position so the user doesn't jump
+        sb = self.scroll_area.verticalScrollBar()
+        old_val = sb.value()
+        old_max = sb.maximum()
+
+        for message, parts in older:
+            for part in parts:
+                if not hasattr(part, "data"):
+                    continue
+                part.data["_created_at"] = message.created_at
+                self._add_part(message.role, part.id, part.type, part.data,
+                               streaming=False, prepend=True)
+
+        # restore scroll so the same visual content stays on screen
+        new_max = sb.maximum()
+        sb.setValue(old_val + (new_max - old_max))
+
+    def oldest_timestamp(self) -> float | None:
+        """Return the created_at of the oldest visible message, or None."""
+        if not self._part_widgets:
+            return None
+        # The first widget in the layout corresponds to the oldest message
+        # because we prepend when loading older pages.
+        # We store timestamps on the widgets via setProperty.
+        w = self._layout.itemAt(0).widget()
+        ts = w.property("_created_at")
+        return float(ts) if ts is not None else None
 
     def show_thinking(self, agent: str, color: str = "#98c379") -> None:
         """Waiting-for-first-token indicator; dropped when content arrives."""
@@ -362,6 +401,7 @@ class Transcript(QScrollArea):
         part_type: str,
         data: dict[str, Any],
         streaming: bool = False,
+        prepend: bool = False,
     ) -> None:
         self._dismiss_welcome()
         if role != "user":
@@ -388,7 +428,16 @@ class Transcript(QScrollArea):
         if widget is None:
             return
         self._part_widgets[part_id] = widget
-        self._layout.addWidget(widget)
+        # stash the message timestamp so we can do lazy loading
+        # (the widget is either a direct part widget or a container)
+        try:
+            widget.setProperty("_created_at", data.get("_created_at"))
+        except Exception:
+            pass
+        if locals().get("prepend", False):
+            self._layout.insertWidget(0, widget)
+        else:
+            self._layout.addWidget(widget)
 
     _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
 
@@ -421,6 +470,9 @@ class Transcript(QScrollArea):
     def _on_scroll(self, value: int) -> None:
         bar = self.verticalScrollBar()
         self._autoscroll = value >= bar.maximum() - 10
+        # trigger lazy load when the user scrolls near the top
+        if value <= 50 and hasattr(self, "request_older"):
+            self.request_older()
 
     def _on_range(self, _min: int, _max: int) -> None:
         if self._autoscroll:

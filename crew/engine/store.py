@@ -375,18 +375,38 @@ class Store:
         )
         return [Part(r["id"], r["message_id"], r["idx"], r["type"], json.loads(r["json"])) for r in rows]
 
-    async def session_parts(self, session_id: str) -> list[tuple[Message, list[Part]]]:
-        """All messages with their parts in one JOIN — this is the runner's
-        per-step hot path; per-message queries made long sessions O(n²)."""
-        rows = await self._fetchall(
+    async def session_parts(
+        self,
+        session_id: str,
+        limit: int | None = None,
+        before: float | None = None,
+    ) -> list[tuple[Message, list[Part]]]:
+        """Return messages+parts for a session.
+
+        When limit is given, returns the **most recent** messages first
+        (newest → oldest).  If before is also given, only messages older
+        than that timestamp are considered (used for pagination).
+        """
+        q = (
             "SELECT m.id AS mid, m.session_id, m.role, m.created_at, m.model,"
             " m.provider, m.tokens_in, m.tokens_out, m.cost, m.error,"
             " p.id AS pid, p.idx, p.type AS ptype, p.json AS pjson"
             " FROM message m LEFT JOIN part p ON p.message_id = m.id"
             " WHERE m.session_id=?"
-            " ORDER BY m.created_at, m.id, p.idx",
-            (session_id,),
         )
+        params: list = [session_id]
+        if before is not None:
+            q += " AND m.created_at < ?"
+            params.append(before)
+        q += " ORDER BY m.created_at DESC, m.id DESC, p.idx"
+        if limit is not None:
+            q += " LIMIT ?"
+            params.append(limit)
+        else:
+            # full history – restore the original chronological order
+            q = q.replace("ORDER BY m.created_at DESC", "ORDER BY m.created_at ASC")
+            q = q.replace(", m.id DESC", ", m.id ASC")
+        rows = await self._fetchall(q, tuple(params))
         out: list[tuple[Message, list[Part]]] = []
         current_id = None
         for r in rows:
@@ -401,7 +421,15 @@ class Store:
             if r["pid"] is not None:
                 out[-1][1].append(
                     Part(r["pid"], r["mid"], r["idx"], r["ptype"], json.loads(r["pjson"])))
+        if limit is not None:
+            out.reverse()          # caller expects chronological order
         return out
+
+    async def session_parts_page(
+        self, session_id: str, page_size: int = 50
+    ) -> list[tuple[Message, list[Part]]]:
+        """Convenience wrapper: returns the most recent page_size messages."""
+        return await self.session_parts(session_id, limit=page_size)
 
     # -- todo ---------------------------------------------------------------
 

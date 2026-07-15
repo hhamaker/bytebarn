@@ -137,6 +137,7 @@ class StageState:
 
 class CrewStage(QWidget):
     open_session = Signal(str)
+    stop_requested = Signal(str)   # right-click on a running agent → stop it
 
     def __init__(self):
         super().__init__()
@@ -311,4 +312,19 @@ class CrewStage(QWidget):
         for rect, session_id in self._hits:
             if rect.contains(pos):
                 self.open_session.emit(session_id)
+                return
+
+    def contextMenuEvent(self, event) -> None:
+        pos = event.pos()
+        for rect, session_id in self._hits:
+            if rect.contains(pos):
+                member = self.state.members.get(session_id)
+                if member and member.status in ("running", "retrying"):
+                    from PySide6.QtWidgets import QMenu
+
+                    menu = QMenu(self)
+                    stop_action = menu.addAction("Stop this agent")
+                    chosen = menu.exec(event.globalPos())
+                    if chosen is stop_action:
+                        self.stop_requested.emit(session_id)
                 return

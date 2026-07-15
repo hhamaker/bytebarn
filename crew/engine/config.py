@@ -160,8 +160,8 @@ class Config(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     provider: dict[str, ProviderConfig] = Field(default_factory=dict)
-    model: str = "anthropic/claude-sonnet-4-5"
-    small_model: str = "anthropic/claude-haiku-4-5"
+    model: str = ""          # empty = use provider's first curated model
+    small_model: str = ""
     agent: dict[str, AgentOverride] = Field(default_factory=dict)
     permission: dict[str, Any] = Field(default_factory=dict)
     instructions: list[str] = Field(default_factory=lambda: ["AGENTS.md", "CLAUDE.md"])

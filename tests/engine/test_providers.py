@@ -357,11 +357,11 @@ def test_known_providers_and_available_models(tmp_path, monkeypatch):
     models = available_models(cfg, auth)
     assert "groq/llama-3.3-70b-versatile" in models
     # anthropic is disconnected -> its default model must NOT appear
-    assert cfg.model not in models
     assert not any(m.startswith("anthropic/") for m in models)
     auth.set("anthropic", {"type": "api", "key": "sk-ant-x"})
     models = available_models(cfg, auth)
-    assert cfg.model in models and models[0] == cfg.model
+    # when no explicit default is set, the first curated model is used
+    assert any(m.startswith("anthropic/") for m in models)
 
 
 def test_comparable_model_fallback(tmp_path, monkeypatch):
