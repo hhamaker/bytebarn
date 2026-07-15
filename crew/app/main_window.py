@@ -41,6 +41,7 @@ from ..engine.providers.known import connected_providers, curated_models
 from .agent_editor import AgentEditor
 from .crew_stage import CrewStage
 from .permission_dialog import PermissionDialog
+from .project_manager import ProjectManagerDialog
 from .prompt_bar import PromptBar
 from .question_dialog import QuestionDialog
 from .session_list import SessionList
@@ -114,6 +115,11 @@ class MainWindow(QMainWindow):
         splitter.addWidget(self.session_list)
         splitter.addWidget(right)
         splitter.setSizes([240, 960])
+        splitter.setCollapsible(0, False)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setHandleWidth(6)
+        splitter.setStyleSheet("QSplitter::handle { background: #555; }")
         self.setCentralWidget(splitter)
 
         # status bar
@@ -146,6 +152,10 @@ class MainWindow(QMainWindow):
         settings_button.setFlat(True)
         settings_button.setToolTip("Default models, permissions, theme")
         settings_button.clicked.connect(self._open_settings)
+        projects_button = QPushButton("Projects")
+        projects_button.setFlat(True)
+        projects_button.setToolTip("Switch or manage known projects")
+        projects_button.clicked.connect(self._open_project_manager)
         self.statusBar().addWidget(self.status_project)
         self.statusBar().addWidget(QLabel("·"))
         self.statusBar().addWidget(self.status_git)
@@ -154,6 +164,7 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(agents_button)
         self.statusBar().addPermanentWidget(self.mode_combo)
         self.statusBar().addPermanentWidget(settings_button)
+        self.statusBar().addPermanentWidget(projects_button)
 
         self._build_menus()
 
@@ -893,6 +904,11 @@ class MainWindow(QMainWindow):
     def _open_agent_editor(self) -> None:
         editor = AgentEditor(self.engine, self)
         editor.exec()
+
+    def _open_project_manager(self) -> None:
+        dlg = ProjectManagerDialog(self.engine, self)
+        dlg.project_switched.connect(lambda p: self._fire(self._refresh_sessions()))
+        dlg.exec()
 
     # ------------------------------------------------------------------ util
 

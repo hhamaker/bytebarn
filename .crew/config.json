@@ -70,7 +70,9 @@
         "QT_QPA_PLATFORM=offscreen .venv/bin/pytest tests/app/test_ui_smoke.py tests/engine/test_runner.py -q*",
         "cd /Users/hunterhamaker/Documents/GitHub/openDesktop && git diff crew/app/prompt_bar.py*",
         "python3.12 -c \"\nfrom PySide6.QtWidgets import QPlainTextEdit, QApplication\nfrom PySide6.QtGui import QFontMetrics\nimport sys\napp = QApplication(sys.argv)\ne = QPlainTextEdit()\nprint('docMargin:', e.document().documentMargin())\nprint('frameWidth:', e.frameWidth())\nprint('contentsMargins:', e.contentsMargins())\nprint('lineSpacing sample:', QFontMetrics(e.font()).lineSpacing())\n\"*",
-        "python3 -m py_compile crew/engine/providers/known.py crew/app/provider_manager.py && echo \"syntax OK\"*"
+        "python3 -m py_compile crew/engine/providers/known.py crew/app/provider_manager.py && echo \"syntax OK\"*",
+        ".venv/bin/python -c \"import crew.app.main_window\"*",
+        "git diff crew/app/main_window.py*"
       ],
       "deny": []
     },
