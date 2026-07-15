@@ -33,9 +33,9 @@ def main() -> None:
     app = QApplication(sys.argv)
     app.setApplicationName("Crew")
     app.setWindowIcon(app_icon())
-    # the main window drives shutdown explicitly (engine cleanup first),
-    # so don't let Qt quit out from under the asyncio teardown
-    app.setQuitOnLastWindowClosed(False)
+    # Normal macOS behaviour: closing the last window quits the app.
+    # The qasync loop is stopped via app.aboutToQuit below.
+    app.setQuitOnLastWindowClosed(True)
 
     # directories are per session now — no startup picker. This only sets the
     # engine's config root (global + project .crew); every session picks its

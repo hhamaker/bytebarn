@@ -99,6 +99,50 @@ class SkillEditor(QDialog):
                 self.list.setCurrentRow(i)
                 break
 
+    def _import_from_github(self):
+        url, ok = QInputDialog.getText(
+            self, "Import skill",
+            "GitHub raw URL or gist URL:")
+        if not ok or not url.strip():
+            return
+        url = url.strip()
+
+        try:
+            # normalize gist URLs to raw
+            if "gist.github.com" in url and "/raw/" not in url:
+                # https://gist.github.com/user/123456 -> raw
+                m = re.search(r"gist\.github\.com/[^/]+/([0-9a-f]+)", url)
+                if m:
+                    gist_id = m.group(1)
+                    url = f"https://gist.githubusercontent.com/raw/{gist_id}"
+            async def fetch():
+                async with httpx.AsyncClient(timeout=10) as client:
+                    r = await client.get(url, follow_redirects=True)
+                    r.raise_for_status()
+                    return r.text
+            # run the coroutine from the Qt thread via the engine helper
+            loop = __import__("asyncio").get_event_loop()
+            body = loop.run_until_complete(fetch())
+        except Exception as e:
+            QMessageBox.warning(self, "Import failed", str(e))
+            return
+
+        # derive a reasonable filename
+        default_name = Path(url).stem or "imported-skill"
+        name, ok = QInputDialog.getText(self, "Skill name", "Name:", text=default_name)
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        path = self._skill_path(name, "project")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body)
+        self.engine.skills.reload()
+        self._reload()
+        for i in range(self.list.count()):
+            if self.list.item(i).data(0) == name:
+                self.list.setCurrentRow(i)
+                break
+
     def _delete_skill(self):
         item = self.list.currentItem()
         if not item:
