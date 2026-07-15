@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QLabel,
@@ -19,6 +19,8 @@ from .markdown import escape, render_markdown
 
 _STATUS_ICON = {"pending": "…", "running": "⟳", "done": "✓", "error": "✗"}
 _STATUS_COLOR = {"pending": "#888", "running": "#e5c07b", "done": "#98c379", "error": "#e06c75"}
+_STREAM_COALESCE_MS = 33  # ~30 fps UI updates while tokens stream
+_MARKDOWN_SETTLE_MS = 100  # re-render markdown after stream pauses
 
 
 class _Card(QFrame):
@@ -142,21 +144,56 @@ class TextBlock(QLabel):
         self.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         self._user = user
+        self._queued = queued
+        self._raw = text
+        self._md_timer: QTimer | None = None
         if user:
-            style = "QLabel { background-color: #2c313c; color: #e6e6e6; border-radius: 6px; padding: 8px; }"
-            if queued:
-                style = "QLabel { background-color: #2c313c; color: #e6e6e6; border-radius: 6px; padding: 8px; border: 1px dashed #e5c07b; }"
-            self.setStyleSheet(style)
+            self._apply_user_style()
         else:
             self.setStyleSheet("QLabel { padding: 4px; }")
-        self.update_text(text, queued)
+        self.update_text(text, queued, streaming=False)
 
-    def update_text(self, text: str, queued: bool = False) -> None:
+    def _apply_user_style(self) -> None:
+        style = "QLabel { background-color: #2c313c; color: #e6e6e6; border-radius: 6px; padding: 8px; }"
+        if self._queued:
+            style = (
+                "QLabel { background-color: #2c313c; color: #e6e6e6; border-radius: 6px; "
+                "padding: 8px; border: 1px dashed #e5c07b; }"
+            )
+        self.setStyleSheet(style)
+
+    def set_queued(self, queued: bool) -> None:
+        if not self._user or self._queued == queued:
+            return
+        self._queued = queued
+        self._apply_user_style()
+        self.update_text(self._raw, queued, streaming=False)
+
+    def update_text(self, text: str, queued: bool = False, streaming: bool = False) -> None:
+        self._raw = text
         if self._user:
-            prefix = "<span style='color:#e5c07b'>[queued]</span> " if queued else ""
+            if queued != self._queued:
+                self._queued = queued
+                self._apply_user_style()
+            prefix = "<span style='color:#e5c07b'>[queued]</span> " if self._queued else ""
             self.setText(prefix + escape(text).replace("\n", "<br>"))
+            return
+        if streaming:
+            # Fast path during token stream — full markdown is expensive (pygments).
+            self.setText(escape(text).replace("\n", "<br>"))
+            self._schedule_markdown()
         else:
             self.setText(render_markdown(text))
+
+    def _schedule_markdown(self) -> None:
+        if self._md_timer is None:
+            self._md_timer = QTimer(self)
+            self._md_timer.setSingleShot(True)
+            self._md_timer.timeout.connect(self._finalize_markdown)
+        self._md_timer.start(_MARKDOWN_SETTLE_MS)
+
+    def _finalize_markdown(self) -> None:
+        self.setText(render_markdown(self._raw))
 
 
 class _Welcome(QWidget):
@@ -244,12 +281,19 @@ class Transcript(QScrollArea):
         self._welcome: QWidget | None = None
         self._thinking: QWidget | None = None
         self._autoscroll = True
+        self._pending: dict[str, tuple[str, dict[str, Any], str]] = {}
+        self._flush_timer = QTimer(self)
+        self._flush_timer.setSingleShot(True)
+        self._flush_timer.setInterval(_STREAM_COALESCE_MS)
+        self._flush_timer.timeout.connect(self._flush_pending)
         self.verticalScrollBar().valueChanged.connect(self._on_scroll)
         self.verticalScrollBar().rangeChanged.connect(self._on_range)
 
     # -- loading ----------------------------------------------------------
 
     def clear_all(self) -> None:
+        self._flush_timer.stop()
+        self._pending.clear()
         self._part_widgets.clear()
         self._welcome = None
         self._thinking = None
@@ -263,7 +307,7 @@ class Transcript(QScrollArea):
         self.clear_all()
         for message, parts in history:
             for part in parts:
-                self._add_part(message.role, part.id, part.type, part.data)
+                self._add_part(message.role, part.id, part.type, part.data, streaming=False)
         if not self._part_widgets:
             self._welcome = _Welcome()
             self._layout.setAlignment(Qt.AlignVCenter)
@@ -282,6 +326,13 @@ class Transcript(QScrollArea):
             self._thinking.deleteLater()
             self._thinking = None
 
+    def promote_queued(self) -> None:
+        """Clear [queued] style on the oldest optimistic user bubble."""
+        for widget in self._part_widgets.values():
+            if isinstance(widget, TextBlock) and widget._user and widget._queued:
+                widget.set_queued(False)
+                return
+
     def _dismiss_welcome(self) -> None:
         if self._welcome is not None:
             self._layout.removeWidget(self._welcome)
@@ -292,27 +343,62 @@ class Transcript(QScrollArea):
     # -- streaming updates --------------------------------------------------
 
     def on_part_updated(self, part_id: str, part_type: str, data: dict[str, Any], role: str = "assistant") -> None:
+        # Coalesce high-frequency text/reasoning deltas onto the next paint frame.
+        if part_type in ("text", "reasoning") and part_id in self._part_widgets:
+            self._pending[part_id] = (part_type, data, role)
+            if not self._flush_timer.isActive():
+                self._flush_timer.start()
+            return
+        self._apply_part_update(part_id, part_type, data, role, streaming=True)
+
+    def _flush_pending(self) -> None:
+        pending = self._pending
+        self._pending = {}
+        for part_id, (part_type, data, role) in pending.items():
+            self._apply_part_update(part_id, part_type, data, role, streaming=True)
+
+    def _apply_part_update(
+        self,
+        part_id: str,
+        part_type: str,
+        data: dict[str, Any],
+        role: str = "assistant",
+        streaming: bool = True,
+    ) -> None:
         widget = self._part_widgets.get(part_id)
         if widget is None:
-            self._add_part(role, part_id, part_type, data)
+            self._add_part(role, part_id, part_type, data, streaming=streaming)
             return
         if isinstance(widget, ToolCard):
             widget.update_data(data)
         elif isinstance(widget, ReasoningCard):
             widget.update_text(data.get("text", ""))
         elif isinstance(widget, TextBlock):
-            widget.update_text(data.get("text", ""))
+            widget.update_text(data.get("text", ""), streaming=streaming and not widget._user)
 
     def add_user_text(self, part_id: str, text: str, queued: bool = False) -> None:
-        self._add_part("user", part_id, "text", {"text": text, "_queued": queued})
+        self._add_part("user", part_id, "text", {"text": text, "_queued": queued}, streaming=False)
 
-    def _add_part(self, role: str, part_id: str, part_type: str, data: dict[str, Any]) -> None:
+    def _add_part(
+        self,
+        role: str,
+        part_id: str,
+        part_type: str,
+        data: dict[str, Any],
+        streaming: bool = False,
+    ) -> None:
         self._dismiss_welcome()
         if role != "user":
             self.dismiss_thinking()
         widget: QWidget | None = None
         if part_type == "text":
-            widget = TextBlock(data.get("text", ""), user=role == "user", queued=bool(data.get("_queued")))
+            widget = TextBlock(
+                data.get("text", ""),
+                user=role == "user",
+                queued=bool(data.get("_queued")),
+            )
+            if streaming and role != "user" and isinstance(widget, TextBlock):
+                widget.update_text(data.get("text", ""), streaming=True)
         elif part_type == "reasoning":
             widget = ReasoningCard(data.get("text", ""))
         elif part_type in ("tool", "task"):

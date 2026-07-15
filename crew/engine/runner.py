@@ -14,7 +14,14 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 
 from .agents import AgentDef
-from .events import PartUpdated, RunFinished, SessionUpdated, TaskUpdated, TodoUpdated
+from .events import (
+    PartUpdated,
+    RunFinished,
+    SessionActivity,
+    SessionUpdated,
+    TaskUpdated,
+    TodoUpdated,
+)
 from .providers.base import (
     Done,
     ErrorEv,
@@ -169,8 +176,10 @@ class Runner:
             status = "error"
             await self._append_error(session.id, str(exc))
         finally:
-            engine.bus.emit(RunFinished(session_id=session.id, status=status))
+            # Promote any queued prompt first so RunFinished observers see an
+            # already-running next turn (header / thinking indicator stay live).
             await engine.on_run_finished(session.id)
+            engine.bus.emit(RunFinished(session_id=session.id, status=status))
 
     # ------------------------------------------------------------------
     async def _loop(self, session: Session, handle: RunHandle) -> None:
@@ -309,9 +318,11 @@ class Runner:
         error = None
 
         def emit_part(part_id, ptype, data, delta=""):
+            # Copy data so later in-place mutations (tool status, growing
+            # text buffer) don't rewrite events already sitting on the bus.
             bus.emit(PartUpdated(
                 session_id=session.id, message_id=message_id, part_id=part_id,
-                part_type=ptype, data=data, delta=delta,
+                part_type=ptype, data=dict(data), delta=delta,
             ))
 
         async for event in stream_with_retry(
@@ -331,8 +342,25 @@ class Runner:
                     reasoning_part = await store.add_part(message_id, "reasoning", {"text": ""})
                 emit_part(reasoning_part.id, "reasoning", {"text": reasoning_buf}, delta=event.text)
             elif isinstance(event, ToolCallStart):
-                calls[event.call_id] = {"name": event.name, "json": "", "part_id": None}
+                # Show the tool card immediately so the UI isn't silent while
+                # args stream in (large write/edit payloads can take seconds).
+                ptype = "task" if event.name == "task" else "tool"
+                data = {
+                    "tool": event.name, "call_id": event.call_id, "input": {},
+                    "output": "", "status": "pending", "title": "", "metadata": {},
+                }
+                if ptype == "task":
+                    data.update({
+                        "agent": "", "description": "", "subagent_session_id": "",
+                    })
+                part = await store.add_part(message_id, ptype, data)
+                calls[event.call_id] = {
+                    "name": event.name, "json": "", "part_id": part.id, "data": data,
+                }
                 order.append(event.call_id)
+                emit_part(part.id, ptype, data)
+                bus.emit(SessionActivity(
+                    session_id=session.id, detail=f"{event.name}…"))
             elif isinstance(event, ToolCallDelta):
                 if event.call_id in calls:
                     fragment = event.json_fragment
@@ -347,20 +375,38 @@ class Runner:
                 except json.JSONDecodeError:
                     input_data = {"_raw": call["json"]}
                 ptype = "task" if call["name"] == "task" else "tool"
-                data = {
-                    "tool": call["name"], "call_id": event.call_id, "input": input_data,
+                data = call.get("data") or {
+                    "tool": call["name"], "call_id": event.call_id, "input": {},
                     "output": "", "status": "pending", "title": "", "metadata": {},
                 }
+                data["input"] = input_data
+                data["status"] = "pending"
+                data["call_id"] = event.call_id
+                data["tool"] = call["name"]
                 if ptype == "task":
-                    data.update({
-                        "agent": input_data.get("agent", ""),
-                        "description": input_data.get("description", ""),
-                        "subagent_session_id": "",
-                    })
-                part = await store.add_part(message_id, ptype, data)
-                call["part_id"] = part.id
+                    data["agent"] = input_data.get("agent", "")
+                    data["description"] = input_data.get("description", "")
+                    data.setdefault("subagent_session_id", "")
                 call["data"] = data
-                emit_part(part.id, ptype, data)
+                if call.get("part_id"):
+                    await store.update_part(call["part_id"], data)
+                    emit_part(call["part_id"], ptype, data)
+                else:
+                    part = await store.add_part(message_id, ptype, data)
+                    call["part_id"] = part.id
+                    emit_part(part.id, ptype, data)
+                summary = (
+                    data.get("title")
+                    or input_data.get("command")
+                    or input_data.get("path")
+                    or input_data.get("pattern")
+                    or input_data.get("description")
+                    or ""
+                )
+                detail = f"{call['name']}"
+                if summary:
+                    detail = f"{call['name']}: {str(summary)[:60]}"
+                bus.emit(SessionActivity(session_id=session.id, detail=detail))
             elif isinstance(event, Usage):
                 usage = (event.tokens_in, event.tokens_out)
             elif isinstance(event, ErrorEv):
@@ -424,7 +470,10 @@ class Runner:
             return
 
         await self._set_call(session, call, "running", "")
-        self._emit_task_detail(session, f"{name} {arg or data.get('input', {}).get('pattern', '')}".strip())
+        detail = f"{name} {arg or data.get('input', {}).get('pattern', '')}".strip()
+        self._emit_task_detail(session, detail)
+        self.engine.bus.emit(SessionActivity(
+            session_id=session.id, detail=(detail[:80] or f"{name}…")))
         try:
             result: ToolResult = await tool.execute(params, ctx)
         except Exception as exc:
@@ -496,6 +545,8 @@ class Runner:
                 session_id=session.parent_session_id,
                 subagent_session_id=session.id, status="retrying",
             ))
+        self.engine.bus.emit(SessionActivity(
+            session_id=session.id, detail="retrying…"))
 
     def _emit_task_detail(self, session: Session, detail: str) -> None:
         if session.parent_session_id:

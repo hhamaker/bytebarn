@@ -15,6 +15,7 @@ receives every event (fan-out).
 | `task.updated` | `TaskUpdated` | `session_id`, `subagent_session_id`, `status` (`running`/`retrying`/`done`/`error`), `detail` | subagent status/tool activity changes — drives the crew stage |
 | `task.finished` | `TaskFinished` | `session_id`, `subagent_session_id`, `status` | subagent run completed |
 | `run.finished` | `RunFinished` | `session_id`, `status` (`done`/`aborted`/`error`) | a session's run loop ends — crew stage resets |
+| `session.activity` | `SessionActivity` | `session_id`, `detail` | live run status for the header (`thinking…`, `bash: …`, `retrying…`, `compacting…`) |
 | `agent.registry.changed` | `AgentRegistryChanged` | — | agents/commands/config hot-reloaded — pickers refresh |
 
 Subscribing:

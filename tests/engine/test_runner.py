@@ -96,6 +96,27 @@ async def test_tool_call_loop(engine, tmp_path):
     assert "tool_result" in flat and "content here" in flat
 
 
+async def test_tool_card_emitted_on_start(engine):
+    """Tool PartUpdated must fire on ToolCallStart, not only after args finish."""
+    events = engine.bus.queue()
+    _install(engine, [
+        tool_turn("c1", "bash", {"command": "echo hi"}),
+        text_turn("done"),
+    ])
+    session = await engine.new_session()
+    await _run_and_wait(engine, session, "run")
+
+    tool_events = []
+    while not events.empty():
+        ev = events.get_nowait()
+        if ev.name == "message.part.updated" and ev.part_type == "tool":
+            tool_events.append(ev.data.get("status"))
+    # pending (on start) → pending/running (args/exec) → done
+    assert "pending" in tool_events
+    assert "done" in tool_events
+    assert tool_events.index("pending") < tool_events.index("done")
+
+
 async def test_permission_deny_returns_tool_error(engine):
     engine.config.permission["bash"] = "deny"
     _install(engine, [

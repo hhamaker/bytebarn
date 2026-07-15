@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -24,6 +25,7 @@ from ..engine.events import (
     QuestionAsked,
     QueueUpdated,
     RunFinished,
+    SessionActivity,
     SessionUpdated,
     TaskFinished,
     TaskStarted,
@@ -57,6 +59,7 @@ class MainWindow(QMainWindow):
         self.current_session_id: str | None = None
         self._session_stack: list[str] = []  # for back-navigation into subagents
         self._running: set[str] = set()
+        self._activity: str = ""  # live run detail for the open session
 
         self.setWindowTitle("Crew")
         self.resize(1200, 800)
@@ -328,6 +331,10 @@ class MainWindow(QMainWindow):
                 if isinstance(event, PartUpdated):
                     if event.session_id == self.current_session_id:
                         self.transcript.on_part_updated(event.part_id, event.part_type, event.data)
+                        self._activity_from_part(event.part_type, event.data)
+                elif isinstance(event, SessionActivity):
+                    if event.session_id == self.current_session_id:
+                        self._set_activity(event.detail)
                 elif isinstance(event, SessionUpdated):
                     await self._refresh_sessions()
                     await self._refresh_cost()
@@ -344,10 +351,25 @@ class MainWindow(QMainWindow):
                         self._running.discard(event.subagent_session_id)
                     await self._refresh_sessions()
                 elif isinstance(event, RunFinished):
-                    self._running.discard(event.session_id)
+                    # on_run_finished may already have started the next queued run
+                    still = self.engine.is_running(event.session_id)
+                    if still:
+                        self._running.add(event.session_id)
+                    else:
+                        self._running.discard(event.session_id)
                     if event.session_id == self.current_session_id:
-                        self.prompt_bar.set_running(False)
+                        self.prompt_bar.set_running(still)
                         self.transcript.dismiss_thinking()
+                        if still:
+                            # queued prompt just promoted
+                            self.transcript.promote_queued()
+                            agent = self.prompt_bar.agent_combo.currentText() or "agent"
+                            internal = _AGENT_INTERNAL.get(agent, agent)
+                            color = self.engine.agents.color_of(internal)
+                            self.transcript.show_thinking(agent, color)
+                            self._set_activity("thinking…")
+                        else:
+                            self._set_activity("")
                         self.crew_stage.handle_event(event)
                         self.prompt_bar.set_queue_depth(self.engine.queue_depth(event.session_id))
                     await self._refresh_sessions()
@@ -360,10 +382,14 @@ class MainWindow(QMainWindow):
                         # switched to Full-auto after the ask was queued
                         self.engine.answer_permission(event.request_id, "allow")
                     else:
+                        if event.session_id == self.current_session_id:
+                            self._set_activity(f"waiting: {event.tool}")
                         dialog = PermissionDialog(event.tool, event.arg, event.input, self)
                         dialog.exec()
                         self.engine.answer_permission(event.request_id, dialog.verdict)
                 elif isinstance(event, QuestionAsked):
+                    if event.session_id == self.current_session_id:
+                        self._set_activity("waiting for answer…")
                     dialog = QuestionDialog(event.question, event.options, self)
                     dialog.exec()
                     self.engine.answer_question(event.request_id, dialog.answer or "(no answer)")
@@ -433,6 +459,7 @@ class MainWindow(QMainWindow):
         if session is None:
             return
         self.current_session_id = session_id
+        self._activity = "working…" if self.engine.is_running(session_id) else ""
         history = await self.engine.store.session_parts(session_id)
         rows = []
         for message, parts in history:
@@ -533,8 +560,9 @@ class MainWindow(QMainWindow):
         self.header_title.setText(f"<b>{session.title or 'New session'}</b>")
         meta = (f"{_AGENT_DISPLAY.get(session.agent, session.agent)}"
                 f" · {session.model or self._default_model()}")
-        if self.engine.is_running(session.id):
-            meta += "   <span style='color:#e5c07b'>● working…</span>"
+        if self.engine.is_running(session.id) or session.id in self._running:
+            detail = self._activity or "working…"
+            meta += f"   <span style='color:#e5c07b'>● {html.escape(detail)}</span>"
         self.header_meta.setText(meta)
         directory = session.directory or str(self.engine.project_dir)
         self.status_project.setText(directory)
@@ -542,6 +570,46 @@ class MainWindow(QMainWindow):
         self.dir_button.setText(f"📁 {Path(directory).name}")
         self.dir_button.setToolTip(
             f"Working directory: {directory}\nClick to change (this session only)")
+
+    def _set_activity(self, detail: str) -> None:
+        """Update the live run status chip in the session header."""
+        self._activity = detail
+        if not self.current_session_id:
+            return
+        # Cheap header refresh without a full sidebar rebuild.
+        agent = self.prompt_bar.agent_combo.currentText() or ""
+        internal = _AGENT_INTERNAL.get(agent, agent)
+        model = self.prompt_bar.current_model() or self._default_model()
+        meta = f"{agent or internal} · {model}"
+        sid = self.current_session_id
+        running = self.engine.is_running(sid) or sid in self._running
+        if running:
+            shown = detail or "working…"
+            meta += f"   <span style='color:#e5c07b'>● {html.escape(shown)}</span>"
+        self.header_meta.setText(meta)
+
+    def _activity_from_part(self, part_type: str, data: dict) -> None:
+        if part_type in ("text", "reasoning"):
+            if not self._activity or self._activity in ("thinking…", "working…"):
+                self._set_activity("writing…" if part_type == "text" else "thinking…")
+            return
+        if part_type not in ("tool", "task"):
+            return
+        status = data.get("status", "")
+        tool = data.get("tool", "")
+        if status in ("pending", "running") and tool:
+            title = data.get("title") or ""
+            inp = data.get("input") or {}
+            summary = (
+                title
+                or inp.get("command")
+                or inp.get("path")
+                or inp.get("pattern")
+                or inp.get("description")
+                or ""
+            )
+            detail = f"{tool}: {str(summary)[:50]}" if summary else f"{tool}…"
+            self._set_activity(detail)
 
     async def _refresh_sessions(self) -> None:
         sessions = await self.engine.store.list_sessions(self.engine.project.id)
@@ -571,11 +639,16 @@ class MainWindow(QMainWindow):
         queued = self.engine.is_running(self.current_session_id)
         self.prompt_bar.set_running(True)
         self.transcript.add_user_text(f"local-{id(text)}", self._display_text(text), queued=queued)
+        agent_label = self.prompt_bar.agent_combo.currentText() or "agent"
+        agent = _AGENT_INTERNAL.get(agent_label, agent_label)
+        if not queued:
+            color = self.engine.agents.color_of(agent)
+            self.transcript.show_thinking(agent_label, color)
+            self._set_activity("thinking…")
+            self._running.add(self.current_session_id)
         self._fire(self.engine.submit_prompt(
             self.current_session_id, text,
-            agent=_AGENT_INTERNAL.get(
-                self.prompt_bar.agent_combo.currentText(),
-                self.prompt_bar.agent_combo.currentText()) or None,
+            agent=agent or None,
             model=self.prompt_bar.current_model() or None,
         ))
 
@@ -587,6 +660,8 @@ class MainWindow(QMainWindow):
         if self.current_session_id:
             await self.engine.abort(self.current_session_id)
             self.prompt_bar.set_running(False)
+            self.transcript.dismiss_thinking()
+            self._set_activity("")
 
     def _action(self, action: str) -> None:
         if action == "compact" and self.current_session_id:

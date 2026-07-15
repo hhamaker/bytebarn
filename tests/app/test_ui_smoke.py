@@ -242,6 +242,31 @@ def test_thinking_indicator_lifecycle(qapp):
     t.dismiss_thinking()
 
 
+def test_promote_queued_clears_style(qapp):
+    from crew.app.transcript import TextBlock, Transcript
+
+    t = Transcript()
+    t.add_user_text("local-1", "first", queued=True)
+    bubble = t._part_widgets["local-1"]
+    assert isinstance(bubble, TextBlock) and bubble._queued
+    assert "[queued]" in bubble.text()
+    t.promote_queued()
+    assert not bubble._queued
+    assert "[queued]" not in bubble.text()
+
+
+def test_text_block_streams_plain_then_markdown(qapp):
+    from crew.app.transcript import TextBlock
+
+    block = TextBlock("hi", user=False)
+    block.update_text("**bold**", streaming=True)
+    # streaming path escapes rather than rendering markdown immediately
+    assert "<strong>" not in block.text() and "<b>" not in block.text()
+    assert "bold" in block.text()
+    block._finalize_markdown()
+    assert "bold" in block.text()
+
+
 def test_session_list_keyboard_navigation_selects(qapp):
     from types import SimpleNamespace
     import time as _time

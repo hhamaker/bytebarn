@@ -103,6 +103,14 @@ class QueueUpdated(EngineEvent):
     name: str = "queue.updated"
 
 
+@dataclass
+class SessionActivity(EngineEvent):
+    """Live status for the open session (header / thinking feedback)."""
+    session_id: str = ""
+    detail: str = ""  # e.g. "thinking…", "bash: ls", "retrying…", "compacting…"
+    name: str = "session.activity"
+
+
 class EventBus:
     """Fan-out async event bus; each subscriber gets every event."""
 

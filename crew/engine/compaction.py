@@ -45,6 +45,9 @@ async def _small_model_text(engine: "Engine", messages: list[Msg], system: str =
 
 
 async def compact_session(engine: "Engine", session: Session) -> str:
+    from .events import SessionActivity
+
+    engine.bus.emit(SessionActivity(session_id=session.id, detail="compacting…"))
     history = await engine.store.session_parts(session.id)
     messages = history_to_messages(history)
     messages.append(Msg("user", [{"type": "text", "text": _SUMMARY_PROMPT}]))
@@ -57,6 +60,7 @@ async def compact_session(engine: "Engine", session: Session) -> str:
         part_type="compaction", data={"text": summary},
     ))
     engine.bus.emit(SessionUpdated(session_id=session.id))
+    engine.bus.emit(SessionActivity(session_id=session.id, detail=""))
     return summary
 
 
