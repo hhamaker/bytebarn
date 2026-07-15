@@ -21,7 +21,7 @@ from ..engine.facade import Engine
 from .model_picker import ModelPicker
 
 _PERMISSION_TOOLS = ("bash", "edit", "write", "webfetch")
-_THEMES = ("follow system", "dark", "light")
+_THEMES = ("follow system", "dark", "light", "modern")
 
 
 class SettingsDialog(QDialog):

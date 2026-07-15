@@ -61,10 +61,55 @@ _LIGHT_QSS = f"""
 QPushButton:flat:hover {{ color: {ACCENT}; }}
 """
 
+_MODERN = {
+    QPalette.Window: "#1a1a1a",
+    QPalette.WindowText: "#f0f0f0",
+    QPalette.Base: "#121212",
+    QPalette.AlternateBase: "#242424",
+    QPalette.Text: "#f0f0f0",
+    QPalette.Button: "#242424",
+    QPalette.ButtonText: "#f0f0f0",
+    QPalette.Highlight: ACCENT,
+    QPalette.HighlightedText: "#121212",
+    QPalette.ToolTipBase: "#242424",
+    QPalette.ToolTipText: "#f0f0f0",
+    QPalette.PlaceholderText: "#888888",
+    QPalette.Link: ACCENT,
+}
+
+_MODERN_QSS = f"""
+QMainWindow, QDialog {{ background: #1a1a1a; }}
+QPlainTextEdit, QLineEdit, QTreeWidget, QListWidget {{
+    background: #121212; border: 1px solid #3a3a3a; border-radius: 2px;
+    selection-background-color: {ACCENT}; padding: 3px; font-size: 13px;
+}}
+QPlainTextEdit:focus, QLineEdit:focus {{ border-color: {ACCENT}; }}
+QComboBox {{
+    background: #242424; border: 1px solid #3a3a3a; border-radius: 2px; padding: 3px 8px; font-size: 13px;
+}}
+QComboBox QAbstractItemView {{ background: #242424; border: 1px solid #3a3a3a; }}
+QPushButton {{
+    background: #242424; border: 1px solid #3a3a3a; border-radius: 2px; padding: 4px 12px; font-size: 13px;
+}}
+QPushButton:hover {{ border-color: {ACCENT}; }}
+QPushButton:pressed {{ background: #2f2f2f; }}
+QPushButton:flat {{ background: transparent; border: none; }}
+QPushButton:flat:hover {{ color: {ACCENT}; }}
+QScrollBar:vertical {{ background: transparent; width: 10px; }}
+QScrollBar::handle:vertical {{ background: #3a3a3a; border-radius: 2px; min-height: 24px; }}
+QScrollBar::handle:vertical:hover {{ background: #4a4a4a; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
+QStatusBar {{ background: #121212; }}
+QSplitter::handle {{ background: #1a1a1a; width: 3px; }}
+QToolTip {{ background: #242424; color: #f0f0f0; border: 1px solid #3a3a3a; font-size: 12px; }}
+QGroupBox {{ border: 1px solid #3a3a3a; border-radius: 2px; margin-top: 8px; padding-top: 6px; font-size: 13px; }}
+QGroupBox::title {{ subcontrol-origin: margin; left: 8px; color: #aaaaaa; }}
+"""
+
 
 def resolve_mode(mode: str, app: QApplication) -> str:
     """"follow system" -> "dark" | "light" using the platform color scheme."""
-    if mode in ("dark", "light"):
+    if mode in ("dark", "light", "modern"):
         return mode
     try:
         from PySide6.QtCore import Qt
@@ -83,6 +128,12 @@ def apply_theme(app: QApplication, mode: str = "follow system") -> None:
             palette.setColor(role, QColor(color))
         app.setPalette(palette)
         app.setStyleSheet(_DARK_QSS)
+    elif resolved == "modern":
+        palette = QPalette()
+        for role, color in _MODERN.items():
+            palette.setColor(role, QColor(color))
+        app.setPalette(palette)
+        app.setStyleSheet(_MODERN_QSS)
     else:
         app.setPalette(app.style().standardPalette())
         app.setStyleSheet(_LIGHT_QSS)
