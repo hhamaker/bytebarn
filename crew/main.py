@@ -24,9 +24,9 @@ def main() -> None:
     # so don't let Qt quit out from under the asyncio teardown
     app.setQuitOnLastWindowClosed(False)
 
-    # directories are per session now — no startup picker. Root the engine
-    # at the last folder the user worked in (or home) and let each session
-    # choose its own directory.
+    # directories are per session now — no startup picker. This only sets the
+    # engine's config root (global + project .crew); every session picks its
+    # own working directory explicitly when created.
     if len(sys.argv) > 1:
         project_dir = Path(sys.argv[1]).resolve()
     else:

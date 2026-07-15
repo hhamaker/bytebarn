@@ -319,3 +319,115 @@ def test_menu_bar_has_menus(qapp, tmp_path):
     window = MainWindow(engine)
     titles = [a.menu().title() for a in window.menuBar().actions() if a.menu()]
     assert titles == ["&File", "&Session", "&Tools", "&Help"]
+
+
+async def test_new_session_requires_directory(qapp, tmp_path, monkeypatch):
+    from crew.app.main_window import MainWindow
+    from crew.engine.facade import Engine
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=tmp_path / "g")
+    await engine.start()
+    try:
+        window = MainWindow(engine)
+
+        # cancelling the picker (empty string) creates nothing
+        monkeypatch.setattr(window, "_prompt_directory", lambda _caption: "")
+        await window._new_session()
+        assert window.current_session_id is None
+        assert not await engine.store.list_sessions(engine.project.id)
+
+        # choosing a directory creates a session rooted there
+        monkeypatch.setattr(window, "_prompt_directory", lambda _caption: str(workdir))
+        await window._new_session()
+        assert window.current_session_id is not None
+        session = await engine.store.get_session(window.current_session_id)
+        assert session.directory == str(workdir)
+    finally:
+        await engine.stop()
+
+
+async def test_bootstrap_empty_shows_no_session(qapp, tmp_path, monkeypatch):
+    from crew.app.main_window import MainWindow
+    from crew.engine.facade import Engine
+
+    proj = tmp_path / "proj2"
+    proj.mkdir()
+    engine = Engine(proj, db_path=tmp_path / "db2.sqlite", global_dir=tmp_path / "g2")
+    await engine.start()
+    try:
+        window = MainWindow(engine)
+        # no folder chosen on first launch -> no session, welcome header
+        monkeypatch.setattr(window, "_prompt_directory", lambda _caption: "")
+        await window.bootstrap()
+        assert window.current_session_id is None
+        assert "No session" in window.header_title.text()
+    finally:
+        for task in getattr(window, "_tasks", []):
+            task.cancel()
+        await engine.stop()
+
+
+def test_settings_uses_model_pickers(qapp, tmp_path):
+    from crew.app.model_picker import ModelPicker
+    from crew.app.settings import SettingsDialog
+    from crew.engine.facade import Engine
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=tmp_path / "g")
+    engine.providers.auth.set("groq", {"type": "api", "key": "gsk-x"})
+
+    dlg = SettingsDialog(engine)
+    assert isinstance(dlg.model, ModelPicker)
+    assert isinstance(dlg.small_model, ModelPicker)
+    # a connected provider populates the provider dropdown
+    dlg.model.set_model("groq/llama-3.3-70b-versatile")
+    assert dlg.model.provider_combo.currentText() == "groq"
+    assert dlg.model.value() == "groq/llama-3.3-70b-versatile"
+
+
+def test_model_picker_default_and_empty(qapp, tmp_path):
+    from crew.app.model_picker import ModelPicker
+    from crew.engine.facade import Engine
+
+    proj = tmp_path / "proj2"
+    proj.mkdir()
+    engine = Engine(proj, db_path=tmp_path / "db2.sqlite", global_dir=tmp_path / "g2")
+
+    picker = ModelPicker(engine, allow_default=True)
+    picker.set_model("")
+    assert picker.provider_combo.currentText() == "(default)"
+    assert picker.value() == ""  # (default) yields no explicit model
+    assert not picker.model_combo.isEnabled()
+
+
+async def test_last_model_persists_for_new_sessions(qapp, tmp_path, monkeypatch):
+    from crew.app.main_window import MainWindow
+    from crew.engine.facade import Engine
+
+    proj = tmp_path / "lm-proj"
+    proj.mkdir()
+    work = tmp_path / "lm-work"
+    work.mkdir()
+    engine = Engine(proj, db_path=tmp_path / "lm.sqlite", global_dir=tmp_path / "lm-g")
+    engine.providers.auth.set("groq", {"type": "api", "key": "gsk-x"})
+    await engine.start()
+    try:
+        window = MainWindow(engine)
+        monkeypatch.setattr(window, "_prompt_directory", lambda _c: str(work))
+
+        # user picks a non-default model; it becomes the remembered default
+        window._model_changed("groq/llama-3.1-8b-instant")
+        assert window._default_model() == "groq/llama-3.1-8b-instant"
+
+        # a brand new session starts on that model, not config.model
+        await window._new_session()
+        session = await engine.store.get_session(window.current_session_id)
+        assert session.model == "groq/llama-3.1-8b-instant"
+        assert session.model != engine.config.model
+    finally:
+        await engine.stop()

@@ -168,7 +168,7 @@ class MainWindow(QMainWindow):
         bar = self.menuBar()
 
         file_menu = bar.addMenu("&File")
-        new_action = QAction("New Session", self)
+        new_action = QAction("New Session…", self)
         new_action.setShortcut(QKeySequence.New)
         new_action.triggered.connect(lambda: self._fire(self._new_session()))
         close_action = QAction("Close Session", self)
@@ -180,11 +180,7 @@ class MainWindow(QMainWindow):
         quit_action.setShortcut(QKeySequence.Quit)
         quit_action.setMenuRole(QAction.QuitRole)
         quit_action.triggered.connect(self.close)
-        new_in_dir_action = QAction("New Session in Folder…", self)
-        new_in_dir_action.setShortcut(QKeySequence("Ctrl+Shift+N"))
-        new_in_dir_action.triggered.connect(self._new_session_in_folder)
         file_menu.addAction(new_action)
-        file_menu.addAction(new_in_dir_action)
         file_menu.addAction(close_action)
         file_menu.addSeparator()
         file_menu.addAction(quit_action)
@@ -231,23 +227,6 @@ class MainWindow(QMainWindow):
         help_menu.addAction(shortcuts_action)
         help_menu.addAction(about_action)
 
-    def _new_session_in_folder(self) -> None:
-        from PySide6.QtWidgets import QFileDialog
-
-        picked = QFileDialog.getExistingDirectory(
-            self, "Folder for the new session", str(self.engine.project_dir))
-        if not picked:
-            return
-
-        self._remember_project(picked)
-
-        async def create() -> None:
-            session = await self.engine.new_session(directory=picked)
-            await self._load_session(session.id)
-            await self._refresh_sessions()
-
-        self._fire(create())
-
     def _show_shortcuts(self) -> None:
         from PySide6.QtWidgets import QMessageBox
 
@@ -279,7 +258,7 @@ class MainWindow(QMainWindow):
         if sessions:
             await self._load_session(sessions[0].id)
         else:
-            await self._new_session()
+            self._show_no_session()
         await self._refresh_sessions()
         await self._refresh_git()
         self._tasks = [
@@ -287,6 +266,22 @@ class MainWindow(QMainWindow):
             asyncio.ensure_future(self._watch_files()),
         ]
         self._maybe_first_run()
+        # first launch (or all sessions deleted): a session needs a directory,
+        # so open the picker instead of silently defaulting somewhere
+        if not sessions:
+            await self._new_session()
+
+    def _show_no_session(self) -> None:
+        """No session open: welcome screen, prompt disabled, empty header."""
+        self.current_session_id = None
+        self.transcript.load_history([])
+        self.todo_strip.set_todos([])
+        self.prompt_bar.set_running(False)
+        self.back_button.setVisible(False)
+        self.header_icon.clear()
+        self.header_title.setText("<b>No session</b>")
+        self.header_meta.setText("New Session (⌘N) to start")
+        self.dir_button.setText("")
 
     def _maybe_first_run(self) -> None:
         """One-time welcome wizard; "onboarded" flag persists the choice."""
@@ -414,10 +409,24 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ sessions
 
-    async def _new_session(self) -> None:
-        session = await self.engine.new_session()
+    async def _new_session(self, directory: str | None = None) -> None:
+        """Create a session. A working directory must be chosen explicitly —
+        if not passed in, prompt for one; cancelling aborts creation."""
+        if directory is None:
+            directory = self._prompt_directory("Choose a working directory for the new session")
+            if not directory:
+                return
+        self._remember_project(directory)
+        session = await self.engine.new_session(
+            model=self._default_model(), directory=directory)
         await self._load_session(session.id)
         await self._refresh_sessions()
+
+    def _prompt_directory(self, caption: str) -> str:
+        from PySide6.QtWidgets import QFileDialog
+
+        start = self._last_project() or str(Path.home())
+        return QFileDialog.getExistingDirectory(self, caption, start)
 
     async def _load_session(self, session_id: str) -> None:
         session = await self.engine.store.get_session(session_id)
@@ -462,7 +471,7 @@ class MainWindow(QMainWindow):
         self._fire(apply())
 
     def _remember_project(self, path: str) -> None:
-        """Next app launch roots here (startup picker is gone)."""
+        """Remember the last chosen folder to seed the next directory picker."""
         from ..engine.config import patch_config_file
 
         try:
@@ -470,6 +479,9 @@ class MainWindow(QMainWindow):
                               {"last_project": path})
         except Exception:
             pass
+
+    def _last_project(self) -> str:
+        return (self.engine.config.model_extra or {}).get("last_project", "")
 
     def _open_session(self, session_id: str) -> None:
         if session_id == self.current_session_id:
@@ -508,7 +520,9 @@ class MainWindow(QMainWindow):
             if sessions:
                 await self._load_session(sessions[0].id)
             else:
-                await self._new_session()
+                # nothing left — don't force a folder picker on the user here;
+                # they can start one via New Session when ready
+                self._show_no_session()
         await self._refresh_sessions()
 
     def _update_header(self, session) -> None:
@@ -518,7 +532,7 @@ class MainWindow(QMainWindow):
         self.header_icon.setPixmap(critter_pixmap(session.agent, color, scale=2))
         self.header_title.setText(f"<b>{session.title or 'New session'}</b>")
         meta = (f"{_AGENT_DISPLAY.get(session.agent, session.agent)}"
-                f" · {session.model or self.engine.config.model}")
+                f" · {session.model or self._default_model()}")
         if self.engine.is_running(session.id):
             meta += "   <span style='color:#e5c07b'>● working…</span>"
         self.header_meta.setText(meta)
@@ -592,6 +606,26 @@ class MainWindow(QMainWindow):
     def _model_changed(self, model: str) -> None:
         if self.current_session_id and model:
             self._fire(self.engine.store.update_session(self.current_session_id, model=model))
+        if model:
+            # remember it so the next new session starts on this model
+            self._remember_setting("last_model", model)
+
+    def _remember_setting(self, key: str, value) -> None:
+        from ..engine.config import patch_config_file
+
+        try:
+            patch_config_file(self.engine.global_dir / "config.json", {key: value})
+        except Exception:
+            pass
+        # keep in-memory config in sync without a full reload (which would
+        # rebuild providers/agents and reset the pickers)
+        extra = self.engine.config.model_extra
+        if extra is not None:
+            extra[key] = value
+
+    def _default_model(self) -> str:
+        return (self.engine.config.model_extra or {}).get("last_model") \
+            or self.engine.config.model
 
     # ------------------------------------------------------------------ pickers & status
 
@@ -599,8 +633,9 @@ class MainWindow(QMainWindow):
         agents = [_AGENT_DISPLAY.get(a.name, a.name) for a in self.engine.agents.primaries()]
         self.prompt_bar.set_agents(agents, _AGENT_DISPLAY.get(agent, agent) or "build")
 
-        # two-stage picker: connected providers, then that provider's models
-        model = model or self.engine.config.model
+        # two-stage picker: connected providers, then that provider's models.
+        # new sessions (no per-session model) start on the last one you chose
+        model = model or self._default_model()
         provider, _, model_id = model.partition("/")
         providers = connected_providers(self.engine.config, self.engine.providers.auth)
         if provider not in providers:
