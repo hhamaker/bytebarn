@@ -67,7 +67,8 @@
         "ls -la improvements.md*",
         "tail -30 crew/app/prompt_bar.py*",
         "tail -30 tests/app/test_ui_smoke.py*",
-        "QT_QPA_PLATFORM=offscreen .venv/bin/pytest tests/app/test_ui_smoke.py tests/engine/test_runner.py -q*"
+        "QT_QPA_PLATFORM=offscreen .venv/bin/pytest tests/app/test_ui_smoke.py tests/engine/test_runner.py -q*",
+        "cd /Users/hunterhamaker/Documents/GitHub/openDesktop && git diff crew/app/prompt_bar.py*"
       ],
       "deny": []
     },

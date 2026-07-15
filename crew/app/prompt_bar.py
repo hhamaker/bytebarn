@@ -224,6 +224,14 @@ class PromptBar(QWidget):
     def set_running(self, running: bool) -> None:
         self._running = running
         self.send_button.setText("■ Stop" if running else "Send")
+        # disable combos + send when running
+        for w in (self.agent_combo, self.provider_combo, self.model_combo, self.send_button):
+            w.setEnabled(not running)
+        if not running:
+            # brief visual cue that run finished
+            self.send_button.setStyleSheet("background-color:#3d7a3d;")  # green flash
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(600, lambda: self.send_button.setStyleSheet(""))
 
     def _submit_or_abort(self, *_args, send_only: bool = False) -> None:
         if self._running and not send_only:
