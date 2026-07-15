@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import html
+import json
 from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
+    QFileDialog,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QPushButton,
@@ -66,6 +69,7 @@ class MainWindow(QMainWindow):
 
         # widgets
         self.session_list = SessionList()
+        self.session_list.new_project.connect(self._new_project)
         self.transcript = Transcript()
         self.crew_stage = CrewStage()
         self.todo_strip = TodoStrip()
@@ -114,6 +118,8 @@ class MainWindow(QMainWindow):
 
         # status bar
         self.status_project = QLabel(str(engine.project_dir))
+        self.status_project.setCursor(Qt.PointingHandCursor)
+        self.status_project.mousePressEvent = lambda e: self._project_menu()
         self.status_git = QLabel("")
         self.status_cost = QLabel("")
         self.mode_combo = QComboBox()
@@ -158,6 +164,7 @@ class MainWindow(QMainWindow):
             lambda sid: self._fire(self._close_session(sid)))
         self.session_list.delete_session.connect(
             lambda sid: self._fire(self._delete_session(sid)))
+        self.session_list.rename_session.connect(self._rename_session)
         self.transcript.open_session.connect(self._open_child)
         self.crew_stage.open_session.connect(self._open_child)
         self.prompt_bar.submitted.connect(self._submit)
@@ -192,6 +199,11 @@ class MainWindow(QMainWindow):
         file_menu.addAction(close_action)
         file_menu.addSeparator()
         file_menu.addAction(quit_action)
+
+        projects_menu = bar.addMenu("&Projects")
+        new_proj = QAction("New/Open Project…", self)
+        new_proj.triggered.connect(self._new_project)
+        projects_menu.addAction(new_proj)
 
         session_menu = bar.addMenu("&Session")
         stop_action = QAction("Stop Run", self)
@@ -235,6 +247,50 @@ class MainWindow(QMainWindow):
         help_menu.addAction(shortcuts_action)
         help_menu.addAction(about_action)
 
+    def _pick_project_dir(self) -> str | None:
+        dlg = QFileDialog(self, "Open Project", str(Path.home()))
+        dlg.setFileMode(QFileDialog.Directory)
+        dlg.setOption(QFileDialog.ShowDirsOnly, True)
+        use_root = dlg.findChild(QWidget, "qt_use_root_cb")  # reuse if exists
+        cb = None
+        if not use_root:
+            from PySide6.QtWidgets import QCheckBox
+            cb = QCheckBox("Use project root")
+            dlg.setOption(QFileDialog.DontUseNativeDialog, True)
+            dlg.layout().addWidget(cb)
+        if dlg.exec():
+            if cb and cb.isChecked() and self.engine.project_dir:
+                return str(self.engine.project_dir)
+            return dlg.selectedFiles()[0] if dlg.selectedFiles() else None
+        return None
+
+    def _new_project(self) -> None:
+        d = self._pick_project_dir()
+        if not d:
+            return
+        self.engine.create_project(Path(d))
+        asyncio.ensure_future(self._refresh_sessions())
+
+    def _project_menu(self) -> None:
+        from PySide6.QtWidgets import QMenu
+        projects = []
+        try:
+            with open(self.engine.global_dir / "config.json") as f:
+                cfg = json.loads("".join([c for c in f if not c.strip().startswith("//")]))
+            projects = [Path(p) for p in cfg.get("recent_projects", [])][:5]
+        except Exception:
+            pass
+        menu = QMenu(self)
+        for p in projects:
+            menu.addAction(str(p), lambda p=p: self._switch_project(p))
+        menu.addSeparator()
+        menu.addAction("New/Open…", self._new_project)
+        menu.exec(self.status_project.mapToGlobal(self.status_project.rect().bottomLeft()))
+
+    def _switch_project(self, path: Path) -> None:
+        self.engine.create_project(path)
+        asyncio.ensure_future(self._refresh_sessions())
+
     def _show_shortcuts(self) -> None:
         from PySide6.QtWidgets import QMessageBox
 
@@ -276,7 +332,7 @@ class MainWindow(QMainWindow):
         self._maybe_first_run()
         # first launch (or all sessions deleted): a session needs a directory,
         # so open the picker instead of silently defaulting somewhere
-        if not sessions:
+        if not sessions and (self.engine.config.model_extra or {}).get("onboarded"):
             await self._new_session()
 
     def _show_no_session(self) -> None:
@@ -494,9 +550,21 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QFileDialog
 
         session_id = self.current_session_id
-        picked = QFileDialog.getExistingDirectory(
-            self, "Working directory for this session",
-            str(self.engine.project_dir))
+        dlg = QFileDialog(self, "Working directory for this session", str(self.engine.project_dir))
+        dlg.setFileMode(QFileDialog.Directory)
+        dlg.setOption(QFileDialog.ShowDirsOnly, True)
+        cb = None
+        if self.engine.project_dir:
+            from PySide6.QtWidgets import QCheckBox
+            dlg.setOption(QFileDialog.DontUseNativeDialog, True)
+            cb = QCheckBox("Use project root")
+            dlg.layout().addWidget(cb)
+        if not dlg.exec():
+            return
+        if cb and cb.isChecked():
+            picked = str(self.engine.project_dir)
+        else:
+            picked = dlg.selectedFiles()[0] if dlg.selectedFiles() else ""
         if not picked:
             return
 
@@ -545,6 +613,12 @@ class MainWindow(QMainWindow):
     async def _delete_session(self, session_id: str) -> None:
         await self.engine.delete_session(session_id)
         await self._after_session_removed(session_id)
+
+    def _rename_session(self, session_id: str) -> None:
+        title, ok = QInputDialog.getText(self, "Rename session", "New title:")
+        if ok and title:
+            asyncio.ensure_future(self.engine.store.update_session(session_id, title=title))
+            asyncio.ensure_future(self._refresh_sessions())
 
     async def _after_session_removed(self, session_id: str) -> None:
         """If the removed session was open, move to the next one (or a new one)."""

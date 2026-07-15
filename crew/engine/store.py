@@ -166,6 +166,20 @@ class Store:
         await self.db.commit()
         return Project(pid, path, name, now)
 
+    async def create_project(self, path: str, name: str | None = None) -> Project:
+        now = time.time()
+        pid = _id()
+        name = name or Path(path).name
+        await self._execute(
+            "INSERT INTO project (id, path, name, last_opened_at) VALUES (?,?,?,?)",
+            (pid, path, name, now),
+        )
+        return self._row_to_project((pid, path, name, now))
+
+    async def list_projects(self) -> list[Project]:
+        rows = await self._fetchall("SELECT * FROM project ORDER BY last_opened_at DESC")
+        return [self._row_to_project(r) for r in rows]
+
     # -- session ------------------------------------------------------------
 
     async def create_session(
@@ -328,11 +342,21 @@ class Store:
     # -- helpers ------------------------------------------------------------
 
     @staticmethod
+    def _row_to_project(r: aiosqlite.Row | tuple) -> Project:
+        if isinstance(r, tuple):
+            return Project(*r)
+        return Project(r["id"], r["path"], r["name"], r["last_opened_at"])
+
+    @staticmethod
     def _session(r: aiosqlite.Row) -> Session:
         directory = r["directory"] if "directory" in r.keys() else ""
         return Session(r["id"], r["project_id"], r["parent_session_id"], r["title"], r["agent"],
                        r["model"], r["created_at"], r["updated_at"], bool(r["archived"]),
                        directory)
+
+    async def _execute(self, q: str, args: tuple = ()) -> None:
+        await self.db.execute(q, args)
+        await self.db.commit()
 
     async def _fetchone(self, q: str, args: tuple = ()) -> aiosqlite.Row | None:
         cur = await self.db.execute(q, args)

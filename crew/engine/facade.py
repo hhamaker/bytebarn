@@ -337,3 +337,9 @@ class Engine:
             await coro
         except Exception:
             pass
+
+    async def create_project(self, path: str, name: str | None = None):
+        return await self.store.create_project(path, name)
+
+    async def list_projects(self):
+        return await self.store.list_projects()

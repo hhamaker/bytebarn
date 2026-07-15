@@ -8,6 +8,8 @@ from typing import Any
 from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QIcon
 from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
     QLineEdit,
     QMenu,
     QMessageBox,
@@ -37,11 +39,21 @@ class SessionList(QWidget):
     new_session = Signal()
     close_session = Signal(str)
     delete_session = Signal(str)
+    rename_session = Signal(str)
+    new_project = Signal()
 
     def __init__(self):
         super().__init__()
         self.new_button = QPushButton("+ New session")
         self.new_button.clicked.connect(self.new_session)
+        header = QWidget()
+        hl = QHBoxLayout(header)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.addWidget(QLabel("<b>Sessions</b>"), 1)
+        add_proj = QPushButton("+ Project")
+        add_proj.setFlat(True)
+        add_proj.clicked.connect(self.new_project)
+        hl.addWidget(add_proj)
         self.search = QLineEdit()
         self.search.setPlaceholderText("search…")
         self.search.textChanged.connect(self._filter)
@@ -56,6 +68,7 @@ class SessionList(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
+        layout.addWidget(header)
         layout.addWidget(self.new_button)
         layout.addWidget(self.search)
         layout.addWidget(self.tree)
@@ -122,10 +135,13 @@ class SessionList(QWidget):
         session_id = item.data(0, Qt.UserRole)
         menu = QMenu(self)
         close_action = menu.addAction("Close session")
+        rename_action = menu.addAction("Rename…")
         delete_action = menu.addAction("Delete session…")
         chosen = menu.exec(self.tree.viewport().mapToGlobal(pos))
         if chosen is close_action:
             self.close_session.emit(session_id)
+        elif chosen is rename_action:
+            self.rename_session.emit(session_id)
         elif chosen is delete_action:
             answer = QMessageBox.warning(
                 self,
@@ -142,4 +158,9 @@ class SessionList(QWidget):
         text = text.lower()
         for i in range(self.tree.topLevelItemCount()):
             item = self.tree.topLevelItem(i)
-            item.setHidden(bool(text) and text not in item.text(0).lower())
+            hay = (item.text(0) + " " + item.toolTip(0)).lower()
+            item.setHidden(bool(text) and text not in hay)
+            for j in range(item.childCount()):
+                ch = item.child(j)
+                h2 = (ch.text(0) + " " + ch.toolTip(0)).lower()
+                ch.setHidden(bool(text) and text not in h2)
