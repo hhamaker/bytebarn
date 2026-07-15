@@ -176,6 +176,7 @@ class MainWindow(QMainWindow):
         self.session_list.delete_session.connect(
             lambda sid: self._fire(self._delete_session(sid)))
         self.session_list.rename_session.connect(self._rename_session)
+        self.session_list.move_session_to_project.connect(self._move_session_to_project)
         self.transcript.open_session.connect(self._open_child)
         self.crew_stage.open_session.connect(self._open_child)
         self.prompt_bar.submitted.connect(self._submit)
@@ -630,6 +631,24 @@ class MainWindow(QMainWindow):
         if ok and title:
             asyncio.ensure_future(self.engine.store.update_session(session_id, title=title))
             asyncio.ensure_future(self._refresh_sessions())
+
+    def _move_session_to_project(self, session_id: str) -> None:
+        projects = asyncio.get_event_loop().run_until_complete(
+            self.engine.store.list_projects()
+        )
+        if not projects:
+            return
+        names = [p.name for p in projects]
+        choice, ok = QInputDialog.getItem(
+            self, "Move to project", "Destination:", names, 0, False
+        )
+        if not ok:
+            return
+        proj = next(p for p in projects if p.name == choice)
+        asyncio.ensure_future(
+            self.engine.store.update_session_project(session_id, proj.id)
+        )
+        asyncio.ensure_future(self._refresh_sessions())
 
     async def _after_session_removed(self, session_id: str) -> None:
         """If the removed session was open, move to the next one (or a new one)."""

@@ -35,7 +35,7 @@ class ProjectManagerDialog(QDialog):
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._show_context_menu)
 
-        add_btn = QPushButton("+ Add existing…")
+        add_btn = QPushButton("+ Add folder as project…")
         add_btn.clicked.connect(self._add_existing)
         new_btn = QPushButton("Create new…")
         new_btn.clicked.connect(self._create_new)
@@ -106,13 +106,9 @@ class ProjectManagerDialog(QDialog):
             self._populate()
 
     def _create_new(self):
-        base = QFileDialog.getExistingDirectory(self, "Parent folder for new project")
-        if not base:
-            return
-        name, ok = QInputDialog.getText(self, "Project name", "Folder name:")
+        name, ok = QInputDialog.getText(self, "Project name", "Name:")
         if not (ok and name.strip()):
             return
-        new_dir = Path(base) / name.strip()
-        new_dir.mkdir(parents=True, exist_ok=True)
-        self.engine.store.add_project(new_dir)
+        sentinel = f"catalog:{name.strip()}"
+        self.engine.store.add_project(Path(sentinel), name=name.strip())
         self._populate()

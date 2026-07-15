@@ -41,6 +41,7 @@ class SessionList(QWidget):
     delete_session = Signal(str)
     rename_session = Signal(str)
     new_project = Signal()
+    move_session_to_project = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -136,12 +137,15 @@ class SessionList(QWidget):
         menu = QMenu(self)
         close_action = menu.addAction("Close session")
         rename_action = menu.addAction("Rename…")
+        move_action = menu.addAction("Move to project…")
         delete_action = menu.addAction("Delete session…")
         chosen = menu.exec(self.tree.viewport().mapToGlobal(pos))
         if chosen is close_action:
             self.close_session.emit(session_id)
         elif chosen is rename_action:
             self.rename_session.emit(session_id)
+        elif chosen is move_action:
+            self.move_session_to_project.emit(session_id)
         elif chosen is delete_action:
             answer = QMessageBox.warning(
                 self,

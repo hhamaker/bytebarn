@@ -86,7 +86,8 @@
         "crew/app/transcript.py",
         "tests/app/test_ui_smoke.py",
         "crew/engine/providers/known.py",
-        "crew/app/provider_manager.py"
+        "crew/app/provider_manager.py",
+        "crew/app/project_manager.py"
       ],
       "deny": []
     }

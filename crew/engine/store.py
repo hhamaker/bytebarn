@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS session (
     directory TEXT NOT NULL DEFAULT '',
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
-    archived INTEGER NOT NULL DEFAULT 0
+    archived INTEGER NOT NULL DEFAULT 0,
+    permission_mode TEXT
 );
 CREATE TABLE IF NOT EXISTS message (
     id TEXT PRIMARY KEY,
@@ -87,6 +88,7 @@ class Session:
     updated_at: float
     archived: bool
     directory: str = ""   # per-session working dir ('' = project default)
+    permission_mode: str | None = None
 
 
 @dataclass
@@ -136,6 +138,9 @@ class Store:
         if "directory" not in cols:
             await self._db.execute(
                 "ALTER TABLE session ADD COLUMN directory TEXT NOT NULL DEFAULT ''")
+        if "permission_mode" not in cols:
+            await self._db.execute(
+                "ALTER TABLE session ADD COLUMN permission_mode TEXT")
         await self._db.commit()
 
     async def close(self) -> None:
@@ -180,6 +185,18 @@ class Store:
         rows = await self._fetchall("SELECT * FROM project ORDER BY last_opened_at DESC")
         return [self._row_to_project(r) for r in rows]
 
+    async def add_project(self, path: Path | str, name: str | None = None) -> Project:
+        path_str = str(path)
+        now = time.time()
+        pid = _id()
+        name = name or Path(path_str).name
+        await self.db.execute(
+            "INSERT INTO project (id, path, name, last_opened_at) VALUES (?,?,?,?)",
+            (pid, path_str, name, now),
+        )
+        await self.db.commit()
+        return Project(pid, path_str, name, now)
+
     # -- session ------------------------------------------------------------
 
     async def create_session(
@@ -190,17 +207,18 @@ class Store:
         parent_session_id: str | None = None,
         title: str = "",
         directory: str = "",
+        permission_mode: str | None = None,
     ) -> Session:
         now = time.time()
         sid = _id()
         await self.db.execute(
             "INSERT INTO session (id, project_id, parent_session_id, title, agent, model,"
-            " directory, created_at, updated_at, archived) VALUES (?,?,?,?,?,?,?,?,?,0)",
-            (sid, project_id, parent_session_id, title, agent, model, directory, now, now),
+            " directory, created_at, updated_at, archived, permission_mode) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (sid, project_id, parent_session_id, title, agent, model, directory, now, now, 0, permission_mode),
         )
         await self.db.commit()
         return Session(sid, project_id, parent_session_id, title, agent, model,
-                       now, now, False, directory)
+                       now, now, False, directory, permission_mode)
 
     async def get_session(self, session_id: str) -> Session | None:
         row = await self._fetchone("SELECT * FROM session WHERE id=?", (session_id,))
@@ -237,6 +255,22 @@ class Store:
         fields["updated_at"] = time.time()
         cols = ", ".join(f"{k}=?" for k in fields)
         await self.db.execute(f"UPDATE session SET {cols} WHERE id=?", (*fields.values(), session_id))
+        await self.db.commit()
+
+    async def update_session_project(self, session_id: str, new_project_id: str) -> None:
+        now = time.time()
+        await self.db.execute(
+            "UPDATE session SET project_id=?, updated_at=? WHERE id=?",
+            (new_project_id, now, session_id),
+        )
+        await self.db.commit()
+
+    async def set_session_mode(self, session_id: str, mode: str | None) -> None:
+        now = time.time()
+        await self.db.execute(
+            "UPDATE session SET permission_mode=?, updated_at=? WHERE id=?",
+            (mode, now, session_id),
+        )
         await self.db.commit()
 
     # -- message / part -----------------------------------------------------
@@ -350,9 +384,10 @@ class Store:
     @staticmethod
     def _session(r: aiosqlite.Row) -> Session:
         directory = r["directory"] if "directory" in r.keys() else ""
+        pmode = r["permission_mode"] if "permission_mode" in r.keys() else None
         return Session(r["id"], r["project_id"], r["parent_session_id"], r["title"], r["agent"],
                        r["model"], r["created_at"], r["updated_at"], bool(r["archived"]),
-                       directory)
+                       directory, pmode)
 
     async def _execute(self, q: str, args: tuple = ()) -> None:
         await self.db.execute(q, args)
