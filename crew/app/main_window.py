@@ -204,9 +204,12 @@ class MainWindow(QMainWindow):
         bar = self.menuBar()
 
         file_menu = bar.addMenu("&File")
-        new_action = QAction("New Session…", self)
+        new_action = QAction("New Session", self)
         new_action.setShortcut(QKeySequence.New)
         new_action.triggered.connect(self._prompt_new_session)
+        new_in_action = QAction("New Session in Folder…", self)
+        new_in_action.setShortcut(QKeySequence("Ctrl+Shift+N"))
+        new_in_action.triggered.connect(self._prompt_new_session_in_folder)
         close_action = QAction("Close Session", self)
         close_action.setShortcut(QKeySequence("Ctrl+W"))
         close_action.triggered.connect(
@@ -217,6 +220,7 @@ class MainWindow(QMainWindow):
         quit_action.setMenuRole(QAction.QuitRole)
         quit_action.triggered.connect(self.close)
         file_menu.addAction(new_action)
+        file_menu.addAction(new_in_action)
         file_menu.addAction(close_action)
         file_menu.addSeparator()
         file_menu.addAction(quit_action)
@@ -420,8 +424,8 @@ class MainWindow(QMainWindow):
 
     def _post_bootstrap(self) -> None:
         self._maybe_first_run()
-        # first launch (or all sessions deleted): a session needs a directory,
-        # so open the picker instead of silently defaulting somewhere
+        # first launch (or all sessions deleted): start a session right away
+        # in the project root — the dir button can change it afterwards
         if not self._had_sessions and (self.engine.config.model_extra or {}).get("onboarded"):
             self._prompt_new_session()
 
@@ -576,22 +580,24 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ sessions
 
     def _prompt_new_session(self, target_project_id: str | None = None) -> None:
-        """Sync entry: pick a directory (modal, from the Qt loop), then create.
+        """Instant new session (Claude-Desktop style): inherit the working
+        directory from context instead of forcing a picker. "New Session in
+        Folder…" keeps the explicit choice available."""
+        self._fire(self._new_session(project_id=target_project_id))
 
-        The modal picker must run outside an asyncio task, or qasync warns
-        about task re-entry while other tasks (file watcher) are pending.
-        """
+    def _prompt_new_session_in_folder(self) -> None:
+        """Explicit-directory variant: pick a folder (modal, from the Qt
+        loop — a modal inside an asyncio task makes qasync warn about task
+        re-entry), then create."""
         directory = self._prompt_directory("Choose a working directory for the new session")
         if directory:
-            self._fire(self._new_session(directory=directory, project_id=target_project_id))
+            self._fire(self._new_session(directory=directory))
 
     async def _new_session(self, directory: str | None = None, project_id: str | None = None) -> None:
-        """Create a session. A working directory must be chosen explicitly —
-        if not passed in, prompt for one; cancelling aborts creation."""
+        """Create a session; with no explicit directory, inherit one from
+        context: target project → current session → last used → project root."""
         if directory is None:
-            directory = self._prompt_directory("Choose a working directory for the new session")
-            if not directory:
-                return
+            directory = await self._default_new_session_dir(project_id)
         self._remember_project(directory)
         session = await self.engine.new_session(
             model=self._default_model(), directory=directory, project_id=project_id)
@@ -603,6 +609,21 @@ class MainWindow(QMainWindow):
 
         start = self._last_project() or str(Path.home())
         return QFileDialog.getExistingDirectory(self, caption, start)
+
+    async def _default_new_session_dir(self, project_id: str | None = None) -> str:
+        """Working directory for an instant new session."""
+        if project_id:
+            for p in await self.engine.store.list_projects():
+                if p.id == project_id and p.path and Path(p.path).is_dir():
+                    return p.path
+        if self.current_session_id:
+            current = await self.engine.store.get_session(self.current_session_id)
+            if current and current.directory and Path(current.directory).is_dir():
+                return current.directory
+        last = self._last_project()
+        if last and Path(last).is_dir():
+            return last
+        return str(self.engine.project_dir)
 
     async def _load_session(self, session_id: str) -> None:
         session = await self.engine.store.get_session(session_id)
@@ -831,23 +852,14 @@ class MainWindow(QMainWindow):
 
     async def _refresh_sessions(self) -> None:
         projects = await self.engine.store.list_projects()
-        # load every project's sessions so moved/grouped sessions all show
+        # load every project's sessions so moved sessions all show; subagent
+        # children stay out of the sidebar (reached via task cards / stage)
         sessions: list = []
         for p in projects:
-            sessions.extend(await self.engine.store.list_sessions(p.id, include_children=True))
+            sessions.extend(await self.engine.store.list_sessions(p.id))
         sessions_by_project: dict[str, list] = {}
-        children: dict[str, list] = {}
         for s in sessions:
-            if s.parent_session_id:
-                children.setdefault(s.parent_session_id, []).append(s)
-            else:
-                sessions_by_project.setdefault(s.project_id, []).append(s)
-        for kids in children.values():
-            kids.sort(key=lambda s: s.created_at)
-        for sess_list in sessions_by_project.values():
-            sess_list.sort(key=lambda s: s.updated_at, reverse=True)
-            for s in sess_list:
-                s.children = children.get(s.id, [])
+            sessions_by_project.setdefault(s.project_id, []).append(s)
         running = {s.id for s in sessions if self.engine.is_running(s.id)} | self._running
         agent_colors = {a.name: a.color or "#98c379" for a in self.engine.agents.agents.values()}
         folders_by_project: dict[str, list] = {}

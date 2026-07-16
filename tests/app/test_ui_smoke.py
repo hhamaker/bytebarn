@@ -299,16 +299,22 @@ def test_session_list_keyboard_navigation_selects(qapp):
     sl = SessionList()
     picked: list[str] = []
     sl.session_selected.connect(picked.append)
-    # single project -> sessions flat at top level
-    sl.populate([_proj()], {"p1": [_sess("a"), _sess("b"), _sess("c")]}, set(), "a")
+    # sessions render flat beneath a time-bucket header, newest first
+    import time as _time
+    now = _time.time()
+    a, b, c = _sess("a"), _sess("b"), _sess("c")
+    a.updated_at, b.updated_at, c.updated_at = now, now - 60, now - 120
+    sl.populate([_proj()], {"p1": [a, b, c]}, set(), "a")
     assert picked == []  # populate blocks signals
-    sl.tree.setCurrentItem(sl.tree.topLevelItem(1))
+    bucket = sl.tree.topLevelItem(0)
+    assert bucket.childCount() == 3
+    sl.tree.setCurrentItem(bucket.child(1))
     assert picked == ["b"]
-    sl.tree.setCurrentItem(sl.tree.topLevelItem(2))
+    sl.tree.setCurrentItem(bucket.child(2))
     assert picked == ["b", "c"]
 
 
-def test_session_list_groups_by_project(qapp):
+def test_session_list_recents_flat_across_projects(qapp):
     from PySide6.QtCore import Qt
 
     from crew.app.session_list import SessionList
@@ -316,11 +322,49 @@ def test_session_list_groups_by_project(qapp):
     sl = SessionList()
     projs = [_proj("p1", "Alpha"), _proj("p2", "Beta")]
     sl.populate(projs, {"p1": [_sess("a")], "p2": [_sess("b")]}, set(), "a")
-    # two projects -> two project nodes at the top level
+    # Projects section header + one "Today" bucket
     assert sl.tree.topLevelItemCount() == 2
-    top0 = sl.tree.topLevelItem(0)
-    assert top0.data(0, Qt.UserRole + 1) == "project"
-    assert top0.childCount() == 1
+    proj_header = sl.tree.topLevelItem(0)
+    assert proj_header.data(0, Qt.UserRole + 1) == "header"
+    kinds = [proj_header.child(i).data(0, Qt.UserRole + 1)
+             for i in range(proj_header.childCount())]
+    assert kinds == ["project", "project"]
+    bucket = sl.tree.topLevelItem(1)
+    assert bucket.text(0) == "Today"
+    # sessions from both projects flattened under the bucket, not the projects
+    ids = {bucket.child(i).data(0, Qt.UserRole) for i in range(bucket.childCount())}
+    assert ids == {"a", "b"}
+
+
+def test_session_list_buckets_by_recency(qapp):
+    import time as _time
+
+    from crew.app.session_list import SessionList, bucket_label
+
+    assert bucket_label(_time.time()) == "Today"
+    assert bucket_label(_time.time() - 40 * 86400) == "Older"
+
+    sl = SessionList()
+    old = _sess("old")
+    old.updated_at = _time.time() - 40 * 86400
+    sl.populate([_proj()], {"p1": [_sess("new"), old]}, set(), "new")
+    labels = [sl.tree.topLevelItem(i).text(0)
+              for i in range(sl.tree.topLevelItemCount())]
+    assert labels == ["Today", "Older"]
+
+
+def test_session_list_hides_subagent_children(qapp):
+    from PySide6.QtCore import Qt
+
+    from crew.app.session_list import SessionList
+
+    sl = SessionList()
+    child = _sess("kid")
+    child.parent_session_id = "a"
+    sl.populate([_proj()], {"p1": [_sess("a"), child]}, set(), "a")
+    bucket = sl.tree.topLevelItem(0)
+    ids = {bucket.child(i).data(0, Qt.UserRole) for i in range(bucket.childCount())}
+    assert ids == {"a"}
 
 
 def test_session_list_shows_project_folders(qapp):
@@ -333,11 +377,12 @@ def test_session_list_shows_project_folders(qapp):
     # a project owns folders which render as folder nodes beneath it
     sl.populate(projs, {"p1": [_sess("a")], "p2": []}, set(), "a",
                 None, {"p1": ["/code/foo", "/code/bar"]})
-    top0 = sl.tree.topLevelItem(0)
-    kinds = [top0.child(i).data(0, Qt.UserRole + 1) for i in range(top0.childCount())]
-    assert kinds.count("folder") == 2 and "session" in kinds
-    folder = next(top0.child(i) for i in range(top0.childCount())
-                  if top0.child(i).data(0, Qt.UserRole + 1) == "folder")
+    proj_header = sl.tree.topLevelItem(0)
+    alpha = proj_header.child(0)
+    assert alpha.data(0, Qt.UserRole + 1) == "project"
+    kinds = [alpha.child(i).data(0, Qt.UserRole + 1) for i in range(alpha.childCount())]
+    assert kinds.count("folder") == 2 and "session" not in kinds
+    folder = alpha.child(0)
     assert folder.data(0, Qt.UserRole + 2) == "p1"          # owning project
     assert folder.data(0, Qt.UserRole) in ("/code/foo", "/code/bar")
 
@@ -368,9 +413,9 @@ def test_session_list_delete_key_removes_folder(qapp, monkeypatch):
     sl.populate([_proj("p1", "Alpha"), _proj("p2", "Beta")],
                 {"p1": [_sess("a")], "p2": []}, set(), "a",
                 None, {"p1": ["/code/foo"]})
-    top0 = sl.tree.topLevelItem(0)
-    folder = next(top0.child(i) for i in range(top0.childCount())
-                  if top0.child(i).data(0, Qt.UserRole + 1) == "folder")
+    alpha = sl.tree.topLevelItem(0).child(0)
+    folder = next(alpha.child(i) for i in range(alpha.childCount())
+                  if alpha.child(i).data(0, Qt.UserRole + 1) == "folder")
     sl.tree.setCurrentItem(folder)
     monkeypatch.setattr(sl, "_confirm_remove_folder", lambda: True)
 
@@ -418,12 +463,13 @@ def test_session_list_multi_select_delete(qapp):
     emitted: list[list] = []
     sl.delete_sessions.connect(emitted.append)
     sl.populate([_proj()], {"p1": [_sess("a"), _sess("b"), _sess("c")]}, set(), "a")
+    bucket = sl.tree.topLevelItem(0)
     for i in range(3):
-        sl.tree.topLevelItem(i).setSelected(True)
+        bucket.child(i).setSelected(True)
     ids = sl._selected_session_ids()
     assert set(ids) == {"a", "b", "c"}
     sl.delete_sessions.emit(ids)
-    assert emitted == [["a", "b", "c"]]
+    assert len(emitted) == 1 and set(emitted[0]) == {"a", "b", "c"}
 
 
 def test_agent_list_grouped_by_mode(qapp, tmp_path):
@@ -462,7 +508,7 @@ def test_menu_bar_has_menus(qapp, tmp_path):
     assert titles == ["&File", "&Projects", "&Session", "&Tools", "&Help"]
 
 
-async def test_new_session_requires_directory(qapp, tmp_path, monkeypatch):
+async def test_new_session_instant_inherits_directory(qapp, tmp_path):
     from crew.app.main_window import MainWindow
     from crew.engine.facade import Engine
 
@@ -475,18 +521,27 @@ async def test_new_session_requires_directory(qapp, tmp_path, monkeypatch):
     try:
         window = MainWindow(engine)
 
-        # cancelling the picker (empty string) creates nothing
-        monkeypatch.setattr(window, "_prompt_directory", lambda _caption: "")
-        await window._new_session()
-        assert window.current_session_id is None
-        assert not await engine.store.list_sessions(engine.project.id)
-
-        # choosing a directory creates a session rooted there
-        monkeypatch.setattr(window, "_prompt_directory", lambda _caption: str(workdir))
+        # no context yet: instant creation rooted at the project dir, no modal
         await window._new_session()
         assert window.current_session_id is not None
         session = await engine.store.get_session(window.current_session_id)
-        assert session.directory == str(workdir)
+        assert session.directory == str(engine.project_dir)
+
+        # with an open session in another directory, a new one inherits it
+        await engine.store.update_session(session.id, directory=str(workdir))
+        message = await engine.store.add_message(session.id, "user")
+        await engine.store.add_part(message.id, "text", {"text": "hi"})
+        await window._new_session()
+        assert window.current_session_id != session.id
+        fresh = await engine.store.get_session(window.current_session_id)
+        assert fresh.directory == str(workdir)
+
+        # explicit directory still wins (New Session in Folder…)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        await window._new_session(directory=str(elsewhere))
+        picked = await engine.store.get_session(window.current_session_id)
+        assert picked.directory == str(elsewhere)
     finally:
         await engine.stop()
 

@@ -1,10 +1,13 @@
-"""Sessions sidebar: projects at the top level, sessions nested beneath,
-subagent sessions nested under their parent. Supports multi-select delete
-and drag-to-project."""
+"""Sessions sidebar, Claude-Desktop style: a flat reverse-chronological list
+of sessions under time-bucket headers (Today / Yesterday / …), with an
+optional Projects section above for organization. Subagent sessions never
+appear here — they are reached from transcript task cards and the crew stage.
+Supports multi-select delete and drag-to-project."""
 
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QPoint, Qt, Signal
@@ -24,9 +27,12 @@ from PySide6.QtWidgets import (
 )
 
 _RUNNING_COLOR = "#98c379"
+_MUTED_COLOR = "#8f96a3"
 _ID_ROLE = Qt.UserRole          # session id or project id
-_KIND_ROLE = Qt.UserRole + 1    # "session" | "project" | "folder"
+_KIND_ROLE = Qt.UserRole + 1    # "session" | "project" | "folder" | "header"
 _PARENT_ROLE = Qt.UserRole + 2  # for folders: owning project id
+
+_PROJECTS_HEADER_ID = "__projects__"
 
 
 def relative_time(ts: float) -> str:
@@ -38,6 +44,25 @@ def relative_time(ts: float) -> str:
     if delta < 86400:
         return f"{int(delta // 3600)}h"
     return f"{int(delta // 86400)}d"
+
+
+def bucket_label(ts: float, now: float | None = None) -> str:
+    """Claude-Desktop-style recency bucket for a session timestamp."""
+    now = time.time() if now is None else now
+    lt = time.localtime(now)
+    midnight = now - (lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec)
+    if ts >= midnight:
+        return "Today"
+    if ts >= midnight - 86400:
+        return "Yesterday"
+    if ts >= midnight - 6 * 86400:
+        return "This week"
+    if ts >= midnight - 29 * 86400:
+        return "This month"
+    return "Older"
+
+
+_BUCKET_ORDER = ["Today", "Yesterday", "This week", "This month", "Older"]
 
 
 class SessionList(QWidget):
@@ -85,6 +110,8 @@ class SessionList(QWidget):
         self.tree.setAcceptDrops(True)
         self.tree.setDropIndicatorShown(True)
         self.tree.setDragDropMode(QTreeWidget.InternalMove)
+        self.tree.setRootIsDecorated(False)
+        self.tree.setIndentation(12)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -105,54 +132,88 @@ class SessionList(QWidget):
         folders_by_project: dict[str, list[str]] | None = None,
     ) -> None:
         folders_by_project = folders_by_project or {}
-        expanded = self._expanded_project_ids()
+        expanded = self._expanded_ids()
         self.tree.blockSignals(True)
         self.tree.clear()
 
-        # one project: show its sessions flat. Multiple: group under project nodes.
-        multi = len(projects) > 1
+        project_names = {p.id: (p.name or "(project)") for p in projects}
 
+        # Projects section: organization only, shown when there is more than
+        # the implicit default project. Sessions never nest here.
+        if len(projects) > 1:
+            proj_header = self._header_item(f"Projects  ({len(projects)})")
+            proj_header.setData(0, _ID_ROLE, _PROJECTS_HEADER_ID)
+            self.tree.addTopLevelItem(proj_header)
+            for project in projects:
+                count = len(sessions_by_project.get(project.id, []))
+                item = self._project_item(project, count)
+                proj_header.addChild(item)
+                for folder in folders_by_project.get(project.id, []):
+                    item.addChild(self._folder_item(project.id, folder))
+                if project.id in expanded:
+                    item.setExpanded(True)
+            proj_header.setExpanded(
+                not expanded or _PROJECTS_HEADER_ID in expanded)
+
+        # Recents: every top-level session, flattened across projects, newest
+        # first, under time-bucket headers. Subagent children are hidden.
+        flat: list[tuple[Any, str]] = []
         for project in projects:
-            sessions = sessions_by_project.get(project.id, [])
-            folders = folders_by_project.get(project.id, [])
-            if multi:
-                proj_item = self._project_item(project, len(sessions))
-                self.tree.addTopLevelItem(proj_item)
-                parent = proj_item
-                if not expanded or project.id in expanded:
-                    proj_item.setExpanded(True)
-                for folder in folders:
-                    proj_item.addChild(self._folder_item(project.id, folder))
-            else:
-                parent = None  # flat under the tree root
-                for folder in folders:
-                    self.tree.addTopLevelItem(self._folder_item(project.id, folder))
+            for session in sessions_by_project.get(project.id, []):
+                if getattr(session, "parent_session_id", None):
+                    continue
+                flat.append((session, project.id))
+        flat.sort(key=lambda pair: pair[0].updated_at, reverse=True)
 
-            for session in sessions:
-                item = self._session_item(session, running, agent_colors)
-                if parent is None:
-                    self.tree.addTopLevelItem(item)
-                else:
-                    parent.addChild(item)
-                for child in getattr(session, "children", []) or []:
-                    child_item = self._session_item(child, running, agent_colors)
-                    item.addChild(child_item)
-                    if child.id == current:
-                        item.setExpanded(True)
-                        self.tree.setCurrentItem(child_item)
-                if session.id == current:
-                    self.tree.setCurrentItem(item)
+        now = time.time()
+        buckets: dict[str, QTreeWidgetItem] = {}
+        current_item: QTreeWidgetItem | None = None
+        for session, pid in flat:
+            label = bucket_label(session.updated_at, now)
+            bucket = buckets.get(label)
+            if bucket is None:
+                bucket = self._header_item(label)
+                buckets[label] = bucket
+                self.tree.addTopLevelItem(bucket)
+                bucket.setExpanded(True)
+            item = self._session_item(
+                session, running, agent_colors, project_names.get(pid, ""))
+            bucket.addChild(item)
+            if session.id == current:
+                current_item = item
+        if current_item is not None:
+            self.tree.setCurrentItem(current_item)
 
         self.tree.blockSignals(False)
         self._filter(self.search.text())
 
-    def _expanded_project_ids(self) -> set[str]:
+    def _expanded_ids(self) -> set[str]:
+        """Ids of expanded projects (plus the Projects header sentinel)."""
         out: set[str] = set()
-        for i in range(self.tree.topLevelItemCount()):
-            item = self.tree.topLevelItem(i)
-            if item.data(0, _KIND_ROLE) == "project" and item.isExpanded():
+
+        def walk(item: QTreeWidgetItem) -> None:
+            kind = item.data(0, _KIND_ROLE)
+            if kind in ("project", "header") and item.isExpanded():
                 out.add(item.data(0, _ID_ROLE))
+            for i in range(item.childCount()):
+                walk(item.child(i))
+
+        for i in range(self.tree.topLevelItemCount()):
+            walk(self.tree.topLevelItem(i))
         return out
+
+    @staticmethod
+    def _header_item(label: str) -> QTreeWidgetItem:
+        item = QTreeWidgetItem([label])
+        item.setData(0, _KIND_ROLE, "header")
+        item.setData(0, _ID_ROLE, label)
+        item.setFlags(Qt.ItemIsEnabled)  # no select, no drag
+        item.setForeground(0, QColor(_MUTED_COLOR))
+        font = QFont()
+        font.setBold(True)
+        font.setPointSizeF(font.pointSizeF() * 0.85)
+        item.setFont(0, font)
+        return item
 
     @staticmethod
     def _project_item(project: Any, count: int) -> QTreeWidgetItem:
@@ -169,7 +230,6 @@ class SessionList(QWidget):
 
     @staticmethod
     def _folder_item(project_id: str, path: str) -> QTreeWidgetItem:
-        from pathlib import Path
         name = Path(path).name or path
         item = QTreeWidgetItem([f"🗂 {name}"])
         item.setData(0, _ID_ROLE, path)
@@ -177,20 +237,34 @@ class SessionList(QWidget):
         item.setData(0, _PARENT_ROLE, project_id)
         item.setToolTip(0, path)
         item.setFlags(item.flags() & ~Qt.ItemIsDragEnabled)
-        item.setForeground(0, QColor("#8f96a3"))
+        item.setForeground(0, QColor(_MUTED_COLOR))
         return item
 
     @staticmethod
     def _session_item(
-        session: Any, running: set[str], agent_colors: dict[str, str] | None
+        session: Any,
+        running: set[str],
+        agent_colors: dict[str, str] | None,
+        project_name: str = "",
     ) -> QTreeWidgetItem:
         title = session.title or "(untitled)"
         is_running = session.id in running
-        label = f"{'● ' if is_running else ''}{title} · {relative_time(session.updated_at)}"
+        directory = getattr(session, "directory", "") or ""
+        dir_name = Path(directory).name if directory else ""
+        parts = [title]
+        if dir_name:
+            parts.append(dir_name)
+        parts.append(relative_time(session.updated_at))
+        label = f"{'● ' if is_running else ''}{' · '.join(parts)}"
         item = QTreeWidgetItem([label])
         item.setData(0, _ID_ROLE, session.id)
         item.setData(0, _KIND_ROLE, "session")
-        item.setToolTip(0, f"{session.agent} · {session.model or 'default model'}")
+        tooltip = f"{session.agent} · {session.model or 'default model'}"
+        if project_name:
+            tooltip += f"\n{project_name}"
+        if directory:
+            tooltip += f"\n{directory}"
+        item.setToolTip(0, tooltip)
         color = (agent_colors or {}).get(session.agent, "#98c379")
         from .sprites import critter_pixmap
 
@@ -245,7 +319,7 @@ class SessionList(QWidget):
 
     def _context_menu(self, pos: QPoint) -> None:
         item = self.tree.itemAt(pos)
-        if item is None:
+        if item is None or item.data(0, _KIND_ROLE) == "header":
             return
         selected = self._selected_session_ids()
         menu = QMenu(self)
@@ -334,17 +408,19 @@ class SessionList(QWidget):
             hay = (item.text(0) + " " + item.toolTip(0)).lower()
             return not text or text in hay
 
+        def apply(item: QTreeWidgetItem) -> bool:
+            """Hide non-matching rows; a row survives if it or a child matches.
+            Headers survive only through their children."""
+            child_hit = False
+            for i in range(item.childCount()):
+                child_hit = apply(item.child(i)) or child_hit
+            is_header = item.data(0, _KIND_ROLE) == "header"
+            hit = child_hit or (not is_header and match(item))
+            item.setHidden(bool(text) and not hit)
+            return hit
+
         for i in range(self.tree.topLevelItemCount()):
-            top = self.tree.topLevelItem(i)
-            top_match = match(top)
-            child_match = False
-            for j in range(top.childCount()):
-                ch = top.child(j)
-                ch_hit = match(ch)
-                gc_hit = any(match(ch.child(k)) for k in range(ch.childCount()))
-                ch.setHidden(bool(text) and not (ch_hit or gc_hit))
-                child_match = child_match or ch_hit or gc_hit
-            top.setHidden(bool(text) and not (top_match or child_match))
+            apply(self.tree.topLevelItem(i))
 
     def dropEvent(self, event):
         src = self.tree.currentItem()

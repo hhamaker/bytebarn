@@ -341,6 +341,12 @@ class Store:
         await self.db.execute(f"UPDATE message SET {cols} WHERE id=?", (*fields.values(), message_id))
         await self.db.commit()
 
+    async def message_count(self, session_id: str) -> int:
+        row = await self._fetchone(
+            "SELECT COUNT(*) AS n FROM message WHERE session_id=?", (session_id,)
+        )
+        return int(row["n"]) if row else 0
+
     async def list_messages(self, session_id: str) -> list[Message]:
         rows = await self._fetchall(
             "SELECT * FROM message WHERE session_id=? ORDER BY created_at, id", (session_id,)

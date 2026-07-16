@@ -49,6 +49,7 @@ class Engine:
         self.project = None
 
         self._runs: dict[str, RunHandle] = {}
+        self._new_session_lock = asyncio.Lock()
         self._files_read: dict[str, set[str]] = {}
         self._pending: dict[str, asyncio.Future] = {}  # permission/question futures
         self._pending_permissions: set[str] = set()
@@ -85,10 +86,20 @@ class Engine:
         self, agent: str = "build", model: str = "", directory: str = "",
         project_id: str | None = None,
     ) -> Session:
-        """Create a session (optionally rooted in its own working directory)."""
+        """Create a session (optionally rooted in its own working directory).
+
+        Reuses an existing empty untitled session in the same place instead of
+        stacking "(untitled)" rows — mirrors Claude Desktop's lazy-chat feel.
+        The lock keeps concurrent calls (e.g. startup auto-create racing a
+        user's ⌘N) from both passing the reuse check before either inserts."""
         pid = project_id or self.project.id
-        session = await self.store.create_session(
-            pid, agent=agent, model=model, directory=directory)
+        async with self._new_session_lock:
+            for existing in await self.store.list_sessions(pid):
+                if (not existing.title and existing.directory == directory
+                        and not await self.store.message_count(existing.id)):
+                    return existing
+            session = await self.store.create_session(
+                pid, agent=agent, model=model, directory=directory)
         self.bus.emit(SessionUpdated(session_id=session.id))
         return session
 
