@@ -129,13 +129,22 @@ def _make_bedrock(reg: "ProviderRegistry"):
     # region: auth record, then config, then env/default (resolved downstream)
     region = auth.get("region") or getattr(pconf, "region", None) or extra.get("region")
 
+    # Bedrock API key (bearer token) — auth record, then config; when present
+    # it takes over and SigV4 access/secret keys are ignored
+    api_key = auth.get("api_key") or extra.get("api_key")
+
     # explicit Access Key ID / Secret Access Key from auth, then config;
     # if absent, the anthropic SDK falls back to the ambient AWS chain
     client_id = auth.get("client_id") or extra.get("client_id") or (
         pconf.resolve_key() if pconf else None)
     client_secret = auth.get("client_secret") or extra.get("client_secret")
 
-    return BedrockProvider(region=region, client_id=client_id, client_secret=client_secret)
+    return BedrockProvider(
+        region=region,
+        client_id=client_id,
+        client_secret=client_secret,
+        api_key=api_key,
+    )
 
 
 # name -> factory(registry) -> Provider | None (None = fall through to generic)

@@ -107,9 +107,10 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
                 "us.anthropic.claude-haiku-4-5-20251001-v1:0",
                 "us.anthropic.claude-opus-4-1-20250805-v1:0",
             ),
-            note="Provide your AWS credentials as Client ID (Access Key ID) "
-                 "and Client Secret (Secret Access Key). Region from AWS_REGION "
-                 "(default us-east-1). Install boto3 for live model lists.",
+            note="Auth two ways: a Bedrock API key (bearer token), or AWS "
+                 "credentials as Client ID (Access Key ID) + Client Secret "
+                 "(Secret Access Key). Region from AWS_REGION (default "
+                 "us-east-1). Install boto3 for live model lists.",
             id_fields=("client_id", "client_secret"),
         ),
         ProviderSpec(
@@ -184,6 +185,8 @@ def connection_status(spec: ProviderSpec, config: "Config", auth: "AuthStore") -
         # ambient AWS chain (env vars / ~/.aws / SSO)
         from .bedrock import credentials_present
 
+        if record and record.get("api_key"):
+            return "connected-key"
         if record and record.get("client_id") and record.get("client_secret"):
             return "connected-key"
         return "connected-env" if credentials_present() else "disconnected"

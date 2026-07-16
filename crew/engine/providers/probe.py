@@ -66,15 +66,18 @@ async def probe_provider(name: str, config: Config, auth: AuthStore) -> tuple[bo
 
         rec = auth.get("bedrock") or {}
         cid, csec = rec.get("client_id"), rec.get("client_secret")
+        akey = rec.get("api_key")
         region = rec.get("region")
-        if not credentials_present(cid, csec):
-            return False, ("no AWS credentials — enter your Access Key ID and"
-                           " Secret Access Key, or configure ~/.aws")
-        live = await list_bedrock_models(region, cid, csec)
+        if not credentials_present(cid, csec, akey):
+            return False, ("no Bedrock credentials — enter a Bedrock API key,"
+                           " or AWS Access Key ID + Secret Access Key, or"
+                           " configure ~/.aws")
+        live = await list_bedrock_models(region, cid, csec, akey)
         if live:
             return True, f"connected — {len(live)} models in {resolve_region(region)}"
-        return True, (f"credentials saved (region {resolve_region(region)});"
-                      " install boto3 for live model listing")
+        hint = ("check the API key / region" if akey
+                else "install boto3 for live model listing")
+        return True, (f"credentials saved (region {resolve_region(region)}); {hint}")
     url, headers = _endpoint_and_headers(name, config, auth)
     if "${" in url:
         missing = url[url.index("${") + 2 : url.index("}")]
@@ -152,7 +155,8 @@ async def fetch_models(name: str, config: Config, auth: AuthStore) -> list[str]:
 
         rec = auth.get("bedrock") or {}
         return await list_bedrock_models(
-            rec.get("region"), rec.get("client_id"), rec.get("client_secret"))
+            rec.get("region"), rec.get("client_id"), rec.get("client_secret"),
+            rec.get("api_key"))
     url, headers = _endpoint_and_headers(name, config, auth)
     if "${" in url:
         return []

@@ -145,7 +145,11 @@ class ProviderManager(QDialog):
         key_row.addWidget(save_key)
         key_row.addWidget(self.remove_key)
 
-        # AWS Bedrock: Access Key ID + Secret Access Key + region, to auth.json
+        # AWS Bedrock: a Bedrock API key (bearer token), OR Access Key ID +
+        # Secret Access Key + region — either way, saved to auth.json
+        self.aws_apikey_edit = QLineEdit()
+        self.aws_apikey_edit.setEchoMode(QLineEdit.Password)
+        self.aws_apikey_edit.setPlaceholderText("Bedrock API key (bearer token)")
         self.aws_key_edit = QLineEdit()
         self.aws_key_edit.setPlaceholderText("Access Key ID")
         self.aws_secret_edit = QLineEdit()
@@ -158,6 +162,8 @@ class ProviderManager(QDialog):
         self.aws_container = QWidget()
         aws_col = QVBoxLayout(self.aws_container)
         aws_col.setContentsMargins(0, 0, 0, 0)
+        aws_col.addWidget(self.aws_apikey_edit)
+        aws_col.addWidget(QLabel("— or AWS credentials —"))
         aws_col.addWidget(self.aws_key_edit)
         aws_col.addWidget(self.aws_secret_edit)
         aws_col.addWidget(self.aws_region_edit)
@@ -266,6 +272,7 @@ class ProviderManager(QDialog):
         self._form.setRowVisible(self.aws_container, is_bedrock)
         if is_bedrock:
             rec = self.engine.providers.auth.get("bedrock") or {}
+            self.aws_apikey_edit.clear()
             self.aws_key_edit.setText(rec.get("client_id", ""))
             self.aws_secret_edit.clear()
             self.aws_region_edit.setText(rec.get("region", ""))
@@ -349,18 +356,25 @@ class ProviderManager(QDialog):
         self._after_change("key saved to ~/.crew/auth.json")
 
     def _save_bedrock_creds(self) -> None:
+        api_key = self.aws_apikey_edit.text().strip()
         access = self.aws_key_edit.text().strip()
         secret = self.aws_secret_edit.text().strip()
         region = self.aws_region_edit.text().strip()
-        if not access or not secret:
-            self.test_result.setText("enter both Access Key ID and Secret Access Key")
+        # A Bedrock API key wins — mutually exclusive with SigV4 access/secret
+        if api_key:
+            record = {"type": "bedrock", "api_key": api_key}
+        elif access and secret:
+            record = {"type": "bedrock", "client_id": access, "client_secret": secret}
+        else:
+            self.test_result.setText(
+                "enter a Bedrock API key, or both Access Key ID and Secret Access Key")
             return
-        record = {"type": "bedrock", "client_id": access, "client_secret": secret}
         if region:
             record["region"] = region
         self.engine.providers.auth.set("bedrock", record)
+        self.aws_apikey_edit.clear()
         self.aws_secret_edit.clear()
-        self._after_change("AWS credentials saved to ~/.crew/auth.json")
+        self._after_change("Bedrock credentials saved to ~/.crew/auth.json")
 
     def _remove_key(self) -> None:
         spec = self._current

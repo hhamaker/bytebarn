@@ -568,3 +568,69 @@ def test_bedrock_client_id_secret(tmp_path, monkeypatch):
     assert captured.get("aws_access_key") == "AKIA_ID"
     assert captured.get("aws_secret_key") == "SECRET"
     assert captured.get("aws_region") == "us-west-2"
+
+
+def test_bedrock_api_key(tmp_path, monkeypatch):
+    from crew.engine.auth import AuthStore
+    from crew.engine.providers.bedrock import BedrockProvider, credentials_present
+    from crew.engine.providers.known import KNOWN_PROVIDERS, connection_status
+
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("AWS_PROFILE", raising=False)
+    monkeypatch.delenv("AWS_BEARER_TOKEN_BEDROCK", raising=False)
+    # a Bedrock API key alone counts as credentials
+    assert credentials_present(api_key="tok") is True
+
+    cfg = Config()
+    auth = AuthStore(tmp_path)
+    spec = KNOWN_PROVIDERS["bedrock"]
+    auth.set("bedrock", {"type": "bedrock", "api_key": "tok-123",
+                         "region": "us-west-2"})
+    assert connection_status(spec, cfg, auth) == "connected-key"
+
+    reg = ProviderRegistry(cfg, global_dir=tmp_path)
+    reg.auth = auth
+    captured = {}
+
+    class FakeBedrockClient:
+        def __init__(self, **kw):
+            captured.update(kw)
+
+    import anthropic
+    monkeypatch.setattr(anthropic, "AsyncAnthropicBedrock", FakeBedrockClient)
+    provider = reg.provider("bedrock")
+    assert isinstance(provider, BedrockProvider)
+    # api_key reaches the SDK; SigV4 access/secret keys are NOT passed alongside
+    assert captured.get("api_key") == "tok-123"
+    assert "aws_access_key" not in captured
+    assert "aws_secret_key" not in captured
+
+
+async def test_list_bedrock_models_via_api_key():
+    import httpx
+
+    from crew.engine.providers import bedrock
+
+    summaries = {"modelSummaries": [
+        {"modelId": "anthropic.claude-sonnet-4-5",
+         "inferenceTypesSupported": ["ON_DEMAND"]},
+        {"modelId": "provisioned-only",
+         "inferenceTypesSupported": ["PROVISIONED"]},
+    ]}
+
+    def handler(req):
+        assert req.headers["authorization"] == "Bearer tok-123"
+        assert "bedrock.us-west-2.amazonaws.com" in str(req.url)
+        return httpx.Response(200, json=summaries)
+
+    real = httpx.AsyncClient
+
+    def patched(*a, **k):
+        k["transport"] = httpx.MockTransport(handler)
+        return real(*a, **k)
+
+    import unittest.mock as mock
+    with mock.patch("httpx.AsyncClient", patched):
+        ids = await bedrock.list_bedrock_models(region="us-west-2", api_key="tok-123")
+    # only ON_DEMAND models are returned
+    assert ids == ["anthropic.claude-sonnet-4-5"]
