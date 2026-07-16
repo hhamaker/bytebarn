@@ -1,56 +1,61 @@
-"""Skill discovery (global + project).
+"""Skill library – prompt fragments agents can reference.
 
-Skills are plain markdown files stored under:
-  <global>/.crew/skills/<name>.md
-  <project>/.crew/skills/<name>.md
-
-Project skills override global skills of the same name.
+Skills follow the same three-layer pattern as agents:
+builtin (empty for now) → global (~/.crew/skills) → project (.crew/skills)
 """
-
 from __future__ import annotations
 
 from pathlib import Path
-from typing import NamedTuple
+from typing import Dict
+
+from pydantic import BaseModel, ConfigDict
 
 
-class Skill(NamedTuple):
+class SkillDef(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     name: str
-    body: str
-    source: str  # "global" | "project"
+    description: str = ""
+    body: str = ""
+    source: str = "builtin"   # builtin | global | project
 
 
-def _discover(base: Path | None) -> dict[str, Skill]:
-    if not base:
-        return {}
-    skills_dir = base / ".crew" / "skills"
-    if not skills_dir.is_dir():
-        return {}
-    out: dict[str, Skill] = {}
-    for p in sorted(skills_dir.glob("*.md")):
+def _load_md_dir(d: Path, source: str) -> Dict[str, SkillDef]:
+    skills: Dict[str, SkillDef] = {}
+    if not d.exists():
+        return skills
+    for p in d.glob("*.md"):
         name = p.stem
-        out[name] = Skill(name=name, body=p.read_text().strip(), source="global" if base.parent == base else "project")
-    return out
+        skills[name] = SkillDef(
+            name=name,
+            description=name.replace("_", " ").title(),
+            body=p.read_text().strip(),
+            source=source,
+        )
+    return skills
+
+
+def load_skills(global_dir: Path, project_dir: Path | None = None) -> Dict[str, SkillDef]:
+    skills = _load_md_dir(global_dir / "skills", "global")
+    if project_dir:
+        skills.update(_load_md_dir(project_dir / ".crew" / "skills", "project"))
+    return skills
 
 
 class SkillRegistry:
-    def __init__(self, project_dir: Path | None = None, global_dir: Path | None = None):
-        self.project_dir = Path(project_dir) if project_dir else None
-        self.global_dir = Path(global_dir) if global_dir else None
-        self.reload()
+    def __init__(self, global_dir: Path, project_dir: Path | None = None):
+        self._global_dir = global_dir
+        self._project_dir = project_dir
+        self._skills = load_skills(global_dir, project_dir)
 
     def reload(self) -> None:
-        g = _discover(self.global_dir)
-        p = _discover(self.project_dir)
-        # project wins
-        merged: dict[str, Skill] = {}
-        for name, sk in g.items():
-            merged[name] = Skill(name, sk.body, "global")
-        for name, sk in p.items():
-            merged[name] = Skill(name, sk.body, "project")
-        self.skills = merged
+        self._skills = load_skills(self._global_dir, self._project_dir)
 
-    def list(self) -> list[Skill]:
-        return sorted(self.skills.values(), key=lambda s: s.name)
+    def get(self, name: str) -> SkillDef | None:
+        return self._skills.get(name)
 
-    def get(self, name: str) -> Skill | None:
-        return self.skills.get(name)
+    def list(self) -> list[SkillDef]:
+        return sorted(self._skills.values(), key=lambda s: s.name)
+
+    @property
+    def skills(self) -> Dict[str, SkillDef]:
+        return self._skills

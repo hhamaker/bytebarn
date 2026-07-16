@@ -92,7 +92,7 @@ Pick a provider, paste a key or **🌐 log in via web**, hit *Test connection*:
 | DeepSeek | API key / `DEEPSEEK_API_KEY` | |
 | Together AI | API key / `TOGETHER_API_KEY` | |
 | Cerebras | API key / `CEREBRAS_API_KEY` | |
-| AWS Bedrock | AWS credential chain | region via `AWS_REGION`; boto3 optional for live lists |
+| AWS Bedrock | Access Key ID + Secret Access Key (or AWS chain) | region field / `AWS_REGION`; boto3 optional for live lists |
 | Cloudflare Workers AI | API key / `CLOUDFLARE_API_KEY` | needs `CLOUDFLARE_ACCOUNT_ID` |
 | Cloudflare AI Gateway | API key / `CLOUDFLARE_API_KEY` | needs account + `CLOUDFLARE_GATEWAY_ID` |
 | Ollama | none | local, `http://localhost:11434/v1` |

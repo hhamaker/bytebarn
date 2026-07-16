@@ -29,8 +29,12 @@ def resolve_region(config_region: str | None = None) -> str:
     )
 
 
-def credentials_present() -> bool:
-    """True if the standard AWS credential chain has something to offer."""
+def credentials_present(
+    client_id: str | None = None, client_secret: str | None = None
+) -> bool:
+    """True if we have AWS credentials: explicit keys, env vars, or ~/.aws."""
+    if client_id and client_secret:
+        return True
     if os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("AWS_PROFILE"):
         return True
     return (Path.home() / ".aws" / "credentials").is_file() or (
@@ -41,15 +45,34 @@ def credentials_present() -> bool:
 class BedrockProvider(AnthropicProvider):
     name = "bedrock"
 
-    def __init__(self, region: str | None = None, client=None):
+    def __init__(
+        self,
+        region: str | None = None,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+        aws_access_key: str | None = None,
+        aws_secret_key: str | None = None,
+        client=None,
+    ):
         import anthropic
 
-        self._client = client or anthropic.AsyncAnthropicBedrock(
-            aws_region=resolve_region(region)
-        )
+        # Map friendly names (client_id/client_secret) to AWS names
+        access_key = aws_access_key or client_id
+        secret_key = aws_secret_key or client_secret
+
+        kwargs = {"aws_region": resolve_region(region)}
+        if access_key:
+            kwargs["aws_access_key"] = access_key
+        if secret_key:
+            kwargs["aws_secret_key"] = secret_key
+        self._client = client or anthropic.AsyncAnthropicBedrock(**kwargs)
 
 
-async def list_bedrock_models(region: str | None = None) -> list[str]:
+async def list_bedrock_models(
+    region: str | None = None,
+    client_id: str | None = None,
+    client_secret: str | None = None,
+) -> list[str]:
     """Live model ids via boto3 (optional dependency); [] without it."""
     try:
         import boto3  # noqa: F401
@@ -59,7 +82,11 @@ async def list_bedrock_models(region: str | None = None) -> list[str]:
     def _list() -> list[str]:
         import boto3
 
-        client = boto3.client("bedrock", region_name=resolve_region(region))
+        kwargs = {"region_name": resolve_region(region)}
+        if client_id and client_secret:
+            kwargs["aws_access_key_id"] = client_id
+            kwargs["aws_secret_access_key"] = client_secret
+        client = boto3.client("bedrock", **kwargs)
         response = client.list_foundation_models(byOutputModality="TEXT")
         ids = []
         for model in response.get("modelSummaries", []):

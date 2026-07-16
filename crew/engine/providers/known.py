@@ -100,17 +100,17 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
         ),
         ProviderSpec(
             id="bedrock", label="AWS Bedrock", api="anthropic",
-            key_env="AWS_ACCESS_KEY_ID",
+            key_env="",
             key_url="https://console.aws.amazon.com/iam/home#/security_credentials",
             models=(
                 "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
                 "us.anthropic.claude-haiku-4-5-20251001-v1:0",
                 "us.anthropic.claude-opus-4-1-20250805-v1:0",
             ),
-            note="Uses the standard AWS credential chain (env vars,"
-                 " ~/.aws/credentials, SSO). Region from AWS_REGION"
-                 " (default us-east-1). Install boto3 for live model lists.",
-            id_fields=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+            note="Provide your AWS credentials as Client ID (Access Key ID) "
+                 "and Client Secret (Secret Access Key). Region from AWS_REGION "
+                 "(default us-east-1). Install boto3 for live model lists.",
+            id_fields=("client_id", "client_secret"),
         ),
         ProviderSpec(
             id="cloudflare", label="Cloudflare Workers AI",
@@ -179,6 +179,14 @@ def connection_status(spec: ProviderSpec, config: "Config", auth: "AuthStore") -
     if spec.planned:
         return "planned"
     record = auth.get(spec.id)
+    if spec.id == "bedrock":
+        # explicit Access Key ID + Secret Access Key saved here, else the
+        # ambient AWS chain (env vars / ~/.aws / SSO)
+        from .bedrock import credentials_present
+
+        if record and record.get("client_id") and record.get("client_secret"):
+            return "connected-key"
+        return "connected-env" if credentials_present() else "disconnected"
     if record:
         if record.get("type") == "oauth":
             return "connected-oauth"
@@ -187,10 +195,6 @@ def connection_status(spec: ProviderSpec, config: "Config", auth: "AuthStore") -
     pconf = config.provider.get(spec.id)
     if pconf and pconf.resolve_key():
         return "connected-env" if not pconf.api_key else "connected-key"
-    if spec.id == "bedrock":
-        from .bedrock import credentials_present
-
-        return "connected-env" if credentials_present() else "disconnected"
     if spec.local:
         return "local"
     import os

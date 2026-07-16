@@ -138,16 +138,38 @@ class ProviderManager(QDialog):
         save_key.clicked.connect(self._save_key)
         self.remove_key = QPushButton("Remove key")
         self.remove_key.clicked.connect(self._remove_key)
-        key_row = QHBoxLayout()
+        self.key_row_w = QWidget()
+        key_row = QHBoxLayout(self.key_row_w)
+        key_row.setContentsMargins(0, 0, 0, 0)
         key_row.addWidget(self.key_edit, 1)
         key_row.addWidget(save_key)
         key_row.addWidget(self.remove_key)
+
+        # AWS Bedrock: Access Key ID + Secret Access Key + region, to auth.json
+        self.aws_key_edit = QLineEdit()
+        self.aws_key_edit.setPlaceholderText("Access Key ID")
+        self.aws_secret_edit = QLineEdit()
+        self.aws_secret_edit.setEchoMode(QLineEdit.Password)
+        self.aws_secret_edit.setPlaceholderText("Secret Access Key")
+        self.aws_region_edit = QLineEdit()
+        self.aws_region_edit.setPlaceholderText("region (default us-east-1)")
+        save_aws = QPushButton("Save credentials")
+        save_aws.clicked.connect(self._save_bedrock_creds)
+        self.aws_container = QWidget()
+        aws_col = QVBoxLayout(self.aws_container)
+        aws_col.setContentsMargins(0, 0, 0, 0)
+        aws_col.addWidget(self.aws_key_edit)
+        aws_col.addWidget(self.aws_secret_edit)
+        aws_col.addWidget(self.aws_region_edit)
+        aws_col.addWidget(save_aws)
 
         self.base_url_edit = QLineEdit()
         self.base_url_edit.setPlaceholderText("default")
         save_url = QPushButton("Save URL")
         save_url.clicked.connect(self._save_base_url)
-        url_row = QHBoxLayout()
+        self.url_row_w = QWidget()
+        url_row = QHBoxLayout(self.url_row_w)
+        url_row.setContentsMargins(0, 0, 0, 0)
         url_row.addWidget(self.base_url_edit, 1)
         url_row.addWidget(save_url)
 
@@ -168,14 +190,16 @@ class ProviderManager(QDialog):
         self.test_result = QLabel("")
         self.test_result.setWordWrap(True)
 
-        form = QFormLayout()
+        self._form = form = QFormLayout()
         form.addRow(self.title)
         form.addRow("status", self.status)
         form.addRow(self.note)
         form.addRow(self.key_link)
-        form.addRow("API key", key_row)
+        form.addRow("API key", self.key_row_w)
+        self.aws_label = QLabel("AWS")
+        form.addRow(self.aws_label, self.aws_container)
         form.addRow(self.ids_label, self.ids_container)
-        form.addRow("base URL", url_row)
+        form.addRow("base URL", self.url_row_w)
         form.addRow(self.oauth_button)
         form.addRow(self.test_button)
         form.addRow(self.test_result)
@@ -234,7 +258,22 @@ class ProviderManager(QDialog):
             self.oauth_button.setText("🌐 Log in via web")
         self.test_button.setEnabled(not spec.planned)
         self.test_result.setText("")
-        self._rebuild_id_fields(spec)
+
+        # AWS Bedrock: two-secret credential form instead of a single API key
+        is_bedrock = spec.id == "bedrock"
+        self._form.setRowVisible(self.key_row_w, not is_bedrock)
+        self.key_link.setVisible(bool(spec.key_url) and not is_bedrock)
+        self._form.setRowVisible(self.aws_container, is_bedrock)
+        if is_bedrock:
+            rec = self.engine.providers.auth.get("bedrock") or {}
+            self.aws_key_edit.setText(rec.get("client_id", ""))
+            self.aws_secret_edit.clear()
+            self.aws_region_edit.setText(rec.get("region", ""))
+            self._form.setRowVisible(self.ids_container, False)
+            self._form.setRowVisible(self.url_row_w, False)
+        else:
+            self._rebuild_id_fields(spec)
+            self._form.setRowVisible(self.url_row_w, True)
 
     def _rebuild_id_fields(self, spec: ProviderSpec) -> None:
         """One friendly input per ${PLACEHOLDER} in the provider's base URL
@@ -247,13 +286,11 @@ class ProviderManager(QDialog):
                 item.widget().deleteLater()
         self.id_edits.clear()
 
-        if spec.id_fields:
-            placeholders = list(spec.id_fields)
-        else:
-            placeholders = re.findall(r"\$\{([A-Z0-9_]+)\}", spec.base_url or "")
+        # only URL-placeholder providers (Cloudflare) use this row; bedrock is
+        # handled by its own AWS credential form
+        placeholders = re.findall(r"\$\{([A-Z0-9_]+)\}", spec.base_url or "")
         show = bool(placeholders)
-        self.ids_label.setVisible(show)
-        self.ids_container.setVisible(show)
+        self._form.setRowVisible(self.ids_container, show)
         if not show:
             return
 
@@ -310,6 +347,20 @@ class ProviderManager(QDialog):
         self.engine.providers.auth.set(spec.id, {"type": "api", "key": key})
         self.key_edit.clear()
         self._after_change("key saved to ~/.crew/auth.json")
+
+    def _save_bedrock_creds(self) -> None:
+        access = self.aws_key_edit.text().strip()
+        secret = self.aws_secret_edit.text().strip()
+        region = self.aws_region_edit.text().strip()
+        if not access or not secret:
+            self.test_result.setText("enter both Access Key ID and Secret Access Key")
+            return
+        record = {"type": "bedrock", "client_id": access, "client_secret": secret}
+        if region:
+            record["region"] = region
+        self.engine.providers.auth.set("bedrock", record)
+        self.aws_secret_edit.clear()
+        self._after_change("AWS credentials saved to ~/.crew/auth.json")
 
     def _remove_key(self) -> None:
         spec = self._current

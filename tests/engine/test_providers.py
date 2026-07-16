@@ -529,6 +529,42 @@ async def test_bedrock_probe_without_creds(tmp_path, monkeypatch):
 
     monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
     monkeypatch.delenv("AWS_PROFILE", raising=False)
-    monkeypatch.setattr(bedrock, "credentials_present", lambda: False)
+    monkeypatch.setattr(bedrock, "credentials_present", lambda *a: False)
     ok, msg = await probe_provider("bedrock", Config(), AuthStore(tmp_path))
     assert not ok and "AWS" in msg
+
+
+def test_bedrock_client_id_secret(tmp_path, monkeypatch):
+    from crew.engine.auth import AuthStore
+    from crew.engine.providers.bedrock import BedrockProvider, credentials_present
+    from crew.engine.providers.known import KNOWN_PROVIDERS, connection_status
+
+    # explicit keys count as credentials even without env/~/.aws
+    assert credentials_present("AKIA", "secret") is True
+
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("AWS_PROFILE", raising=False)
+    cfg = Config()
+    auth = AuthStore(tmp_path)
+    spec = KNOWN_PROVIDERS["bedrock"]
+    # saved Access Key ID + Secret Access Key -> connected via saved key
+    auth.set("bedrock", {"type": "bedrock", "client_id": "AKIA_ID",
+                         "client_secret": "SECRET", "region": "us-west-2"})
+    assert connection_status(spec, cfg, auth) == "connected-key"
+
+    reg = ProviderRegistry(cfg, global_dir=tmp_path)
+    reg.auth = auth
+    captured = {}
+
+    class FakeBedrockClient:
+        def __init__(self, **kw):
+            captured.update(kw)
+
+    import anthropic
+    monkeypatch.setattr(anthropic, "AsyncAnthropicBedrock", FakeBedrockClient)
+    provider = reg.provider("bedrock")
+    assert isinstance(provider, BedrockProvider)
+    # the entered Access Key ID / Secret Access Key + region reach the SDK
+    assert captured.get("aws_access_key") == "AKIA_ID"
+    assert captured.get("aws_secret_key") == "SECRET"
+    assert captured.get("aws_region") == "us-west-2"

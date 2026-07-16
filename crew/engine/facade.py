@@ -42,7 +42,8 @@ class Engine:
         self.providers = ProviderRegistry(self.config, self.global_dir)
         self.agents = AgentRegistry(self.config, self.project_dir, self.global_dir)
         self.commands = CommandRegistry(self.project_dir, self.global_dir)
-        self.skills = SkillRegistry(self.project_dir, self.global_dir)
+        self.skills = SkillRegistry(
+            global_dir=self.global_dir, project_dir=self.project_dir)
         self.runner = Runner(self)
         self.session_mode = ASK_MODE
         self.project = None

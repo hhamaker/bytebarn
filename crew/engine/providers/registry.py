@@ -123,10 +123,19 @@ def _make_bedrock(reg: "ProviderRegistry"):
     from .bedrock import BedrockProvider
 
     pconf = reg.config.provider.get("bedrock")
-    region = getattr(pconf, "region", None) if pconf else None
-    if pconf and pconf.model_extra:
-        region = region or pconf.model_extra.get("region")
-    return BedrockProvider(region=region)
+    extra = (pconf.model_extra if pconf and pconf.model_extra else {}) or {}
+    auth = reg.auth.get("bedrock") or {}
+
+    # region: auth record, then config, then env/default (resolved downstream)
+    region = auth.get("region") or getattr(pconf, "region", None) or extra.get("region")
+
+    # explicit Access Key ID / Secret Access Key from auth, then config;
+    # if absent, the anthropic SDK falls back to the ambient AWS chain
+    client_id = auth.get("client_id") or extra.get("client_id") or (
+        pconf.resolve_key() if pconf else None)
+    client_secret = auth.get("client_secret") or extra.get("client_secret")
+
+    return BedrockProvider(region=region, client_id=client_id, client_secret=client_secret)
 
 
 # name -> factory(registry) -> Provider | None (None = fall through to generic)
