@@ -836,7 +836,8 @@ class MainWindow(QMainWindow):
         agent_colors = {a.name: a.color or "#98c379" for a in self.engine.agents.agents.values()}
         self.session_list.populate(
             projects, sessions_by_project, running, self.current_session_id or "",
-            agent_colors)
+            agent_colors,
+            default_project_id=self.engine.project.id if self.engine.project else "")
         if self.current_session_id:
             current = await self.engine.store.get_session(self.current_session_id)
             if current:

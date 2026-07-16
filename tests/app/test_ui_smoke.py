@@ -364,26 +364,31 @@ def test_session_list_keyboard_navigation_selects(qapp):
     assert picked == ["b", "c"]
 
 
-def test_session_list_recents_flat_across_projects(qapp):
+def test_session_list_sessions_stay_within_projects(qapp):
     from PySide6.QtCore import Qt
 
     from crew.app.session_list import SessionList
 
     sl = SessionList()
     projs = [_proj("p1", "Alpha"), _proj("p2", "Beta")]
-    sl.populate(projs, {"p1": [_sess("a")], "p2": [_sess("b")]}, set(), "a")
-    # Projects section header + one "Today" bucket
+    sl.populate(projs, {"p1": [_sess("a")], "p2": [_sess("b")]}, set(), "b",
+                default_project_id="p1")
+    # Projects section header + one "Today" bucket for the default project
     assert sl.tree.topLevelItemCount() == 2
     proj_header = sl.tree.topLevelItem(0)
     assert proj_header.data(0, Qt.UserRole + 1) == "header"
-    kinds = [proj_header.child(i).data(0, Qt.UserRole + 1)
-             for i in range(proj_header.childCount())]
-    assert kinds == ["project", "project"]
+    beta = proj_header.child(0)
+    assert beta.data(0, Qt.UserRole + 1) == "project"
+    # Beta's session nests under Beta — not in the Recents buckets
+    assert [beta.child(i).data(0, Qt.UserRole)
+            for i in range(beta.childCount())] == ["b"]
+    assert beta.isExpanded()  # contains the current session
     bucket = sl.tree.topLevelItem(1)
     assert bucket.text(0) == "Today"
-    # sessions from both projects flattened under the bucket, not the projects
     ids = {bucket.child(i).data(0, Qt.UserRole) for i in range(bucket.childCount())}
-    assert ids == {"a", "b"}
+    assert ids == {"a"}
+    # the current (project) session is the selected item
+    assert sl.tree.currentItem().data(0, Qt.UserRole) == "b"
 
 
 def test_session_list_buckets_by_recency(qapp):
@@ -417,18 +422,18 @@ def test_session_list_hides_subagent_children(qapp):
     assert ids == {"a"}
 
 
-def test_session_list_projects_flat_no_folders(qapp):
+def test_session_list_projects_have_no_folder_nodes(qapp):
     from PySide6.QtCore import Qt
 
     from crew.app.session_list import SessionList
 
     sl = SessionList()
     projs = [_proj("p1", "Alpha"), _proj("p2", "Beta")]
-    sl.populate(projs, {"p1": [_sess("a")], "p2": []}, set(), "a")
-    proj_header = sl.tree.topLevelItem(0)
-    alpha = proj_header.child(0)
-    assert alpha.data(0, Qt.UserRole + 1) == "project"
-    assert alpha.childCount() == 0  # projects are flat rows, no folder nodes
+    sl.populate(projs, {"p1": [_sess("a")], "p2": []}, set(), "a",
+                default_project_id="p1")
+    beta = sl.tree.topLevelItem(0).child(0)
+    assert beta.data(0, Qt.UserRole + 1) == "project"
+    assert beta.childCount() == 0  # empty project: sessions only, no folders
 
 
 def test_session_list_double_click_opens_project(qapp):
@@ -438,14 +443,15 @@ def test_session_list_double_click_opens_project(qapp):
     opened: list = []
     sl.open_project.connect(opened.append)
     sl.populate([_proj("p1", "Alpha"), _proj("p2", "Beta")],
-                {"p1": [_sess("a")], "p2": []}, set(), "a")
-    alpha = sl.tree.topLevelItem(0).child(0)
-    sl._on_double_click(alpha)
-    assert opened == ["p1"]
+                {"p1": [_sess("a")], "p2": []}, set(), "a",
+                default_project_id="p1")
+    beta = sl.tree.topLevelItem(0).child(0)
+    sl._on_double_click(beta)
+    assert opened == ["p2"]
     # double-clicking a session does nothing
     bucket = sl.tree.topLevelItem(1)
     sl._on_double_click(bucket.child(0))
-    assert opened == ["p1"]
+    assert opened == ["p2"]
 
 
 def test_crew_stage_stop_signal(qapp):

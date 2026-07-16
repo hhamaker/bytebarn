@@ -128,39 +128,55 @@ class SessionList(QWidget):
         running: set[str],
         current: str,
         agent_colors: dict[str, str] | None = None,
+        default_project_id: str = "",
     ) -> None:
+        """Claude-style sidebar: sessions belonging to a user project nest
+        under that project's row; only the default (working-directory)
+        project's sessions appear in the time-bucketed Recents list."""
         expanded = self._expanded_ids()
         self.tree.blockSignals(True)
         self.tree.clear()
 
+        if not default_project_id and projects:
+            default_project_id = projects[0].id
         project_names = {p.id: (p.name or "(project)") for p in projects}
 
-        # Projects section: organization only, shown when there is more than
-        # the implicit default project. Sessions never nest here.
-        if len(projects) > 1:
-            proj_header = self._header_item(f"Projects  ({len(projects)})")
+        def top_level(project_id: str) -> list[Any]:
+            return [s for s in sessions_by_project.get(project_id, [])
+                    if not getattr(s, "parent_session_id", None)]
+
+        current_item: QTreeWidgetItem | None = None
+
+        # Projects section: each user project owns its sessions, nested.
+        user_projects = [p for p in projects if p.id != default_project_id]
+        if user_projects:
+            proj_header = self._header_item(f"Projects  ({len(user_projects)})")
             proj_header.setData(0, _ID_ROLE, _PROJECTS_HEADER_ID)
             self.tree.addTopLevelItem(proj_header)
-            for project in projects:
-                count = len(sessions_by_project.get(project.id, []))
-                proj_header.addChild(self._project_item(project, count))
+            for project in user_projects:
+                sessions = sorted(top_level(project.id),
+                                  key=lambda s: s.updated_at, reverse=True)
+                item = self._project_item(project, len(sessions))
+                proj_header.addChild(item)
+                has_current = False
+                for session in sessions:
+                    child = self._session_item(session, running, agent_colors,
+                                               project_names.get(project.id, ""))
+                    item.addChild(child)
+                    if session.id == current:
+                        current_item = child
+                        has_current = True
+                item.setExpanded(has_current or project.id in expanded)
             proj_header.setExpanded(
                 not expanded or _PROJECTS_HEADER_ID in expanded)
 
-        # Recents: every top-level session, flattened across projects, newest
-        # first, under time-bucket headers. Subagent children are hidden.
-        flat: list[tuple[Any, str]] = []
-        for project in projects:
-            for session in sessions_by_project.get(project.id, []):
-                if getattr(session, "parent_session_id", None):
-                    continue
-                flat.append((session, project.id))
-        flat.sort(key=lambda pair: pair[0].updated_at, reverse=True)
-
+        # Recents: the default project's sessions, newest first, under
+        # time-bucket headers. Subagent children are hidden everywhere.
+        recents = sorted(top_level(default_project_id),
+                         key=lambda s: s.updated_at, reverse=True)
         now = time.time()
         buckets: dict[str, QTreeWidgetItem] = {}
-        current_item: QTreeWidgetItem | None = None
-        for session, pid in flat:
+        for session in recents:
             label = bucket_label(session.updated_at, now)
             bucket = buckets.get(label)
             if bucket is None:
@@ -169,7 +185,8 @@ class SessionList(QWidget):
                 self.tree.addTopLevelItem(bucket)
                 bucket.setExpanded(True)
             item = self._session_item(
-                session, running, agent_colors, project_names.get(pid, ""))
+                session, running, agent_colors,
+                project_names.get(default_project_id, ""))
             bucket.addChild(item)
             if session.id == current:
                 current_item = item
