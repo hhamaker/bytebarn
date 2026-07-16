@@ -58,7 +58,16 @@ async def _git_info(cwd: Path) -> str:
         return ""
 
 
-async def build_system_prompt(agent: AgentDef, cwd: Path, instructions: list[str]) -> str:
+_ASSET_INLINE_LIMIT = 32_000  # bytes of a text asset inlined into the prompt
+
+
+async def build_system_prompt(
+    agent: AgentDef,
+    cwd: Path,
+    instructions: list[str],
+    project_instructions: str = "",
+    assets: list[Any] | None = None,
+) -> str:
     git = await _git_info(cwd)
     env = (
         f"<environment>\n"
@@ -73,7 +82,29 @@ async def build_system_prompt(agent: AgentDef, cwd: Path, instructions: list[str
         path = cwd / name
         if path.is_file():
             sections.append(f"<project-instructions file=\"{name}\">\n{path.read_text()}\n</project-instructions>")
+    # Claude-style project knowledge: custom instructions + uploaded assets
+    if project_instructions.strip():
+        sections.append(
+            "<project-instructions source=\"project\">\n"
+            f"{project_instructions}\n</project-instructions>")
+    for asset in assets or []:
+        sections.append(_asset_section(asset))
     return "\n\n".join(s for s in sections if s)
+
+
+def _asset_section(asset: Any) -> str:
+    """Inline small text assets; larger/binary ones are listed by path."""
+    path = Path(asset.path)
+    try:
+        if path.stat().st_size <= _ASSET_INLINE_LIMIT:
+            text = path.read_text()  # UnicodeDecodeError -> binary fallback
+            return (f"<project-knowledge file=\"{asset.name}\">\n"
+                    f"{text}\n</project-knowledge>")
+    except (OSError, UnicodeDecodeError, ValueError):
+        pass
+    return (f"<project-knowledge file=\"{asset.name}\" path=\"{asset.path}\">"
+            "[not inlined — read this file with tools when relevant]"
+            "</project-knowledge>")
 
 
 def history_to_messages(history: list[tuple[Any, list[Any]]]) -> list[Msg]:
@@ -200,7 +231,10 @@ class Runner:
         ctx = self._make_context(session, agent, handle)
 
         cwd = Path(session.directory) if session.directory else engine.project_dir
-        system = await build_system_prompt(agent, cwd, engine.config.instructions)
+        proj_instructions, proj_assets = await engine.project_knowledge(session.project_id)
+        system = await build_system_prompt(
+            agent, cwd, engine.config.instructions,
+            project_instructions=proj_instructions, assets=proj_assets)
 
         # model fallback: after N consecutive failed turns, switch to a
         # comparable available model instead of giving up (spec-free QoL)

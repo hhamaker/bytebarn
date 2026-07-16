@@ -32,6 +32,12 @@ Run with `QT_QPA_PLATFORM=offscreen .venv/bin/python harness.py`.
 
 ## Gotchas
 
+- Never call `app.processEvents()` inside the async main — qasync re-enters
+  tasks and corrupts the loop ("Cannot enter into task…"). `await
+  asyncio.sleep(0.05)` pumps Qt events instead.
+- Run harnesses with `python -u` (or `flush=True`) when redirecting to a log —
+  buffered prints vanish if the process dies.
+
 - `bootstrap()` schedules `_post_bootstrap` via `QTimer.singleShot(0, …)` —
   it fires during later awaits (qasync pumps Qt events), so it can interleave
   with your harness calls. On a fresh store it auto-creates a session.

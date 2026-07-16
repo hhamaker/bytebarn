@@ -364,3 +364,39 @@ class Engine:
 
     async def list_projects(self):
         return await self.store.list_projects()
+
+    # -- project knowledge (Claude-style: instructions + assets) ---------------
+
+    def _assets_dir(self, project_id: str) -> Path:
+        return self.global_dir / "assets" / project_id
+
+    async def add_project_asset(self, project_id: str, src: Path | str):
+        """Copy a file into the project's knowledge base and register it."""
+        import shutil
+
+        src = Path(src)
+        dest_dir = self._assets_dir(project_id)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / src.name
+        stem, suffix, n = src.stem, src.suffix, 1
+        while dest.exists():  # don't clobber a different file with the same name
+            dest = dest_dir / f"{stem}-{n}{suffix}"
+            n += 1
+        shutil.copy2(src, dest)
+        asset = await self.store.add_project_asset(project_id, dest, src.name)
+        self.bus.emit(SessionUpdated(session_id=""))  # sidebar/dialog refresh
+        return asset
+
+    async def remove_project_asset(self, project_id: str, path: Path | str) -> None:
+        """Remove an asset row and its copied file."""
+        await self.store.remove_project_asset(project_id, path)
+        try:
+            Path(path).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    async def project_knowledge(self, project_id: str):
+        """(instructions, assets) injected into every run in the project."""
+        project = await self.store.get_project(project_id)
+        assets = await self.store.list_project_assets(project_id)
+        return (project.instructions if project else "", assets)

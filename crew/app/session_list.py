@@ -29,8 +29,7 @@ from PySide6.QtWidgets import (
 _RUNNING_COLOR = "#98c379"
 _MUTED_COLOR = "#8f96a3"
 _ID_ROLE = Qt.UserRole          # session id or project id
-_KIND_ROLE = Qt.UserRole + 1    # "session" | "project" | "folder" | "header"
-_PARENT_ROLE = Qt.UserRole + 2  # for folders: owning project id
+_KIND_ROLE = Qt.UserRole + 1    # "session" | "project" | "header"
 
 _PROJECTS_HEADER_ID = "__projects__"
 
@@ -75,8 +74,7 @@ class SessionList(QWidget):
     new_project = Signal()
     rename_project = Signal(str)                # project id
     delete_project = Signal(str)                # project id
-    add_folder_to_project = Signal(str)         # project id
-    remove_folder_from_project = Signal(str, str)  # project id, folder path
+    open_project = Signal(str)                  # project id -> settings dialog
     move_session_to_project = Signal(str)   # session id -> pick a project
     session_moved_to_project = Signal(str, str)  # session_id, project_id (drag)
 
@@ -104,6 +102,7 @@ class SessionList(QWidget):
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)  # shift/ctrl multi-select
         self.tree.currentItemChanged.connect(self._on_current_changed)
         self.tree.itemClicked.connect(self._on_click)
+        self.tree.itemDoubleClicked.connect(self._on_double_click)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._context_menu)
         self.tree.setDragEnabled(True)
@@ -129,9 +128,7 @@ class SessionList(QWidget):
         running: set[str],
         current: str,
         agent_colors: dict[str, str] | None = None,
-        folders_by_project: dict[str, list[str]] | None = None,
     ) -> None:
-        folders_by_project = folders_by_project or {}
         expanded = self._expanded_ids()
         self.tree.blockSignals(True)
         self.tree.clear()
@@ -146,12 +143,7 @@ class SessionList(QWidget):
             self.tree.addTopLevelItem(proj_header)
             for project in projects:
                 count = len(sessions_by_project.get(project.id, []))
-                item = self._project_item(project, count)
-                proj_header.addChild(item)
-                for folder in folders_by_project.get(project.id, []):
-                    item.addChild(self._folder_item(project.id, folder))
-                if project.id in expanded:
-                    item.setExpanded(True)
+                proj_header.addChild(self._project_item(project, count))
             proj_header.setExpanded(
                 not expanded or _PROJECTS_HEADER_ID in expanded)
 
@@ -229,18 +221,6 @@ class SessionList(QWidget):
         return item
 
     @staticmethod
-    def _folder_item(project_id: str, path: str) -> QTreeWidgetItem:
-        name = Path(path).name or path
-        item = QTreeWidgetItem([f"🗂 {name}"])
-        item.setData(0, _ID_ROLE, path)
-        item.setData(0, _KIND_ROLE, "folder")
-        item.setData(0, _PARENT_ROLE, project_id)
-        item.setToolTip(0, path)
-        item.setFlags(item.flags() & ~Qt.ItemIsDragEnabled)
-        item.setForeground(0, QColor(_MUTED_COLOR))
-        return item
-
-    @staticmethod
     def _session_item(
         session: Any,
         running: set[str],
@@ -300,18 +280,15 @@ class SessionList(QWidget):
         if sid:
             self.session_selected.emit(sid)
 
+    def _on_double_click(self, item: QTreeWidgetItem) -> None:
+        if item.data(0, _KIND_ROLE) == "project":
+            self.open_project.emit(item.data(0, _ID_ROLE))
+
     def keyPressEvent(self, event) -> None:
         if event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
             ids = self._selected_session_ids()
             if ids and self._confirm_delete(len(ids)):
                 self.delete_sessions.emit(ids)
-                return
-            # no sessions selected: allow deleting a focused folder node
-            item = self.tree.currentItem()
-            if item is not None and item.data(0, _KIND_ROLE) == "folder" \
-                    and self._confirm_remove_folder():
-                self.remove_folder_from_project.emit(
-                    item.data(0, _PARENT_ROLE), item.data(0, _ID_ROLE))
             return
         super().keyPressEvent(event)
 
@@ -333,26 +310,18 @@ class SessionList(QWidget):
 
         if item.data(0, _KIND_ROLE) == "project":
             new_here = menu.addAction("New session in this project")
+            settings = menu.addAction("Project settings…")
             rename_proj = menu.addAction("Rename project…")
-            add_folder = menu.addAction("Add folder…")
             delete_proj = menu.addAction("Delete project…")
             chosen = menu.exec(self.tree.viewport().mapToGlobal(pos))
             if chosen is new_here:
                 self.new_session.emit(item.data(0, _ID_ROLE))
+            elif chosen is settings:
+                self.open_project.emit(item.data(0, _ID_ROLE))
             elif chosen is rename_proj:
                 self.rename_project.emit(item.data(0, _ID_ROLE))
-            elif chosen is add_folder:
-                self.add_folder_to_project.emit(item.data(0, _ID_ROLE))
             elif chosen is delete_proj and self._confirm_delete_project():
                 self.delete_project.emit(item.data(0, _ID_ROLE))
-            return
-
-        if item.data(0, _KIND_ROLE) == "folder":
-            remove = menu.addAction("Remove folder from project")
-            chosen = menu.exec(self.tree.viewport().mapToGlobal(pos))
-            if chosen is remove:
-                self.remove_folder_from_project.emit(
-                    item.data(0, _PARENT_ROLE), item.data(0, _ID_ROLE))
             return
 
         session_id = self._session_id(item)
@@ -385,16 +354,8 @@ class SessionList(QWidget):
     def _confirm_delete_project(self) -> bool:
         answer = QMessageBox.warning(
             self, "Delete project",
-            "Delete this project and ALL its sessions, history, and folders?\n"
+            "Delete this project and ALL its sessions, history, and knowledge?\n"
             "This cannot be undone.",
-            QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel,
-        )
-        return answer == QMessageBox.Yes
-
-    def _confirm_remove_folder(self) -> bool:
-        answer = QMessageBox.question(
-            self, "Remove folder",
-            "Remove this folder from the project? Sessions are not affected.",
             QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel,
         )
         return answer == QMessageBox.Yes

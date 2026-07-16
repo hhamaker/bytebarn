@@ -132,3 +132,46 @@ async def test_session_directory_roundtrip(store, tmp_path):
     assert (await store.get_session(plain.id)).directory == ""
     await store.update_session(sess.id, directory="/moved")
     assert (await store.get_session(sess.id)).directory == "/moved"
+
+
+async def test_session_parts_limit_counts_messages_not_rows(store, tmp_path):
+    p = await store.open_project(str(tmp_path))
+    sess = await store.create_session(p.id)
+    for i in range(5):
+        msg = await store.add_message(sess.id, "assistant")
+        for j in range(3):  # multi-part messages must not shrink the page
+            await store.add_part(msg.id, "text", {"text": f"m{i}p{j}"})
+
+    page = await store.session_parts(sess.id, limit=3)
+    assert len(page) == 3                      # 3 messages, not 3 joined rows
+    assert all(len(parts) == 3 for _, parts in page)
+    # chronological order, most recent 3 messages
+    texts = [parts[0].data["text"] for _, parts in page]
+    assert texts == ["m2p0", "m3p0", "m4p0"]
+
+    # pagination continues cleanly below the page boundary
+    older = await store.session_parts(sess.id, limit=3, before=page[0][0].created_at)
+    assert [parts[0].data["text"] for _, parts in older] == ["m0p0", "m1p0"]
+    assert all(len(parts) == 3 for _, parts in older)
+
+
+async def test_project_instructions_and_assets(store, tmp_path):
+    p = await store.add_project("catalog:Docs", name="Docs")
+    assert (await store.get_project(p.id)).instructions == ""
+
+    await store.set_project_instructions(p.id, "Always answer in Spanish.")
+    assert (await store.get_project(p.id)).instructions == "Always answer in Spanish."
+
+    f = tmp_path / "notes.md"
+    f.write_text("hello")
+    await store.add_project_asset(p.id, f, "notes.md")
+    assets = await store.list_project_assets(p.id)
+    assert [(a.name, a.path) for a in assets] == [("notes.md", str(f))]
+
+    await store.remove_project_asset(p.id, f)
+    assert await store.list_project_assets(p.id) == []
+
+    # delete cascades asset rows
+    await store.add_project_asset(p.id, f, "notes.md")
+    await store.delete_project(p.id)
+    assert await store.list_project_assets(p.id) == []

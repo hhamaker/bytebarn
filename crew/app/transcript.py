@@ -317,17 +317,21 @@ class Transcript(QScrollArea):
         if not older:
             return
         # remember current scroll position so the user doesn't jump
-        sb = self.scroll_area.verticalScrollBar()
+        sb = self.verticalScrollBar()
         old_val = sb.value()
         old_max = sb.maximum()
 
+        # the page arrives oldest→newest; insert at successive positions so
+        # it stacks above the existing content in chronological order
+        position = 0
         for message, parts in older:
             for part in parts:
                 if not hasattr(part, "data"):
                     continue
                 part.data["_created_at"] = message.created_at
-                self._add_part(message.role, part.id, part.type, part.data,
-                               streaming=False, prepend=True)
+                if self._add_part(message.role, part.id, part.type, part.data,
+                                  streaming=False, position=position):
+                    position += 1
 
         # restore scroll so the same visual content stays on screen
         new_max = sb.maximum()
@@ -401,8 +405,8 @@ class Transcript(QScrollArea):
         part_type: str,
         data: dict[str, Any],
         streaming: bool = False,
-        prepend: bool = False,
-    ) -> None:
+        position: int | None = None,
+    ) -> QWidget | None:
         self._dismiss_welcome()
         if role != "user":
             self.dismiss_thinking()
@@ -426,7 +430,7 @@ class Transcript(QScrollArea):
         elif part_type == "file":
             widget = self._file_widget(data.get("path", ""), user=role == "user")
         if widget is None:
-            return
+            return None
         self._part_widgets[part_id] = widget
         # stash the message timestamp so we can do lazy loading
         # (the widget is either a direct part widget or a container)
@@ -434,10 +438,11 @@ class Transcript(QScrollArea):
             widget.setProperty("_created_at", data.get("_created_at"))
         except Exception:
             pass
-        if locals().get("prepend", False):
-            self._layout.insertWidget(0, widget)
+        if position is not None:
+            self._layout.insertWidget(position, widget)
         else:
             self._layout.addWidget(widget)
+        return widget
 
     _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
 
@@ -471,7 +476,7 @@ class Transcript(QScrollArea):
         bar = self.verticalScrollBar()
         self._autoscroll = value >= bar.maximum() - 10
         # trigger lazy load when the user scrolls near the top
-        if value <= 50 and hasattr(self, "request_older"):
+        if value <= 50 and callable(self.request_older):
             self.request_older()
 
     def _on_range(self, _min: int, _max: int) -> None:

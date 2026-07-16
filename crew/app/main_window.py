@@ -73,8 +73,7 @@ class MainWindow(QMainWindow):
         self.session_list.new_project.connect(self._create_catalog_project)
         self.session_list.rename_project.connect(self._rename_project)
         self.session_list.delete_project.connect(self._delete_project)
-        self.session_list.add_folder_to_project.connect(self._add_folder_to_project)
-        self.session_list.remove_folder_from_project.connect(self._remove_folder_from_project)
+        self.session_list.open_project.connect(self._open_project_dialog)
         self.transcript = Transcript()
         self.crew_stage = CrewStage()
         self.todo_strip = TodoStrip()
@@ -301,16 +300,20 @@ class MainWindow(QMainWindow):
         if not ok or not name:
             return
 
-        folders = self._prompt_folders(
-            "Add folders to this project (Cancel to skip)")
-
         async def run() -> None:
             project = await self.engine.store.add_project(f"catalog:{name}", name=name)
-            for folder in folders:
-                await self.engine.store.add_project_folder(project.id, folder)
             await self._refresh_sessions()
+            # straight into instructions/knowledge, like Claude's project page
+            self._open_project_dialog(project.id)
 
         self._fire(run())
+
+    def _open_project_dialog(self, project_id: str) -> None:
+        from .project_dialog import ProjectDialog
+
+        dlg = ProjectDialog(self.engine, project_id, self)
+        dlg.finished.connect(lambda _r: self._fire(self._refresh_sessions()))
+        dlg.open()  # non-modal exec keeps the qasync loop free
 
     def _rename_project(self, project_id: str) -> None:
         async def run() -> None:
@@ -334,44 +337,6 @@ class MainWindow(QMainWindow):
             if self.engine.project and self.engine.project.id == project_id:
                 # current project deleted; nothing to do, window will stay open
                 pass
-            await self._refresh_sessions()
-
-        self._fire(run())
-
-    def _prompt_folders(self, caption: str) -> list[str]:
-        """Prompt repeatedly for folders; returns the chosen set."""
-        from PySide6.QtWidgets import QFileDialog, QMessageBox
-
-        chosen: list[str] = []
-        while True:
-            start = chosen[-1] if chosen else (self._last_project() or str(Path.home()))
-            path = QFileDialog.getExistingDirectory(self, caption, start)
-            if not path:
-                break
-            if path not in chosen:
-                chosen.append(path)
-            more = QMessageBox.question(
-                self, "Add folder", "Add another folder?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if more != QMessageBox.Yes:
-                break
-        return chosen
-
-    def _add_folder_to_project(self, project_id: str) -> None:
-        folders = self._prompt_folders("Add a folder to this project")
-        if not folders:
-            return
-
-        async def run() -> None:
-            for folder in folders:
-                await self.engine.store.add_project_folder(project_id, folder)
-            await self._refresh_sessions()
-
-        self._fire(run())
-
-    def _remove_folder_from_project(self, project_id: str, path: str) -> None:
-        async def run() -> None:
-            await self.engine.store.remove_project_folder(project_id, path)
             await self._refresh_sessions()
 
         self._fire(run())
@@ -649,19 +614,26 @@ class MainWindow(QMainWindow):
         await self._refresh_cost()
 
     async def _load_older_history(self) -> None:
-        if getattr(self, "_full_history_loaded", False) or not self.current_session_id:
+        # scroll events fire in bursts — one page fetch at a time
+        if getattr(self, "_loading_older", False) \
+                or getattr(self, "_full_history_loaded", False) \
+                or not self.current_session_id:
             return
         before = self.transcript.oldest_timestamp() or getattr(self, "_loaded_before", None)
         if before is None:
             return
-        older = await self.engine.store.session_parts(
-            self.current_session_id, limit=50, before=before
-        )
-        if not older:
-            self._full_history_loaded = True
-            return
-        self.transcript.append_older(older)
-        self._loaded_before = older[0][0].created_at
+        self._loading_older = True
+        try:
+            older = await self.engine.store.session_parts(
+                self.current_session_id, limit=50, before=before
+            )
+            if not older:
+                self._full_history_loaded = True
+                return
+            self.transcript.append_older(older)
+            self._loaded_before = older[0][0].created_at
+        finally:
+            self._loading_older = False
 
     def _pick_directory(self) -> None:
         if not self.current_session_id:
@@ -862,12 +834,9 @@ class MainWindow(QMainWindow):
             sessions_by_project.setdefault(s.project_id, []).append(s)
         running = {s.id for s in sessions if self.engine.is_running(s.id)} | self._running
         agent_colors = {a.name: a.color or "#98c379" for a in self.engine.agents.agents.values()}
-        folders_by_project: dict[str, list] = {}
-        for p in projects:
-            folders_by_project[p.id] = await self.engine.store.list_project_folders(p.id)
         self.session_list.populate(
             projects, sessions_by_project, running, self.current_session_id or "",
-            agent_colors, folders_by_project)
+            agent_colors)
         if self.current_session_id:
             current = await self.engine.store.get_session(self.current_session_id)
             if current:

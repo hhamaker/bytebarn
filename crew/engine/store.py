@@ -23,6 +23,13 @@ CREATE TABLE IF NOT EXISTS project_folder (
     path TEXT NOT NULL,
     PRIMARY KEY (project_id, path)
 );
+CREATE TABLE IF NOT EXISTS project_asset (
+    project_id TEXT NOT NULL REFERENCES project(id),
+    path TEXT NOT NULL,
+    name TEXT NOT NULL,
+    added_at REAL NOT NULL,
+    PRIMARY KEY (project_id, path)
+);
 CREATE TABLE IF NOT EXISTS session (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES project(id),
@@ -80,6 +87,15 @@ class Project:
     path: str
     name: str
     last_opened_at: float
+    instructions: str = ""
+
+
+@dataclass
+class ProjectAsset:
+    project_id: str
+    path: str    # copy under <global>/assets/<project_id>/
+    name: str    # original file name
+    added_at: float
 
 
 @dataclass
@@ -147,6 +163,12 @@ class Store:
         if "permission_mode" not in cols:
             await self._db.execute(
                 "ALTER TABLE session ADD COLUMN permission_mode TEXT")
+        # migration: projects gained Claude-style custom instructions
+        cur = await self._db.execute("PRAGMA table_info(project)")
+        pcols = [r[1] for r in await cur.fetchall()]
+        if "instructions" not in pcols:
+            await self._db.execute(
+                "ALTER TABLE project ADD COLUMN instructions TEXT NOT NULL DEFAULT ''")
         await self._db.commit()
 
     async def close(self) -> None:
@@ -167,7 +189,8 @@ class Store:
         if row:
             await self.db.execute("UPDATE project SET last_opened_at=? WHERE id=?", (now, row["id"]))
             await self.db.commit()
-            return Project(row["id"], row["path"], row["name"], now)
+            return Project(row["id"], row["path"], row["name"], now,
+                           row["instructions"] if "instructions" in row.keys() else "")
         pid = _id()
         name = name or Path(path).name
         await self.db.execute(
@@ -203,6 +226,15 @@ class Store:
         await self.db.commit()
         return Project(pid, path_str, name, now)
 
+    async def get_project(self, project_id: str) -> Project | None:
+        row = await self._fetchone("SELECT * FROM project WHERE id=?", (project_id,))
+        return self._row_to_project(row) if row else None
+
+    async def set_project_instructions(self, project_id: str, text: str) -> None:
+        await self.db.execute(
+            "UPDATE project SET instructions=? WHERE id=?", (text, project_id))
+        await self.db.commit()
+
     async def rename_project(self, project_id: str, new_name: str) -> None:
         now = time.time()
         await self.db.execute(
@@ -212,8 +244,9 @@ class Store:
         await self.db.commit()
 
     async def delete_project(self, project_id: str) -> None:
-        # delete folders first (FK not enforced on this table)
+        # delete folders/assets first (FK not enforced on these tables)
         await self.db.execute("DELETE FROM project_folder WHERE project_id=?", (project_id,))
+        await self.db.execute("DELETE FROM project_asset WHERE project_id=?", (project_id,))
         # delete all sessions under the project (cascades via FK on message/todo)
         sessions = await self._fetchall("SELECT id FROM session WHERE project_id=?", (project_id,))
         for (sid,) in sessions:
@@ -240,6 +273,35 @@ class Store:
     async def remove_project_folder(self, project_id: str, path: Path | str) -> None:
         await self.db.execute(
             "DELETE FROM project_folder WHERE project_id=? AND path=?",
+            (project_id, str(path)),
+        )
+        await self.db.commit()
+
+    # -- project assets (Claude-style knowledge) ------------------------------
+
+    async def list_project_assets(self, project_id: str) -> list[ProjectAsset]:
+        rows = await self._fetchall(
+            "SELECT * FROM project_asset WHERE project_id=? ORDER BY name",
+            (project_id,),
+        )
+        return [ProjectAsset(r["project_id"], r["path"], r["name"], r["added_at"])
+                for r in rows]
+
+    async def add_project_asset(
+        self, project_id: str, path: Path | str, name: str
+    ) -> ProjectAsset:
+        now = time.time()
+        await self.db.execute(
+            "INSERT OR REPLACE INTO project_asset (project_id, path, name, added_at)"
+            " VALUES (?,?,?,?)",
+            (project_id, str(path), name, now),
+        )
+        await self.db.commit()
+        return ProjectAsset(project_id, str(path), name, now)
+
+    async def remove_project_asset(self, project_id: str, path: Path | str) -> None:
+        await self.db.execute(
+            "DELETE FROM project_asset WHERE project_id=? AND path=?",
             (project_id, str(path)),
         )
         await self.db.commit()
@@ -393,25 +455,33 @@ class Store:
         (newest → oldest).  If before is also given, only messages older
         than that timestamp are considered (used for pagination).
         """
+        # the LIMIT must count messages, not joined message×part rows, so a
+        # paged read selects the message window first and joins parts onto it
+        message_src = "message"
+        params: list = []
+        where = "m.session_id=?"
+        where_params: list = [session_id]
+        if before is not None:
+            where += " AND m.created_at < ?"
+            where_params.append(before)
+        if limit is not None:
+            message_src = (
+                "(SELECT * FROM message m WHERE " + where +
+                " ORDER BY m.created_at DESC, m.id DESC LIMIT ?)"
+            )
+            params += [*where_params, limit]
+            where = "1=1"
+            where_params = []
         q = (
             "SELECT m.id AS mid, m.session_id, m.role, m.created_at, m.model,"
             " m.provider, m.tokens_in, m.tokens_out, m.cost, m.error,"
             " p.id AS pid, p.idx, p.type AS ptype, p.json AS pjson"
-            " FROM message m LEFT JOIN part p ON p.message_id = m.id"
-            " WHERE m.session_id=?"
+            f" FROM {message_src} m LEFT JOIN part p ON p.message_id = m.id"
+            f" WHERE {where}"
         )
-        params: list = [session_id]
-        if before is not None:
-            q += " AND m.created_at < ?"
-            params.append(before)
-        q += " ORDER BY m.created_at DESC, m.id DESC, p.idx"
-        if limit is not None:
-            q += " LIMIT ?"
-            params.append(limit)
-        else:
-            # full history – restore the original chronological order
-            q = q.replace("ORDER BY m.created_at DESC", "ORDER BY m.created_at ASC")
-            q = q.replace(", m.id DESC", ", m.id ASC")
+        params += where_params
+        order = "DESC" if limit is not None else "ASC"
+        q += f" ORDER BY m.created_at {order}, m.id {order}, p.idx"
         rows = await self._fetchall(q, tuple(params))
         out: list[tuple[Message, list[Part]]] = []
         current_id = None
@@ -460,7 +530,8 @@ class Store:
     def _row_to_project(r: aiosqlite.Row | tuple) -> Project:
         if isinstance(r, tuple):
             return Project(*r)
-        return Project(r["id"], r["path"], r["name"], r["last_opened_at"])
+        return Project(r["id"], r["path"], r["name"], r["last_opened_at"],
+                       r["instructions"] if "instructions" in r.keys() else "")
 
     @staticmethod
     def _session(r: aiosqlite.Row) -> Session:

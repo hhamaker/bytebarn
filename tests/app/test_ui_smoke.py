@@ -1,5 +1,6 @@
 """Offscreen instantiation of the full window — catches wiring/regression errors."""
 
+import asyncio
 import json
 import os
 
@@ -280,6 +281,55 @@ def test_text_block_streams_plain_then_markdown(qapp):
     assert "bold" in block.text()
 
 
+def _history_page(texts, t0):
+    """Build a session_parts-shaped page: ascending timestamps, text parts."""
+    from types import SimpleNamespace
+    out = []
+    for i, txt in enumerate(texts):
+        msg = SimpleNamespace(role="user", created_at=float(t0 + i))
+        part = SimpleNamespace(id=f"part-{txt}", type="text", data={"text": txt})
+        out.append((msg, [part]))
+    return out
+
+
+def _transcript_texts(t):
+    from crew.app.transcript import TextBlock
+    out = []
+    for i in range(t._layout.count()):
+        w = t._layout.itemAt(i).widget()
+        if isinstance(w, TextBlock):
+            out.append(w._raw)
+    return out
+
+
+def test_transcript_append_older_prepends_chronologically(qapp):
+    from crew.app.transcript import Transcript
+
+    t = Transcript()
+    t.load_history(_history_page(["c", "d"], 100))
+    t.append_older(_history_page(["a", "b"], 50))
+    assert _transcript_texts(t) == ["a", "b", "c", "d"]
+    assert t.oldest_timestamp() == 50.0
+
+    # a second older page keeps stacking above
+    t.append_older(_history_page(["x", "y"], 10))
+    assert _transcript_texts(t) == ["x", "y", "a", "b", "c", "d"]
+    assert t.oldest_timestamp() == 10.0
+
+
+def test_transcript_scroll_top_without_loader_is_safe(qapp):
+    from crew.app.transcript import Transcript
+
+    t = Transcript()
+    t.load_history(_history_page(["a"], 100))
+    t._on_scroll(0)  # request_older not wired yet — must not raise
+
+    calls = []
+    t.request_older = lambda: calls.append(1)
+    t._on_scroll(0)
+    assert calls == [1]
+
+
 def _proj(pid="p1", name="Proj", path="/x"):
     from types import SimpleNamespace
     return SimpleNamespace(id=pid, name=name, path=path)
@@ -367,61 +417,35 @@ def test_session_list_hides_subagent_children(qapp):
     assert ids == {"a"}
 
 
-def test_session_list_shows_project_folders(qapp):
+def test_session_list_projects_flat_no_folders(qapp):
     from PySide6.QtCore import Qt
 
     from crew.app.session_list import SessionList
 
     sl = SessionList()
     projs = [_proj("p1", "Alpha"), _proj("p2", "Beta")]
-    # a project owns folders which render as folder nodes beneath it
-    sl.populate(projs, {"p1": [_sess("a")], "p2": []}, set(), "a",
-                None, {"p1": ["/code/foo", "/code/bar"]})
+    sl.populate(projs, {"p1": [_sess("a")], "p2": []}, set(), "a")
     proj_header = sl.tree.topLevelItem(0)
     alpha = proj_header.child(0)
     assert alpha.data(0, Qt.UserRole + 1) == "project"
-    kinds = [alpha.child(i).data(0, Qt.UserRole + 1) for i in range(alpha.childCount())]
-    assert kinds.count("folder") == 2 and "session" not in kinds
-    folder = alpha.child(0)
-    assert folder.data(0, Qt.UserRole + 2) == "p1"          # owning project
-    assert folder.data(0, Qt.UserRole) in ("/code/foo", "/code/bar")
+    assert alpha.childCount() == 0  # projects are flat rows, no folder nodes
 
 
-def test_session_list_folder_signals(qapp):
+def test_session_list_double_click_opens_project(qapp):
     from crew.app.session_list import SessionList
 
     sl = SessionList()
-    added: list = []
-    removed: list = []
-    sl.add_folder_to_project.connect(added.append)
-    sl.remove_folder_from_project.connect(lambda p, f: removed.append((p, f)))
-    sl.add_folder_to_project.emit("p1")
-    sl.remove_folder_from_project.emit("p1", "/code/foo")
-    assert added == ["p1"]
-    assert removed == [("p1", "/code/foo")]
-
-
-def test_session_list_delete_key_removes_folder(qapp, monkeypatch):
-    from PySide6.QtCore import Qt
-    from PySide6.QtGui import QKeyEvent
-
-    from crew.app.session_list import SessionList
-
-    sl = SessionList()
-    removed: list = []
-    sl.remove_folder_from_project.connect(lambda p, f: removed.append((p, f)))
+    opened: list = []
+    sl.open_project.connect(opened.append)
     sl.populate([_proj("p1", "Alpha"), _proj("p2", "Beta")],
-                {"p1": [_sess("a")], "p2": []}, set(), "a",
-                None, {"p1": ["/code/foo"]})
+                {"p1": [_sess("a")], "p2": []}, set(), "a")
     alpha = sl.tree.topLevelItem(0).child(0)
-    folder = next(alpha.child(i) for i in range(alpha.childCount())
-                  if alpha.child(i).data(0, Qt.UserRole + 1) == "folder")
-    sl.tree.setCurrentItem(folder)
-    monkeypatch.setattr(sl, "_confirm_remove_folder", lambda: True)
-
-    event = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Delete, Qt.NoModifier)
-    sl.keyPressEvent(event)
-    assert removed == [("p1", "/code/foo")]
+    sl._on_double_click(alpha)
+    assert opened == ["p1"]
+    # double-clicking a session does nothing
+    bucket = sl.tree.topLevelItem(1)
+    sl._on_double_click(bucket.child(0))
+    assert opened == ["p1"]
 
 
 def test_crew_stage_stop_signal(qapp):
@@ -447,7 +471,7 @@ def test_session_list_project_rename_delete_signals(qapp, monkeypatch):
     deleted: list = []
     sl.rename_project.connect(renamed.append)
     sl.delete_project.connect(deleted.append)
-    sl.populate([_proj("p1", "Alpha")], {"p1": []}, set(), "", None, {})
+    sl.populate([_proj("p1", "Alpha")], {"p1": []}, set(), "")
     top = sl.tree.topLevelItem(0)
     # context menu would emit; test the signals directly
     sl.rename_project.emit("p1")
@@ -625,5 +649,36 @@ async def test_last_model_persists_for_new_sessions(qapp, tmp_path, monkeypatch)
         session = await engine.store.get_session(window.current_session_id)
         assert session.model == "groq/llama-3.1-8b-instant"
         assert session.model != engine.config.model
+    finally:
+        await engine.stop()
+
+
+async def test_project_dialog_roundtrips_knowledge(qapp, tmp_path):
+    from crew.app.project_dialog import ProjectDialog
+    from crew.engine.facade import Engine
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=tmp_path / "g")
+    await engine.start()
+    try:
+        dlg = ProjectDialog(engine, engine.project.id)
+        await dlg._load_task
+        assert dlg.name_edit.text() == "proj"
+
+        dlg.instructions.setPlainText("Be terse.")
+        dlg.name_edit.setText("Renamed")
+        dlg._save()
+        await dlg._save_task
+        stored = await engine.store.get_project(engine.project.id)
+        assert stored.instructions == "Be terse."
+        assert stored.name == "Renamed"
+
+        src = tmp_path / "k.md"
+        src.write_text("knowledge")
+        await engine.add_project_asset(engine.project.id, src)
+        await dlg._reload_assets()
+        assert dlg.assets.count() == 1
+        assert "k.md" in dlg.assets.item(0).text()
     finally:
         await engine.stop()
