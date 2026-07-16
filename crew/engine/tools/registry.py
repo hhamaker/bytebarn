@@ -5,6 +5,7 @@ from .bash import BashTool
 from .edit import EditTool
 from .glob import GlobTool
 from .grep import GrepTool
+from .memory import MemoryTool
 from .question import QuestionTool
 from .read import ReadTool
 from .task import TaskTool
@@ -16,11 +17,11 @@ ALL_TOOLS: dict[str, type[Tool]] = {
     t.name: t
     for t in (
         BashTool, ReadTool, WriteTool, EditTool, GlobTool, GrepTool,
-        WebFetchTool, TodoWriteTool, QuestionTool, TaskTool,
+        WebFetchTool, TodoWriteTool, QuestionTool, TaskTool, MemoryTool,
     )
 }
 
-WRITE_TOOLS = {"bash", "edit", "write"}  # serialized execution (spec §5.3)
+WRITE_TOOLS = {"bash", "edit", "write", "memory"}  # serialized execution (spec §5.3)
 
 
 def build_tools(

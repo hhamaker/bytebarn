@@ -370,6 +370,10 @@ class Engine:
     def _assets_dir(self, project_id: str) -> Path:
         return self.global_dir / "assets" / project_id
 
+    def memory_dir(self, project_id: str) -> Path:
+        """Root of the project's persistent OKF memory bundle (okf.md)."""
+        return self.global_dir / "memory" / project_id
+
     async def add_project_asset(self, project_id: str, src: Path | str):
         """Copy a file into the project's knowledge base and register it."""
         import shutil

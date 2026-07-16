@@ -67,6 +67,7 @@ async def build_system_prompt(
     instructions: list[str],
     project_instructions: str = "",
     assets: list[Any] | None = None,
+    memory: list[tuple[str, str]] | None = None,
 ) -> str:
     git = await _git_info(cwd)
     env = (
@@ -89,7 +90,42 @@ async def build_system_prompt(
             f"{project_instructions}\n</project-instructions>")
     for asset in assets or []:
         sections.append(_asset_section(asset))
+    if memory is not None:
+        sections.append(
+            "<project-memory-guide>\n"
+            "This project has persistent memory (an OKF markdown bundle) that"
+            " survives across sessions. Its current contents follow. When you"
+            " learn something durable — a decision, an architecture fact, a"
+            " user preference, a gotcha — save it with the memory tool so"
+            " future sessions keep that context. Update stale entries instead"
+            " of duplicating them.\n</project-memory-guide>")
+        for rel, text in memory:
+            sections.append(f"<project-memory file=\"{rel}\">\n{text}\n</project-memory>")
     return "\n\n".join(s for s in sections if s)
+
+
+def load_memory(memory_dir: Path, limit: int = _ASSET_INLINE_LIMIT) -> list[tuple[str, str]]:
+    """Read a project's OKF memory bundle for prompt injection.
+
+    Returns (bundle-relative path, content) pairs — concepts first, log.md
+    last. Oversized or unreadable files are listed by name only."""
+    out: list[tuple[str, str]] = []
+    if not memory_dir.is_dir():
+        return out
+    files = sorted(p for p in memory_dir.rglob("*.md") if p.name != "log.md")
+    log = memory_dir / "log.md"
+    if log.is_file():
+        files.append(log)
+    for path in files:
+        rel = path.relative_to(memory_dir).as_posix()
+        try:
+            if path.stat().st_size <= limit:
+                out.append((rel, path.read_text().strip()))
+                continue
+        except (OSError, UnicodeDecodeError):
+            pass
+        out.append((rel, "[too large to inline — read with tools if relevant]"))
+    return out
 
 
 def _asset_section(asset: Any) -> str:
@@ -234,7 +270,8 @@ class Runner:
         proj_instructions, proj_assets = await engine.project_knowledge(session.project_id)
         system = await build_system_prompt(
             agent, cwd, engine.config.instructions,
-            project_instructions=proj_instructions, assets=proj_assets)
+            project_instructions=proj_instructions, assets=proj_assets,
+            memory=load_memory(engine.memory_dir(session.project_id)))
 
         # model fallback: after N consecutive failed turns, switch to a
         # comparable available model instead of giving up (spec-free QoL)
@@ -563,6 +600,7 @@ class Runner:
             run_subagent=run_subagent,
             on_todos=on_todos,
             abort=handle.abort,
+            memory_dir=engine.memory_dir(session.project_id),
         )
 
     # ------------------------------------------------------------------

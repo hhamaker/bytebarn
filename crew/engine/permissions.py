@@ -17,8 +17,9 @@ ALLOW = "allow"
 ASK = "ask"
 DENY = "deny"
 
-# tools that never need permission
-_ALWAYS_ALLOWED = {"read", "glob", "grep", "todowrite", "question", "task"}
+# tools that never need permission (memory writes are confined to the
+# project's memory bundle under the crew home dir)
+_ALWAYS_ALLOWED = {"read", "glob", "grep", "todowrite", "question", "task", "memory"}
 
 _DEFAULTS: dict[str, str] = {
     "bash": ASK,

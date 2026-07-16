@@ -58,7 +58,10 @@ def _prompt(name: str) -> str:
 
 
 _READONLY_TOOLS = {"read": True, "grep": True, "glob": True, "bash": True,
-                   "webfetch": True, "todowrite": True, "question": True}
+                   "webfetch": True, "todowrite": True, "question": True,
+                   # memory only writes into the project's OKF bundle, so
+                   # read-only agents can still bank what they discover
+                   "memory": True}
 
 
 def builtin_agents() -> dict[str, AgentDef]:

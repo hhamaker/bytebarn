@@ -89,7 +89,7 @@ def test_html_to_markdown():
 def test_build_tools_registry():
     tools = build_tools(None, include_task=True, subagents=[("explore", "search things")])
     names = {t.name for t in tools}
-    assert "task" in names and "bash" in names and len(names) == 10
+    assert "task" in names and "bash" in names and "memory" in names and len(names) == 11
     task = next(t for t in tools if t.name == "task")
     assert "explore: search things" in task.description()
 

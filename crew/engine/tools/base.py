@@ -45,6 +45,7 @@ class ToolContext:
     subagent_names: Callable[[], list[tuple[str, str]]] | None = None
     on_todos: Callable[[list[dict[str, str]]], Awaitable[None]] | None = None
     abort: Any = None  # asyncio.Event
+    memory_dir: Path | None = None  # project OKF memory bundle root
 
     def resolve_path(self, path: str) -> Path:
         p = Path(path).expanduser()

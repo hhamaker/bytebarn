@@ -1,0 +1,12 @@
+Save durable project knowledge to persistent memory that survives after this session ends. Memory is an OKF markdown bundle (okf.md): one concept per file with YAML frontmatter, plus an automatic log.md history.
+
+Use it whenever you learn something future sessions should know:
+- decisions and their reasoning (type: Decision)
+- architecture/codebase facts that took effort to discover (type: Architecture)
+- user preferences and conventions (type: Preference)
+- pitfalls, gotchas, workarounds (type: Gotcha)
+- external references worth keeping (type: Reference)
+
+action "save" creates or overwrites a concept file; pass the full updated body — update stale entries rather than creating near-duplicates. action "delete" removes one. "file" is a bundle-relative path like "auth-flow.md" or "decisions/database.md" (log.md and index.md are reserved). Keep concepts small and focused: one idea per file, a clear title, and a one-sentence description so future agents can scan the bundle quickly.
+
+Do NOT store secrets, credentials, or anything derivable from a quick file read.
