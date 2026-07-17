@@ -100,6 +100,7 @@ class PromptBar(QWidget):
         self.model_combo.currentTextChanged.connect(
             lambda _: self.model_changed.emit(self.current_model()))
         self.send_button = QPushButton("Send")
+        self.send_button.setObjectName("send")  # styled by the modern theme only
         self.send_button.setToolTip("Enter to send · Shift+Enter for a newline · Esc to stop")
         self.send_button.clicked.connect(self._submit_or_abort)
         self.queue_label = QLabel()

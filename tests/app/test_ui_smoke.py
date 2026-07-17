@@ -761,3 +761,70 @@ async def test_main_window_two_project_views(qapp, tmp_path):
         for t in getattr(window, "_tasks", []):
             t.cancel()
         await engine.stop()
+
+
+def test_theme_modes_and_modern_overhaul(qapp):
+    from crew.app import theme
+
+    # classic dark unchanged and still the non-modern path
+    theme.apply_theme(qapp, "dark")
+    assert theme.current_mode() == "dark" and not theme.is_modern()
+    assert "#21252b" in qapp.styleSheet()  # classic palette intact
+
+    # the overhaul: opt-in, amber accent, chunky buttons, send styling
+    theme.apply_theme(qapp, "modern")
+    assert theme.is_modern()
+    qss = qapp.styleSheet()
+    assert theme.MODERN_ACCENT in qss
+    assert "QPushButton#send" in qss
+    assert "border-radius: 8px" in qss
+
+    # switching back restores classic exactly
+    theme.apply_theme(qapp, "dark")
+    assert not theme.is_modern() and "#21252b" in qapp.styleSheet()
+
+
+def test_theme_crossfade_animates_only_in_modern(qapp):
+    from PySide6.QtWidgets import QLabel, QStackedWidget
+
+    from crew.app import theme
+
+    stack = QStackedWidget()
+    stack.addWidget(QLabel("a"))
+    stack.addWidget(QLabel("b"))
+
+    theme.apply_theme(qapp, "dark")
+    theme.crossfade(stack, 1)
+    assert stack.currentIndex() == 1
+    assert stack.currentWidget().graphicsEffect() is None  # classic: no anim
+
+    theme.apply_theme(qapp, "modern")
+    theme.crossfade(stack, 0)
+    assert stack.currentIndex() == 0
+    assert stack.currentWidget().graphicsEffect() is not None  # fading in
+
+    theme.apply_theme(qapp, "dark")
+
+
+async def test_ui_toggle_button_switches_theme(qapp, tmp_path):
+    from crew.app import theme
+    from crew.app.main_window import MainWindow
+    from crew.engine.facade import Engine
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    gdir = tmp_path / "g"
+    gdir.mkdir()
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=gdir)
+    await engine.start()
+    try:
+        window = MainWindow(engine)
+        theme.apply_theme(qapp, "dark")
+        window._toggle_ui()
+        assert theme.is_modern()
+        assert json.loads((gdir / "config.json").read_text())["theme"] == "modern"
+        window._toggle_ui()
+        assert not theme.is_modern()
+        assert json.loads((gdir / "config.json").read_text())["theme"] == "dark"
+    finally:
+        await engine.stop()

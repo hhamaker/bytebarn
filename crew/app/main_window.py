@@ -172,6 +172,11 @@ class MainWindow(QMainWindow):
         settings_button.setFlat(True)
         settings_button.setToolTip("Default models, permissions, theme")
         settings_button.clicked.connect(self._open_settings)
+        self.ui_toggle = QPushButton("✨ ui")
+        self.ui_toggle.setFlat(True)
+        self.ui_toggle.setToolTip(
+            "Switch between the classic look and the new Night Workshop UI")
+        self.ui_toggle.clicked.connect(self._toggle_ui)
         self.statusBar().addWidget(self.status_project)
         self.statusBar().addWidget(QLabel("·"))
         self.statusBar().addWidget(self.status_git)
@@ -179,6 +184,7 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(providers_button)
         self.statusBar().addPermanentWidget(agents_button)
         self.statusBar().addPermanentWidget(self.mode_combo)
+        self.statusBar().addPermanentWidget(self.ui_toggle)
         self.statusBar().addPermanentWidget(settings_button)
 
         self._build_menus()
@@ -338,12 +344,32 @@ class MainWindow(QMainWindow):
 
     def _enter_workspace(self, project_id: str) -> None:
         """Open a project's dedicated view (chats / goals / memory / agents)."""
-        self.sidebar.setCurrentIndex(1)
+        from . import theme
+
+        theme.crossfade(self.sidebar, 1)
         self._fire(self.workspace.load(project_id))
 
     def _show_all_projects(self) -> None:
-        self.sidebar.setCurrentIndex(0)
+        from . import theme
+
+        theme.crossfade(self.sidebar, 0)
         self._fire(self._refresh_sessions())
+
+    def _toggle_ui(self) -> None:
+        """One-press switch: classic look <-> the Night Workshop overhaul."""
+        from PySide6.QtWidgets import QApplication
+
+        from ..engine.config import patch_config_file
+        from . import theme
+
+        new_mode = "dark" if theme.is_modern() else "modern"
+        theme.apply_theme(QApplication.instance(), new_mode)
+        try:
+            patch_config_file(self.engine.global_dir / "config.json",
+                              {"theme": new_mode})
+            self.engine.reload_config()
+        except Exception:
+            pass
 
     def _open_project_dialog(self, project_id: str) -> None:
         from .project_dialog import ProjectDialog
