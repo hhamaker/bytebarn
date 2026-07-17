@@ -182,6 +182,11 @@ class MainWindow(QMainWindow):
         self.context_meter.setFlat(True)
         self.context_meter.setVisible(False)
         self.context_meter.clicked.connect(self._compact_clicked)
+        self.update_button = QPushButton("⬆ update available")
+        self.update_button.setFlat(True)
+        self.update_button.setVisible(False)
+        self.update_button.setStyleSheet("color:#98c379;")
+        self.update_button.clicked.connect(lambda: self._check_updates(manual=True))
         self.review_button = QPushButton("⏪ review run")
         self.review_button.setFlat(True)
         self.review_button.setVisible(False)
@@ -191,6 +196,7 @@ class MainWindow(QMainWindow):
         self.statusBar().addWidget(self.status_project)
         self.statusBar().addWidget(QLabel("·"))
         self.statusBar().addWidget(self.status_git)
+        self.statusBar().addPermanentWidget(self.update_button)
         self.statusBar().addPermanentWidget(self.context_meter)
         self.statusBar().addPermanentWidget(self.review_button)
         self.statusBar().addPermanentWidget(self.status_cost)
@@ -331,6 +337,9 @@ class MainWindow(QMainWindow):
         tools_menu.addAction(settings_action)
 
         help_menu = bar.addMenu("&Help")
+        update_action = QAction("Check for Updates…", self)
+        update_action.triggered.connect(lambda: self._check_updates(manual=True))
+        help_menu.addAction(update_action)
         shortcuts_action = QAction("Keyboard Shortcuts", self)
         shortcuts_action.triggered.connect(self._show_shortcuts)
         about_action = QAction("About Crew", self)
@@ -485,6 +494,7 @@ class MainWindow(QMainWindow):
 
     def _post_bootstrap(self) -> None:
         self._maybe_first_run()
+        self._maybe_auto_update_check()
         # first launch (or all sessions deleted): start a session right away
         # in the project root — the dir button can change it afterwards
         if not self._had_sessions and (self.engine.config.model_extra or {}).get("onboarded"):
@@ -1183,6 +1193,87 @@ class MainWindow(QMainWindow):
         from .mcp_dialog import MCPDialog
 
         MCPDialog(self.engine, self).exec()
+
+    # ------------------------------------------------------------------ updates
+
+    def _check_updates(self, manual: bool = False) -> None:
+        from .. import updater
+
+        async def run() -> None:
+            info = await updater.check_for_update()
+            self._show_update_result(info, manual)
+
+        self._fire(run())
+
+    def _maybe_auto_update_check(self) -> None:
+        """Startup check, throttled to once a day; off via updates.auto_check."""
+        import time as _time
+
+        from ..engine.config import patch_config_file
+
+        extra = self.engine.config.model_extra or {}
+        settings = extra.get("updates") or {}
+        if settings.get("auto_check") is False:
+            return
+        if _time.time() - float(settings.get("last_check") or 0) < 86_400:
+            return
+        try:
+            patch_config_file(self.engine.global_dir / "config.json",
+                              {"updates.last_check": int(_time.time())})
+        except Exception:
+            pass
+        self._check_updates(manual=False)
+
+    def _show_update_result(self, info, manual: bool) -> None:
+        from PySide6.QtWidgets import QMessageBox
+
+        from .. import updater
+
+        if not info.available:
+            self.update_button.setVisible(False)
+            if manual:
+                QMessageBox.information(
+                    self, "Check for Updates",
+                    info.message or "You're up to date.")
+            return
+
+        self.update_button.setVisible(True)
+        if not manual:
+            self._notify("Crew update available", info.message)
+            return  # unobtrusive at startup — button + notification only
+
+        if info.kind == "release":
+            from PySide6.QtCore import QUrl
+            from PySide6.QtGui import QDesktopServices
+
+            QDesktopServices.openUrl(QUrl(info.url))
+            return
+
+        commits = "\n".join(f"  • {c}" for c in info.commits[:10])
+        note = ("\n\nNote: you have local uncommitted changes; the update "
+                "only proceeds if they don't conflict." if info.dirty else "")
+        answer = QMessageBox.question(
+            self, "Update Crew",
+            f"{info.message}:\n\n{commits}{note}\n\nUpdate and restart now?",
+            QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Yes)
+        if answer != QMessageBox.Yes:
+            return
+
+        async def apply() -> None:
+            root = updater.repo_root()
+            ok, detail = await updater.apply_git_update(root)
+            if not ok:
+                QMessageBox.warning(self, "Update failed", detail)
+                return
+            confirm = QMessageBox.question(
+                self, "Update installed",
+                "Crew was updated. Restart now?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+            if confirm == QMessageBox.Yes:
+                await self.engine.stop()
+                updater.restart()
+
+        self._fire(apply())
 
     def _open_skill_editor(self) -> None:
         from .skill_editor import SkillEditor
