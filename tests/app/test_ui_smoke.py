@@ -931,3 +931,48 @@ async def test_mcp_dialog_builds(qapp, tmp_path):
         assert "no MCP servers" in dlg.tree.topLevelItem(0).text(0)
     finally:
         await engine.stop()
+
+
+async def test_mcp_dialog_add_and_remove_server(qapp, tmp_path):
+    from crew.app.mcp_dialog import MCPDialog
+    from crew.engine.facade import Engine
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    gdir = tmp_path / "g"
+    gdir.mkdir()
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=gdir)
+    await engine.start()
+    try:
+        dlg = MCPDialog(engine)
+        # curated picks + Custom in the picker
+        labels = [dlg.picker.itemText(i) for i in range(dlg.picker.count())]
+        assert "GitHub" in labels and "Google Drive" in labels and "Custom…" in labels
+
+        # GitHub selected -> a single secret token field
+        dlg.picker.setCurrentText("GitHub")
+        assert set(dlg._fields) == {"token"}
+        dlg._fields["token"].setText("ghp_test")
+        dlg._add()
+        await asyncio.sleep(0.1)  # let the reconnect task settle
+        config = json.loads((gdir / "config.json").read_text())
+        assert config["mcp"]["github"]["headers"]["Authorization"] == "Bearer ghp_test"
+
+        # custom entry -> command split into command/args
+        dlg.picker.setCurrentText("Custom…")
+        dlg._fields["name"].setText("memory")
+        dlg._fields["command"].setText("npx -y @modelcontextprotocol/server-memory")
+        dlg._add()
+        await asyncio.sleep(0.1)
+        config = json.loads((gdir / "config.json").read_text())
+        assert config["mcp"]["memory"]["command"] == "npx"
+        assert config["mcp"]["memory"]["args"][-1].endswith("server-memory")
+
+        # remove via config patch (menu path shares this code)
+        from crew.engine.config import DELETE, patch_config_file
+        patch_config_file(gdir / "config.json", {"mcp.github": DELETE})
+        config = json.loads((gdir / "config.json").read_text())
+        assert "github" not in config["mcp"]
+        await asyncio.sleep(0.3)  # drain pending reconnect tasks before stop
+    finally:
+        await engine.stop()

@@ -115,3 +115,25 @@ async def test_bad_mcp_server_fails_gracefully(tmp_path):
         assert eng.mcp.tools_for(None) == []
     finally:
         await eng.stop()
+
+
+def test_known_mcp_servers_catalog():
+    from crew.engine.mcp import KNOWN_MCP_SERVERS, config_entry
+
+    assert {"github", "google-drive", "google-maps"} <= set(KNOWN_MCP_SERVERS)
+    for spec in KNOWN_MCP_SERVERS.values():
+        assert spec.label and (spec.url or spec.command)
+
+    # bearer http server -> url + Authorization header
+    github = KNOWN_MCP_SERVERS["github"]
+    entry = config_entry(github, {"token": "ghp_abc"})
+    assert entry["url"].startswith("https://")
+    assert entry["headers"]["Authorization"] == "Bearer ghp_abc"
+    # no token -> no headers block
+    assert "headers" not in config_entry(github, {})
+
+    # stdio server -> command/args + env
+    maps = KNOWN_MCP_SERVERS["google-maps"]
+    entry = config_entry(maps, {"GOOGLE_MAPS_API_KEY": "k123"})
+    assert entry["command"] == "npx"
+    assert entry["env"] == {"GOOGLE_MAPS_API_KEY": "k123"}

@@ -34,6 +34,70 @@ _CONNECT_TIMEOUT = 15.0
 _CALL_TIMEOUT = 120.0
 
 
+@dataclass(frozen=True)
+class MCPServerSpec:
+    """A curated connection recipe for a popular MCP server (mirrors the
+    KNOWN_PROVIDERS pattern: the GUI renders these; users fill in secrets)."""
+
+    id: str
+    label: str
+    url: str = ""                 # http transport
+    command: str = ""             # stdio transport
+    args: tuple[str, ...] = ()
+    bearer: bool = False          # http: needs an Authorization: Bearer token
+    env_keys: tuple[tuple[str, str], ...] = ()  # (ENV_VAR, human label)
+    key_url: str = ""             # where humans create the credential
+    note: str = ""
+
+
+KNOWN_MCP_SERVERS: dict[str, MCPServerSpec] = {
+    spec.id: spec
+    for spec in (
+        MCPServerSpec(
+            id="github", label="GitHub",
+            url="https://api.githubcopilot.com/mcp/", bearer=True,
+            key_url="https://github.com/settings/personal-access-tokens",
+            note="GitHub's official MCP server: issues, PRs, repos, actions."
+                 " Paste a personal access token (fine-grained works).",
+        ),
+        MCPServerSpec(
+            id="google-drive", label="Google Drive",
+            command="npx", args=("-y", "@modelcontextprotocol/server-gdrive"),
+            env_keys=(("GDRIVE_CREDENTIALS_PATH", "OAuth credentials JSON path"),),
+            key_url="https://console.cloud.google.com/apis/credentials",
+            note="Search and read Google Drive files. Needs an OAuth client"
+                 " credentials JSON from Google Cloud Console (runs via npx).",
+        ),
+        MCPServerSpec(
+            id="google-maps", label="Google Maps",
+            command="npx", args=("-y", "@modelcontextprotocol/server-google-maps"),
+            env_keys=(("GOOGLE_MAPS_API_KEY", "Maps API key"),),
+            key_url="https://console.cloud.google.com/google/maps-apis/credentials",
+            note="Places, directions, and geocoding (runs via npx).",
+        ),
+    )
+}
+
+
+def config_entry(spec: MCPServerSpec, values: dict[str, str]) -> dict[str, Any]:
+    """Build the config ``mcp.<id>`` object for a curated spec.
+
+    ``values`` maps env var names (or "token" for bearer servers) to the
+    user-supplied secrets."""
+    if spec.url:
+        entry: dict[str, Any] = {"url": spec.url}
+        token = values.get("token", "").strip()
+        if spec.bearer and token:
+            entry["headers"] = {"Authorization": f"Bearer {token}"}
+        return entry
+    entry = {"command": spec.command, "args": list(spec.args)}
+    env = {var: values.get(var, "").strip()
+           for var, _ in spec.env_keys if values.get(var, "").strip()}
+    if env:
+        entry["env"] = env
+    return entry
+
+
 class _AnyParams(BaseModel):
     """MCP servers own their schemas; accept whatever the model sends."""
     model_config = ConfigDict(extra="allow")
@@ -98,7 +162,9 @@ class _Connection:
                     from mcp.client.streamable_http import streamablehttp_client
 
                     read, write, _ = await stack.enter_async_context(
-                        streamablehttp_client(self.spec["url"]))
+                        streamablehttp_client(
+                            self.spec["url"],
+                            headers=self.spec.get("headers") or None))
                 else:
                     params = StdioServerParameters(
                         command=self.spec["command"],
