@@ -83,7 +83,7 @@ class Engine:
         return self.skills.list()
 
     async def new_session(
-        self, agent: str = "build", model: str = "", directory: str = "",
+        self, agent: str = "", model: str = "", directory: str = "",
         project_id: str | None = None,
     ) -> Session:
         """Create a session (optionally rooted in its own working directory).
@@ -98,8 +98,14 @@ class Engine:
                 if (not existing.title and existing.directory == directory
                         and not await self.store.message_count(existing.id)):
                     return existing
+            # per-project defaults fill in whatever the caller didn't pin
+            project = await self.store.get_project(pid)
+            if project and not agent:
+                agent = project.default_agent
+            if project and not model:
+                model = project.default_model
             session = await self.store.create_session(
-                pid, agent=agent, model=model, directory=directory)
+                pid, agent=agent or "build", model=model, directory=directory)
         self.bus.emit(SessionUpdated(session_id=session.id))
         return session
 

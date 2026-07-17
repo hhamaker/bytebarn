@@ -74,7 +74,8 @@ class SessionList(QWidget):
     new_project = Signal()
     rename_project = Signal(str)                # project id
     delete_project = Signal(str)                # project id
-    open_project = Signal(str)                  # project id -> settings dialog
+    open_project = Signal(str)                  # project id -> workspace view
+    open_project_settings = Signal(str)         # project id -> settings dialog
     move_session_to_project = Signal(str)   # session id -> pick a project
     session_moved_to_project = Signal(str, str)  # session_id, project_id (drag)
 
@@ -288,6 +289,8 @@ class SessionList(QWidget):
         sid = self._session_id(item)
         if sid:
             self.session_selected.emit(sid)
+        elif item.data(0, _KIND_ROLE) == "project":
+            self.open_project.emit(item.data(0, _ID_ROLE))
 
     def _on_current_changed(self, current: QTreeWidgetItem, _prev=None) -> None:
         # don't switch when a multi-selection is in play (would fight the user)
@@ -326,15 +329,18 @@ class SessionList(QWidget):
             return
 
         if item.data(0, _KIND_ROLE) == "project":
+            open_ws = menu.addAction("Open project")
             new_here = menu.addAction("New session in this project")
             settings = menu.addAction("Project settings…")
             rename_proj = menu.addAction("Rename project…")
             delete_proj = menu.addAction("Delete project…")
             chosen = menu.exec(self.tree.viewport().mapToGlobal(pos))
-            if chosen is new_here:
+            if chosen is open_ws:
+                self.open_project.emit(item.data(0, _ID_ROLE))
+            elif chosen is new_here:
                 self.new_session.emit(item.data(0, _ID_ROLE))
             elif chosen is settings:
-                self.open_project.emit(item.data(0, _ID_ROLE))
+                self.open_project_settings.emit(item.data(0, _ID_ROLE))
             elif chosen is rename_proj:
                 self.rename_project.emit(item.data(0, _ID_ROLE))
             elif chosen is delete_proj and self._confirm_delete_project():

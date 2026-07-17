@@ -88,6 +88,8 @@ class Project:
     name: str
     last_opened_at: float
     instructions: str = ""
+    default_agent: str = ""
+    default_model: str = ""
 
 
 @dataclass
@@ -169,6 +171,12 @@ class Store:
         if "instructions" not in pcols:
             await self._db.execute(
                 "ALTER TABLE project ADD COLUMN instructions TEXT NOT NULL DEFAULT ''")
+        # migration: per-project agent/model defaults for new sessions
+        if "default_agent" not in pcols:
+            await self._db.execute(
+                "ALTER TABLE project ADD COLUMN default_agent TEXT NOT NULL DEFAULT ''")
+            await self._db.execute(
+                "ALTER TABLE project ADD COLUMN default_model TEXT NOT NULL DEFAULT ''")
         await self._db.commit()
 
     async def close(self) -> None:
@@ -189,8 +197,7 @@ class Store:
         if row:
             await self.db.execute("UPDATE project SET last_opened_at=? WHERE id=?", (now, row["id"]))
             await self.db.commit()
-            return Project(row["id"], row["path"], row["name"], now,
-                           row["instructions"] if "instructions" in row.keys() else "")
+            return self._row_to_project(row)
         pid = _id()
         name = name or Path(path).name
         await self.db.execute(
@@ -233,6 +240,15 @@ class Store:
     async def set_project_instructions(self, project_id: str, text: str) -> None:
         await self.db.execute(
             "UPDATE project SET instructions=? WHERE id=?", (text, project_id))
+        await self.db.commit()
+
+    async def set_project_defaults(
+        self, project_id: str, agent: str = "", model: str = ""
+    ) -> None:
+        """Default agent/model applied to new sessions in the project."""
+        await self.db.execute(
+            "UPDATE project SET default_agent=?, default_model=? WHERE id=?",
+            (agent, model, project_id))
         await self.db.commit()
 
     async def rename_project(self, project_id: str, new_name: str) -> None:
@@ -530,8 +546,12 @@ class Store:
     def _row_to_project(r: aiosqlite.Row | tuple) -> Project:
         if isinstance(r, tuple):
             return Project(*r)
+
+        def col(name: str) -> str:
+            return r[name] if name in r.keys() else ""
+
         return Project(r["id"], r["path"], r["name"], r["last_opened_at"],
-                       r["instructions"] if "instructions" in r.keys() else "")
+                       col("instructions"), col("default_agent"), col("default_model"))
 
     @staticmethod
     def _session(r: aiosqlite.Row) -> Session:

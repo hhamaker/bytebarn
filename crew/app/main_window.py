@@ -73,7 +73,19 @@ class MainWindow(QMainWindow):
         self.session_list.new_project.connect(self._create_catalog_project)
         self.session_list.rename_project.connect(self._rename_project)
         self.session_list.delete_project.connect(self._delete_project)
-        self.session_list.open_project.connect(self._open_project_dialog)
+        self.session_list.open_project.connect(self._enter_workspace)
+        self.session_list.open_project_settings.connect(self._open_project_dialog)
+
+        from .project_workspace import ProjectWorkspace
+
+        self.workspace = ProjectWorkspace(engine)
+        self.workspace.back_requested.connect(self._show_all_projects)
+        self.workspace.session_selected.connect(self._open_session)
+        self.workspace.new_chat.connect(self._prompt_new_session)
+        self.workspace.rename_session.connect(self._rename_session)
+        self.workspace.delete_session.connect(
+            lambda sid: self._fire(self._delete_session(sid)))
+        self.workspace.open_settings.connect(self._open_project_dialog)
         self.transcript = Transcript()
         self.crew_stage = CrewStage()
         self.todo_strip = TodoStrip()
@@ -114,8 +126,15 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self.todo_strip)
         right_layout.addWidget(self.prompt_bar)
 
+        # two ways of viewing projects: All projects (0) / one workspace (1)
+        from PySide6.QtWidgets import QStackedWidget
+
+        self.sidebar = QStackedWidget()
+        self.sidebar.addWidget(self.session_list)
+        self.sidebar.addWidget(self.workspace)
+
         splitter = QSplitter()
-        splitter.addWidget(self.session_list)
+        splitter.addWidget(self.sidebar)
         splitter.addWidget(right)
         splitter.setSizes([240, 960])
         splitter.setCollapsible(0, False)
@@ -227,7 +246,16 @@ class MainWindow(QMainWindow):
         projects_menu = bar.addMenu("&Projects")
         new_proj = QAction("New Project…", self)
         new_proj.triggered.connect(self._new_project)
+        all_proj = QAction("All Projects", self)
+        all_proj.setShortcut(QKeySequence("Ctrl+Shift+O"))
+        all_proj.triggered.connect(self._show_all_projects)
+        this_proj = QAction("This Project", self)
+        this_proj.triggered.connect(
+            lambda: self.engine.project and self._enter_workspace(self.engine.project.id))
         projects_menu.addAction(new_proj)
+        projects_menu.addSeparator()
+        projects_menu.addAction(all_proj)
+        projects_menu.addAction(this_proj)
 
         session_menu = bar.addMenu("&Session")
         stop_action = QAction("Stop Run", self)
@@ -303,10 +331,19 @@ class MainWindow(QMainWindow):
         async def run() -> None:
             project = await self.engine.store.add_project(f"catalog:{name}", name=name)
             await self._refresh_sessions()
-            # straight into instructions/knowledge, like Claude's project page
-            self._open_project_dialog(project.id)
+            # straight into the project's workspace, like Claude's project page
+            self._enter_workspace(project.id)
 
         self._fire(run())
+
+    def _enter_workspace(self, project_id: str) -> None:
+        """Open a project's dedicated view (chats / goals / memory / agents)."""
+        self.sidebar.setCurrentIndex(1)
+        self._fire(self.workspace.load(project_id))
+
+    def _show_all_projects(self) -> None:
+        self.sidebar.setCurrentIndex(0)
+        self._fire(self._refresh_sessions())
 
     def _open_project_dialog(self, project_id: str) -> None:
         from .project_dialog import ProjectDialog
@@ -373,6 +410,8 @@ class MainWindow(QMainWindow):
             await self._load_session(sessions[0].id)
         else:
             self._show_no_session()
+        # standard view: the working-directory project's workspace
+        self._enter_workspace(self.engine.project.id)
         await self._refresh_sessions()
         await self._refresh_git()
         self._tasks = [
@@ -838,6 +877,8 @@ class MainWindow(QMainWindow):
             projects, sessions_by_project, running, self.current_session_id or "",
             agent_colors,
             default_project_id=self.engine.project.id if self.engine.project else "")
+        if self.sidebar.currentIndex() == 1 and self.workspace.project_id:
+            await self.workspace.load(self.workspace.project_id)
         if self.current_session_id:
             current = await self.engine.store.get_session(self.current_session_id)
             if current:

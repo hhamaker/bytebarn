@@ -88,3 +88,19 @@ async def test_system_prompt_includes_project_knowledge(engine, tmp_path):
     assert "Prefer functional style." in system
     assert "remember the launch date" in system          # small text inlined
     assert 'file="big.bin"' in system and "not inlined" in system
+
+
+async def test_project_defaults_applied_to_new_sessions(engine):
+    await engine.store.set_project_defaults(
+        engine.project.id, agent="plan", model="fake/small")
+    s = await engine.new_session(directory="/tmp/a")
+    assert s.agent == "plan" and s.model == "fake/small"
+
+    # explicit choice still wins over project defaults
+    s2 = await engine.new_session(agent="build", model="fake/big", directory="/tmp/b")
+    assert s2.agent == "build" and s2.model == "fake/big"
+
+    # clearing defaults falls back to the builtin default agent
+    await engine.store.set_project_defaults(engine.project.id)
+    s3 = await engine.new_session(directory="/tmp/c")
+    assert s3.agent == "build" and s3.model == ""

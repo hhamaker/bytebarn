@@ -58,7 +58,7 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description="Crew engine CLI harness")
     parser.add_argument("prompt")
     parser.add_argument("--project", default=".")
-    parser.add_argument("--agent", default="build")
+    parser.add_argument("--agent", default="")
     parser.add_argument("--model", default="")
     args = parser.parse_args()
 

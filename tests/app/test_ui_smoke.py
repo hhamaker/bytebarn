@@ -688,3 +688,76 @@ async def test_project_dialog_roundtrips_knowledge(qapp, tmp_path):
         assert "k.md" in dlg.assets.item(0).text()
     finally:
         await engine.stop()
+
+
+async def test_project_workspace_tabs_and_data(qapp, tmp_path):
+    from crew.app.project_workspace import ProjectWorkspace
+    from crew.engine.facade import Engine
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=tmp_path / "g")
+    await engine.start()
+    try:
+        s1 = await engine.store.create_session(engine.project.id, title="chat one")
+        goal = await engine.store.create_session(
+            engine.project.id, agent="orchestrator", title="ship it")
+        from crew.engine.store import Todo
+        await engine.store.set_todos(goal.id, [Todo("a", "completed"), Todo("b", "pending")])
+        mem = engine.memory_dir(engine.project.id)
+        mem.mkdir(parents=True)
+        (mem / "fact.md").write_text("---\ntype: \"Note\"\n---\nremember me")
+        await engine.store.set_project_defaults(engine.project.id, agent="plan")
+
+        ws = ProjectWorkspace(engine)
+        await ws.load(engine.project.id)
+
+        assert [ws.tabs.tabText(i) for i in range(ws.tabs.count())] == \
+            ["Chats", "Goals", "Memory", "Agents"]
+        assert ws.chat_list.count() == 2
+        assert ws.goal_list.count() == 1
+        assert "1/2 todos done" in ws.goal_list.item(0).text()
+        assert ws.memory_files.count() == 1
+        ws.memory_files.setCurrentRow(0)
+        assert "remember me" in ws.memory_editor.toPlainText()
+        assert ws.default_agent.currentText() == "plan"
+
+        # memory edit round-trips to disk
+        ws.memory_editor.setPlainText("---\ntype: \"Note\"\n---\nupdated")
+        ws._memory_save()
+        assert "updated" in (mem / "fact.md").read_text()
+
+        picked: list[str] = []
+        ws.session_selected.connect(picked.append)
+        ws._chat_clicked(ws.chat_list.item(0))
+        assert picked and picked[0] in (s1.id, goal.id)
+    finally:
+        await engine.stop()
+
+
+async def test_main_window_two_project_views(qapp, tmp_path):
+    from crew.app.main_window import MainWindow
+    from crew.engine.facade import Engine
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    gdir = tmp_path / "g"
+    gdir.mkdir()
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=gdir)
+    await engine.start()
+    try:
+        window = MainWindow(engine)
+        await window.bootstrap()
+        # standard view: single-project workspace
+        assert window.sidebar.currentIndex() == 1
+        assert window.workspace.project_id == engine.project.id
+
+        # back -> all-projects view; opening a project returns to workspace
+        window._show_all_projects()
+        assert window.sidebar.currentIndex() == 0
+        window._enter_workspace(engine.project.id)
+        assert window.sidebar.currentIndex() == 1
+    finally:
+        for t in getattr(window, "_tasks", []):
+            t.cancel()
+        await engine.stop()
