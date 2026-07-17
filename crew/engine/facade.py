@@ -13,6 +13,7 @@ from .config import GLOBAL_DIR, Config, load_config, patch_config_file
 from .skills import SkillRegistry
 from .events import (
     EventBus,
+    GoalQueueUpdated,
     PermissionAsked,
     QuestionAsked,
     QueueUpdated,
@@ -47,6 +48,9 @@ class Engine:
         self.runner = Runner(self)
         self.session_mode = ASK_MODE
         self.project = None
+        from .checkpoints import CheckpointStore
+
+        self.checkpoints = CheckpointStore(self.global_dir / "checkpoints")
 
         self._runs: dict[str, RunHandle] = {}
         self._new_session_lock = asyncio.Lock()
@@ -202,9 +206,14 @@ class Engine:
         handle.task = asyncio.ensure_future(self.runner.run(session, handle))
 
     async def on_run_finished(self, session_id: str) -> None:
-        """Promote a queued prompt, if any."""
+        """Promote a queued prompt, if any; else advance the goal queue."""
         handle = self._runs.get(session_id)
         if not handle or not handle.queued:
+            goal = await self.store.goal_for_session(session_id)
+            if goal is not None:
+                await self.store.update_goal(goal.id, status="done")
+                self.bus.emit(GoalQueueUpdated(project_id=goal.project_id))
+                await self._advance_goal_queue(goal.project_id)
             return
         text = handle.queued.pop(0)
         self.bus.emit(QueueUpdated(session_id=session_id, depth=len(handle.queued)))
@@ -226,6 +235,46 @@ class Engine:
         # abort children too
         for child in await self.store.child_sessions(session_id):
             await self.abort(child.id)
+
+    # -- goal queue (walk-away workflows) --------------------------------------
+
+    async def queue_goal(self, prompt: str, project_id: str | None = None):
+        """Queue a goal; runs immediately if nothing is running, else waits."""
+        pid = project_id or self.project.id
+        goal = await self.store.add_goal(pid, prompt.strip())
+        self.bus.emit(GoalQueueUpdated(project_id=pid))
+        await self._advance_goal_queue(pid)
+        return goal
+
+    async def cancel_goal(self, goal_id: str) -> None:
+        await self.store.update_goal(goal_id, status="cancelled")
+        self.bus.emit(GoalQueueUpdated(project_id=self.project.id if self.project else ""))
+
+    async def _advance_goal_queue(self, project_id: str) -> None:
+        """Start the next pending goal unless one is already running."""
+        if await self.store.running_goal(project_id) is not None:
+            return
+        goal = await self.store.next_pending_goal(project_id)
+        if goal is None:
+            return
+        session = await self.new_session(project_id=project_id)
+        await self.store.update_goal(goal.id, status="running", session_id=session.id)
+        self.bus.emit(GoalQueueUpdated(project_id=project_id))
+        await self.submit_prompt(session.id, f"/goal {goal.prompt}")
+
+    # -- context window --------------------------------------------------------
+
+    async def context_usage(self, session_id: str) -> tuple[int, int]:
+        """(tokens used last turn, model context window) for the meter."""
+        from .providers.catalog import model_info
+
+        tokens, model_id = await self.store.last_usage(session_id)
+        if not model_id:
+            session = await self.store.get_session(session_id)
+            model = (session.model if session else "") or self.config.model
+            model_id = model.split("/", 1)[1] if "/" in model else model
+        info = model_info(model_id, self.providers.extra_catalog)
+        return tokens, info.context_window
 
     async def compact(self, session_id: str) -> None:
         """Summarize old history into a compaction part to free context."""

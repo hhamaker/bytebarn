@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from ..engine.events import (
     AgentRegistryChanged,
+    GoalQueueUpdated,
     PartUpdated,
     PermissionAsked,
     QuestionAsked,
@@ -177,9 +178,21 @@ class MainWindow(QMainWindow):
         self.ui_toggle.setToolTip(
             "Switch between the classic look and the new Night Workshop UI")
         self.ui_toggle.clicked.connect(self._toggle_ui)
+        self.context_meter = QPushButton("")
+        self.context_meter.setFlat(True)
+        self.context_meter.setVisible(False)
+        self.context_meter.clicked.connect(self._compact_clicked)
+        self.review_button = QPushButton("⏪ review run")
+        self.review_button.setFlat(True)
+        self.review_button.setVisible(False)
+        self.review_button.setToolTip(
+            "Review the last run's file changes — keep or revert them")
+        self.review_button.clicked.connect(self._open_run_review)
         self.statusBar().addWidget(self.status_project)
         self.statusBar().addWidget(QLabel("·"))
         self.statusBar().addWidget(self.status_git)
+        self.statusBar().addPermanentWidget(self.context_meter)
+        self.statusBar().addPermanentWidget(self.review_button)
         self.statusBar().addPermanentWidget(self.status_cost)
         self.statusBar().addPermanentWidget(providers_button)
         self.statusBar().addPermanentWidget(agents_button)
@@ -188,6 +201,18 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(settings_button)
 
         self._build_menus()
+
+        # desktop notifications for walk-away workflows (no-op headless)
+        self._tray = None
+        from PySide6.QtWidgets import QApplication, QSystemTrayIcon
+
+        if (QApplication.instance().platformName() != "offscreen"
+                and QSystemTrayIcon.isSystemTrayAvailable()):
+            from .icon import app_icon
+
+            self._tray = QSystemTrayIcon(app_icon(), self)
+            self._tray.setToolTip("Crew")
+            self._tray.show()
 
         # wiring
         self.session_list.session_selected.connect(self._open_session)
@@ -268,15 +293,18 @@ class MainWindow(QMainWindow):
         stop_action.setShortcut(QKeySequence("Ctrl+."))
         stop_action.triggered.connect(lambda: self._fire(self._abort()))
         compact_action = QAction("Compact Context", self)
-        compact_action.triggered.connect(
-            lambda: self.current_session_id
-            and self._fire(self.engine.compact(self.current_session_id)))
+        compact_action.triggered.connect(self._compact_clicked)
+        review_action = QAction("Review Last Run…", self)
+        review_action.triggered.connect(self._open_run_review)
+        session_menu_extras = [review_action]
         delete_action = QAction("Delete Session…", self)
         delete_action.triggered.connect(
             lambda: self.current_session_id
             and self._fire(self._delete_session(self.current_session_id)))
         session_menu.addAction(stop_action)
         session_menu.addAction(compact_action)
+        for extra in session_menu_extras:
+            session_menu.addAction(extra)
         session_menu.addSeparator()
         session_menu.addAction(delete_action)
 
@@ -548,6 +576,17 @@ class MainWindow(QMainWindow):
                     # git status only when the open session goes idle
                     if event.session_id == self.current_session_id and not still:
                         await self._refresh_git()
+                    if not still:
+                        session = await self.engine.store.get_session(event.session_id)
+                        if session and not session.parent_session_id:
+                            self._notify(
+                                "Run finished" if event.status == "done"
+                                else f"Run {event.status}",
+                                session.title or "untitled session")
+                elif isinstance(event, GoalQueueUpdated):
+                    if self.sidebar.currentIndex() == 1 \
+                            and self.workspace.project_id == event.project_id:
+                        await self.workspace.load(event.project_id)
                 elif isinstance(event, QueueUpdated):
                     if event.session_id == self.current_session_id:
                         self.prompt_bar.set_queue_depth(event.depth)
@@ -558,6 +597,8 @@ class MainWindow(QMainWindow):
                     else:
                         if event.session_id == self.current_session_id:
                             self._set_activity(f"waiting: {event.tool}")
+                        self._notify("Crew needs permission",
+                                     f"{event.tool}: {event.arg[:80]}")
                         dialog = PermissionDialog(event.tool, event.arg, event.input, self)
                         dialog.exec()
                         self.engine.answer_permission(event.request_id, dialog.verdict)
@@ -1047,11 +1088,56 @@ class MainWindow(QMainWindow):
 
     async def _refresh_cost(self) -> None:
         if not self.current_session_id:
+            self.context_meter.setVisible(False)
+            self.review_button.setVisible(False)
             return
         messages = await self.engine.store.list_messages(self.current_session_id)
         tokens = sum(m.tokens_in + m.tokens_out for m in messages)
         cost = sum(m.cost for m in messages)
         self.status_cost.setText(f"{tokens:,} tok · ${cost:.3f}")
+        await self._refresh_context_meter()
+        self.review_button.setVisible(
+            self.engine.checkpoints.last(self.current_session_id) is not None)
+
+    async def _refresh_context_meter(self) -> None:
+        """Context-window usage for the open session; click = compact."""
+        used, window = await self.engine.context_usage(self.current_session_id)
+        if not used or not window:
+            self.context_meter.setVisible(False)
+            return
+        pct = min(100, round(100 * used / window))
+        blocks = "▰" * max(1, pct // 20) + "▱" * (5 - max(1, pct // 20))
+        self.context_meter.setText(f"{blocks} {pct}% ctx")
+        color = "#e06c75" if pct >= 80 else ("#e5c07b" if pct >= 60 else "#8f96a3")
+        self.context_meter.setStyleSheet(f"color:{color};")
+        self.context_meter.setToolTip(
+            f"Context window: {used:,} of {window:,} tokens used last turn.\n"
+            "Click to compact — old history is summarized to free space.")
+        self.context_meter.setVisible(True)
+
+    def _compact_clicked(self) -> None:
+        if not self.current_session_id:
+            return
+        session_id = self.current_session_id
+
+        async def run() -> None:
+            await self.engine.compact(session_id)
+            await self._load_session(session_id)
+
+        self._fire(run())
+
+    def _open_run_review(self) -> None:
+        if not self.current_session_id:
+            return
+        from .run_review import RunReviewDialog
+
+        RunReviewDialog(self.engine, self.current_session_id, self).exec()
+
+    def _notify(self, title: str, body: str) -> None:
+        """Desktop notification when the user is away from the window."""
+        tray = getattr(self, "_tray", None)
+        if tray is not None and not self.isActiveWindow():
+            tray.showMessage(title, body)
 
     async def _refresh_git(self) -> None:
         proc = await asyncio.create_subprocess_shell(

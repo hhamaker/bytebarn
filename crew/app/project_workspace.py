@@ -89,10 +89,31 @@ class ProjectWorkspace(QWidget):
         return w
 
     def _goals_tab(self) -> QWidget:
+        from PySide6.QtWidgets import QLineEdit
+
         w = QWidget()
         layout = QVBoxLayout(w)
         layout.setContentsMargins(0, 4, 0, 0)
-        hint = QLabel("Goal runs (orchestrator) and their plan progress.")
+
+        layout.addWidget(QLabel("<b>Queue</b> — goals run one after another;"
+                                " walk away, get notified"))
+        row = QHBoxLayout()
+        self.goal_input = QLineEdit()
+        self.goal_input.setPlaceholderText("Describe a goal to queue…")
+        self.goal_input.returnPressed.connect(self._queue_goal)
+        queue_btn = QPushButton("+ Queue")
+        queue_btn.clicked.connect(self._queue_goal)
+        row.addWidget(self.goal_input, 1)
+        row.addWidget(queue_btn)
+        layout.addLayout(row)
+
+        self.queue_list = QListWidget()
+        self.queue_list.itemClicked.connect(self._chat_clicked)
+        self.queue_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.queue_list.customContextMenuRequested.connect(self._queue_menu)
+        layout.addWidget(self.queue_list, 1)
+
+        hint = QLabel("Past goal runs (orchestrator) and their plan progress.")
         hint.setStyleSheet("color:#8f96a3")
         hint.setWordWrap(True)
         self.goal_list = QListWidget()
@@ -100,6 +121,38 @@ class ProjectWorkspace(QWidget):
         layout.addWidget(hint)
         layout.addWidget(self.goal_list, 1)
         return w
+
+    _STATUS_ICON = {"pending": "◻", "running": "●", "done": "✓",
+                    "error": "✗", "cancelled": "–"}
+
+    def _queue_goal(self) -> None:
+        prompt = self.goal_input.text().strip()
+        if not prompt:
+            return
+        self.goal_input.clear()
+        project_id = self.project_id
+
+        async def run() -> None:
+            await self.engine.queue_goal(prompt, project_id=project_id)
+            await self.load(project_id)
+
+        asyncio.ensure_future(run())
+
+    def _queue_menu(self, pos) -> None:
+        item = self.queue_list.itemAt(pos)
+        if item is None or item.data(Qt.UserRole + 1) != "pending":
+            return
+        menu = QMenu(self)
+        cancel = menu.addAction("Cancel goal")
+        chosen = menu.exec(self.queue_list.viewport().mapToGlobal(pos))
+        if chosen is cancel:
+            goal_id = item.data(Qt.UserRole + 2)
+
+            async def run() -> None:
+                await self.engine.cancel_goal(goal_id)
+                await self.load(self.project_id)
+
+            asyncio.ensure_future(run())
 
     def _memory_tab(self) -> QWidget:
         w = QWidget()
@@ -187,6 +240,18 @@ class ProjectWorkspace(QWidget):
         sessions = [s for s in await self.engine.store.list_sessions(project_id)]
         agent_colors = {a.name: a.color or "#98c379"
                         for a in self.engine.agents.agents.values()}
+
+        self.queue_list.clear()
+        for goal in await self.engine.store.list_goals(project_id):
+            icon = self._STATUS_ICON.get(goal.status, "?")
+            item = QListWidgetItem(f"{icon} {goal.prompt[:70]}")
+            item.setData(_ID_ROLE, goal.session_id or "")
+            item.setData(Qt.UserRole + 1, goal.status)
+            item.setData(Qt.UserRole + 2, goal.id)
+            item.setToolTip(f"{goal.status} — {goal.prompt}")
+            if goal.status == "running":
+                item.setForeground(QColor(_RUNNING_COLOR))
+            self.queue_list.addItem(item)
 
         self.chat_list.clear()
         self.goal_list.clear()

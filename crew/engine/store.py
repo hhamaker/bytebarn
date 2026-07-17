@@ -62,6 +62,15 @@ CREATE TABLE IF NOT EXISTS part (
     type TEXT NOT NULL,
     json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS goal_queue (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES project(id),
+    prompt TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending','running','done','error','cancelled')),
+    session_id TEXT,
+    created_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS todo (
     session_id TEXT NOT NULL REFERENCES session(id),
     idx INTEGER NOT NULL,
@@ -142,6 +151,16 @@ class Part:
 class Todo:
     content: str
     status: str = "pending"
+
+
+@dataclass
+class GoalItem:
+    id: str
+    project_id: str
+    prompt: str
+    status: str          # pending | running | done | error | cancelled
+    session_id: str | None
+    created_at: float
 
 
 class Store:
@@ -522,6 +541,66 @@ class Store:
     ) -> list[tuple[Message, list[Part]]]:
         """Convenience wrapper: returns the most recent page_size messages."""
         return await self.session_parts(session_id, limit=page_size)
+
+    # -- goal queue (walk-away workflows) ------------------------------------
+
+    async def add_goal(self, project_id: str, prompt: str) -> GoalItem:
+        gid = _id()
+        now = time.time()
+        await self.db.execute(
+            "INSERT INTO goal_queue (id, project_id, prompt, status, session_id, created_at)"
+            " VALUES (?,?,?,?,?,?)",
+            (gid, project_id, prompt, "pending", None, now),
+        )
+        await self.db.commit()
+        return GoalItem(gid, project_id, prompt, "pending", None, now)
+
+    async def list_goals(self, project_id: str) -> list[GoalItem]:
+        rows = await self._fetchall(
+            "SELECT * FROM goal_queue WHERE project_id=? ORDER BY created_at",
+            (project_id,),
+        )
+        return [self._goal(r) for r in rows]
+
+    async def update_goal(self, goal_id: str, **fields: Any) -> None:
+        cols = ", ".join(f"{k}=?" for k in fields)
+        await self.db.execute(
+            f"UPDATE goal_queue SET {cols} WHERE id=?", (*fields.values(), goal_id))
+        await self.db.commit()
+
+    async def next_pending_goal(self, project_id: str) -> GoalItem | None:
+        row = await self._fetchone(
+            "SELECT * FROM goal_queue WHERE project_id=? AND status='pending'"
+            " ORDER BY created_at LIMIT 1", (project_id,))
+        return self._goal(row) if row else None
+
+    async def running_goal(self, project_id: str) -> GoalItem | None:
+        row = await self._fetchone(
+            "SELECT * FROM goal_queue WHERE project_id=? AND status='running'"
+            " ORDER BY created_at LIMIT 1", (project_id,))
+        return self._goal(row) if row else None
+
+    async def goal_for_session(self, session_id: str) -> GoalItem | None:
+        row = await self._fetchone(
+            "SELECT * FROM goal_queue WHERE session_id=? AND status='running'",
+            (session_id,))
+        return self._goal(row) if row else None
+
+    @staticmethod
+    def _goal(r: aiosqlite.Row) -> GoalItem:
+        return GoalItem(r["id"], r["project_id"], r["prompt"], r["status"],
+                        r["session_id"], r["created_at"])
+
+    # -- usage ---------------------------------------------------------------
+
+    async def last_usage(self, session_id: str) -> tuple[int, str]:
+        """(tokens_in, model_id) of the session's most recent metered turn."""
+        row = await self._fetchone(
+            "SELECT tokens_in, model FROM message WHERE session_id=? AND role='assistant'"
+            " AND tokens_in > 0 ORDER BY created_at DESC, id DESC LIMIT 1",
+            (session_id,),
+        )
+        return (int(row["tokens_in"]), row["model"] or "") if row else (0, "")
 
     # -- todo ---------------------------------------------------------------
 

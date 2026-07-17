@@ -234,6 +234,7 @@ class Runner:
         engine = self.engine
         store: Store = engine.store
         status = "done"
+        engine.checkpoints.begin(session.id)
         try:
             await self._loop(session, handle)
         except asyncio.CancelledError:
@@ -243,6 +244,7 @@ class Runner:
             status = "error"
             await self._append_error(session.id, str(exc))
         finally:
+            engine.checkpoints.finish(session.id)
             # Promote any queued prompt first so RunFinished observers see an
             # already-running next turn (header / thinking indicator stay live).
             await engine.on_run_finished(session.id)
@@ -539,6 +541,10 @@ class Runner:
         if verdict == "deny":
             await self._set_call(session, call, "error", "permission denied by user/policy")
             return
+
+        # snapshot the pre-write state so the run can be reviewed/reverted
+        if name in ("write", "edit") and getattr(params, "path", ""):
+            engine.checkpoints.snapshot(session.id, ctx.resolve_path(params.path))
 
         await self._set_call(session, call, "running", "")
         detail = f"{name} {arg or data.get('input', {}).get('pattern', '')}".strip()

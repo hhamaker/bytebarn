@@ -104,6 +104,13 @@ class QueueUpdated(EngineEvent):
 
 
 @dataclass
+class GoalQueueUpdated(EngineEvent):
+    """The project's queued-goal list changed (added/started/finished)."""
+    project_id: str = ""
+    name: str = "goalqueue.updated"
+
+
+@dataclass
 class SessionActivity(EngineEvent):
     """Live status for the open session (header / thinking feedback)."""
     session_id: str = ""

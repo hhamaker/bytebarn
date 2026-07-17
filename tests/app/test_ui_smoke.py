@@ -828,3 +828,89 @@ async def test_ui_toggle_button_switches_theme(qapp, tmp_path):
         assert json.loads((gdir / "config.json").read_text())["theme"] == "dark"
     finally:
         await engine.stop()
+
+
+async def test_run_review_dialog_diff_and_revert(qapp, tmp_path):
+    from crew.app.run_review import RunReviewDialog
+    from crew.engine.facade import Engine
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=tmp_path / "g")
+    await engine.start()
+    try:
+        target = proj / "main.py"
+        target.write_text("before\n")
+        engine.checkpoints.begin("s1")
+        engine.checkpoints.snapshot("s1", target)
+        target.write_text("after\n")
+        engine.checkpoints.finish("s1")
+
+        dlg = RunReviewDialog(engine, "s1")
+        assert dlg.files.count() == 1
+        assert "-before" in dlg.diff.toPlainText()
+        assert "+after" in dlg.diff.toPlainText()
+
+        dlg._revert_file()
+        assert target.read_text() == "before\n"
+
+        # session with no checkpoint -> empty-state message, no crash
+        empty = RunReviewDialog(engine, "nope")
+        assert "no reviewable" in empty.diff.toPlainText()
+    finally:
+        await engine.stop()
+
+
+async def test_workspace_goal_queue_ui(qapp, tmp_path):
+    from crew.app.project_workspace import ProjectWorkspace
+    from crew.engine.facade import Engine
+    from crew.engine.providers.fake import FakeProvider, text_turn
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    gdir = tmp_path / "g"
+    gdir.mkdir()
+    (gdir / "config.json").write_text(json.dumps(
+        {"model": "fake/m", "small_model": "fake/m"}))
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=gdir)
+    engine.providers.register("fake", FakeProvider([text_turn("ok")]))
+    await engine.start()
+    try:
+        goal = await engine.queue_goal("ship the feature")
+        ws = ProjectWorkspace(engine)
+        await ws.load(engine.project.id)
+        assert ws.queue_list.count() == 1
+        assert "ship the feature" in ws.queue_list.item(0).text()
+        assert ws.queue_list.item(0).data(0x0101) == "running"  # UserRole + 1
+        run = await engine.store.list_goals(engine.project.id)
+        await engine._runs[run[0].session_id].task
+    finally:
+        await engine.stop()
+
+
+async def test_context_meter_updates(qapp, tmp_path):
+    from crew.app.main_window import MainWindow
+    from crew.engine.facade import Engine
+    from crew.engine.providers.fake import FakeProvider, text_turn
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    gdir = tmp_path / "g"
+    gdir.mkdir()
+    (gdir / "config.json").write_text(json.dumps(
+        {"model": "fake/m", "small_model": "fake/m"}))
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=gdir)
+    engine.providers.register("fake", FakeProvider([text_turn("hello"), text_turn("t")]))
+    await engine.start()
+    try:
+        window = MainWindow(engine)
+        session = await engine.new_session(directory=str(proj))
+        await window._load_session(session.id)
+        assert not window.context_meter.isVisible()  # no metered turn yet
+
+        await engine.submit_prompt(session.id, "hi")
+        await engine._runs[session.id].task
+        await window._refresh_cost()
+        assert "% ctx" in window.context_meter.text()
+    finally:
+        await engine.stop()
