@@ -49,8 +49,10 @@ class Engine:
         self.session_mode = ASK_MODE
         self.project = None
         from .checkpoints import CheckpointStore
+        from .mcp import MCPManager
 
         self.checkpoints = CheckpointStore(self.global_dir / "checkpoints")
+        self.mcp = MCPManager()
 
         self._runs: dict[str, RunHandle] = {}
         self._new_session_lock = asyncio.Lock()
@@ -64,12 +66,14 @@ class Engine:
         """Open the store and register the project (call once before use)."""
         await self.store.open()
         self.project = await self.store.open_project(str(self.project_dir))
+        await self.mcp.start(self.config)
 
     async def stop(self) -> None:
         """Cancel all running sessions and close the store."""
         for handle in self._runs.values():
             if handle.task and not handle.task.done():
                 handle.task.cancel()
+        await self.mcp.stop()
         await self.store.close()
 
     def reload_config(self) -> None:
@@ -79,6 +83,11 @@ class Engine:
         self.agents = AgentRegistry(self.config, self.project_dir, self.global_dir)
         self.commands.reload()
         self.skills.reload()
+        try:  # reconnect MCP servers with the fresh config
+            asyncio.get_running_loop()
+            asyncio.ensure_future(self.mcp.restart(self.config))
+        except RuntimeError:
+            pass  # no loop (sync test contexts): connect on next start()
 
     # -- sessions ------------------------------------------------------------
 

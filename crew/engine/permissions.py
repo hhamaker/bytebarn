@@ -62,11 +62,13 @@ class PermissionPolicy:
             return ALLOW
         if tool in _ALWAYS_ALLOWED and tool not in self.rules:
             return ALLOW
-        if self.session_mode == SAFE and tool in _DEFAULTS:
+        # external MCP tools can have arbitrary side effects: ask by default
+        is_mcp = tool.startswith("mcp__")
+        if self.session_mode == SAFE and (tool in _DEFAULTS or is_mcp):
             return DENY
         rule = self.rules.get(tool)
         if rule is None:
-            return _DEFAULTS.get(tool, ALLOW)
+            return ASK if is_mcp else _DEFAULTS.get(tool, ALLOW)
         for pattern in rule.deny:
             if fnmatch(arg, pattern):
                 return DENY

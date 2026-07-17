@@ -265,6 +265,7 @@ class Runner:
             include_task=not is_subagent,
             subagents=engine.agents.subagent_descriptions(),
         )
+        tools += engine.mcp.tools_for(agent.tools)
         tool_map = {t.name: t for t in tools}
         ctx = self._make_context(session, agent, handle)
 

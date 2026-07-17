@@ -914,3 +914,20 @@ async def test_context_meter_updates(qapp, tmp_path):
         assert "% ctx" in window.context_meter.text()
     finally:
         await engine.stop()
+
+
+async def test_mcp_dialog_builds(qapp, tmp_path):
+    from crew.app.mcp_dialog import MCPDialog
+    from crew.engine.facade import Engine
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=tmp_path / "g")
+    await engine.start()
+    try:
+        dlg = MCPDialog(engine)
+        # no servers configured -> friendly empty state
+        assert dlg.tree.topLevelItemCount() == 1
+        assert "no MCP servers" in dlg.tree.topLevelItem(0).text(0)
+    finally:
+        await engine.stop()

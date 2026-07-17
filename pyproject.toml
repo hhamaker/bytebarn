@@ -15,6 +15,7 @@ dependencies = [
     "pygments>=2.18",
     "watchfiles>=0.22",
     "PyYAML>=6.0",
+    "mcp>=1.0",
 ]
 
 [project.optional-dependencies]

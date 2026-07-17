@@ -61,6 +61,16 @@ config files). OAuth records route specially: `xai` → loopback flow
 `catalog.py` holds per-model cost/limits — add entries when adding models so
 cost tracking works.
 
+### MCP
+
+`engine/mcp.py` connects Model Context Protocol servers declared under the
+`mcp` config key (`command`+`args` = stdio, `url` = streamable HTTP). Each
+server tool is exposed to agents as `mcp__<server>__<tool>`, appended to
+`build_tools` output in the runner; permission default is ask (denied in
+Safe mode). Each connection lives in its own task — anyio cancel scopes
+must enter/exit in the same task. Tests spawn a real FastMCP stdio server
+(`tests/engine/test_mcp.py`).
+
 ### Config
 
 Two JSON-with-comments layers, project wins per key: `~/.crew/config.json`
