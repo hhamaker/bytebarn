@@ -41,26 +41,27 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
             id="anthropic", label="Anthropic (Claude)", api="anthropic",
             key_env="ANTHROPIC_API_KEY", key_url="https://console.anthropic.com/settings/keys",
             oauth=True, oauth_kind="paste",
-            models=("claude-sonnet-4-5", "claude-haiku-4-5", "claude-opus-4-1"),
+            models=("claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5",
+                    "claude-fable-5"),
             note="Log in with a Claude Pro/Max account, or paste an API key.",
         ),
         ProviderSpec(
             id="openai", label="OpenAI",
             key_env="OPENAI_API_KEY", key_url="https://platform.openai.com/api-keys",
-            models=("gpt-4o", "gpt-4o-mini", "gpt-4.1", "o3"),
+            models=("gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-4.1"),
         ),
         ProviderSpec(
             id="xai", label="xAI (Grok)", base_url="https://api.x.ai/v1",
             key_env="XAI_API_KEY", key_url="https://console.x.ai",
             oauth=True, oauth_kind="device",
-            models=("grok-4", "grok-4-fast", "grok-code-fast-1", "grok-3", "grok-3-mini"),
+            models=("grok-4.5", "grok-4.3", "grok-4.1-fast", "grok-build-0.1"),
         ),
         ProviderSpec(
             id="groq", label="Groq", base_url="https://api.groq.com/openai/v1",
             key_env="GROQ_API_KEY", key_url="https://console.groq.com/keys",
             models=(
                 "llama-3.3-70b-versatile", "llama-3.1-8b-instant",
-                "moonshotai/kimi-k2-instruct", "qwen/qwen3-32b",
+                "openai/gpt-oss-120b", "openai/gpt-oss-20b",
             ),
         ),
         ProviderSpec(
@@ -76,7 +77,8 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
             id="google", label="Google (Gemini)",
             base_url="https://generativelanguage.googleapis.com/v1beta/openai",
             key_env="GEMINI_API_KEY", key_url="https://aistudio.google.com/apikey",
-            models=("gemini-2.5-pro", "gemini-2.5-flash"),
+            models=("gemini-3.5-flash", "gemini-3.1-pro-preview",
+                    "gemini-2.5-pro", "gemini-2.5-flash"),
         ),
         ProviderSpec(
             id="mistral", label="Mistral", base_url="https://api.mistral.ai/v1",
@@ -86,7 +88,8 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
         ProviderSpec(
             id="deepseek", label="DeepSeek", base_url="https://api.deepseek.com/v1",
             key_env="DEEPSEEK_API_KEY", key_url="https://platform.deepseek.com/api_keys",
-            models=("deepseek-chat", "deepseek-reasoner"),
+            models=("deepseek-v4-flash", "deepseek-v4-pro"),
+            note="deepseek-chat/deepseek-reasoner aliases retire 2026-07-24.",
         ),
         ProviderSpec(
             id="together", label="Together AI", base_url="https://api.together.xyz/v1",

@@ -377,12 +377,12 @@ def test_comparable_model_fallback(tmp_path, monkeypatch):
 
     auth.set("groq", {"type": "api", "key": "g"})
     auth.set("xai", {"type": "api", "key": "x"})
-    # sonnet (cost_out 15) -> closest by cost is grok-4 (15), different provider
+    # sonnet (cost_out 15) -> closest by cost among curated xai/groq models
     pick = comparable_model("anthropic/claude-sonnet-4-5", cfg, auth)
-    assert pick == "xai/grok-4"
+    assert pick == "xai/grok-4.5"
     # excluding it falls through to the next candidate
-    pick2 = comparable_model("anthropic/claude-sonnet-4-5", cfg, auth, exclude=["xai/grok-4"])
-    assert pick2 is not None and pick2 != "xai/grok-4"
+    pick2 = comparable_model("anthropic/claude-sonnet-4-5", cfg, auth, exclude=["xai/grok-4.5"])
+    assert pick2 is not None and pick2 != "xai/grok-4.5"
     # same-provider models are penalized: failing grok-4 should not pick another xai model
     pick3 = comparable_model("xai/grok-4", cfg, auth)
     assert pick3 is not None and not pick3.startswith("xai/")
