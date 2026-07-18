@@ -16,14 +16,58 @@ from .app.theme import apply_theme
 from .engine.facade import Engine
 
 
-def main() -> None:
-    # On macOS, a frozen /Applications/Crew.app bundle can inject its own Qt
-    # frameworks, colliding with the venv's PySide6 and causing force-quit.
-    # Ensure the running interpreter's Qt is first in the dynamic linker path.
-    import os
-    from pathlib import Path as _P
+def scrub_qt_env(environ: dict, pyside_dir: str) -> list[str]:
+    """Drop Qt environment leaked from another Qt install (e.g. a frozen
+    /Applications/Crew.app bundle whose launcher spawned us, or whose env
+    survived an updater restart).
 
-    venv_qt = _P(sys.prefix) / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages" / "PySide6" / "Qt" / "lib"
+    Loading a platform plugin or framework from a *different* Qt copy makes
+    QGuiApplication::createPlatformIntegration() qFatal/abort — the classic
+    two-Qt crash. Rules:
+
+    - plugin-path vars that don't point into our own PySide6 are removed
+    - DYLD path entries mentioning a foreign Qt are filtered out
+    - a headless QT_QPA_PLATFORM (offscreen/minimal) is removed — the GUI
+      entry point never wants an invisible window; tests set it themselves
+      and never come through main()
+
+    Returns the names of the variables that were changed."""
+    removed: list[str] = []
+    for key in ("QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH"):
+        value = environ.get(key)
+        if value and pyside_dir not in value:
+            environ.pop(key, None)
+            removed.append(key)
+    for key in ("DYLD_FRAMEWORK_PATH", "DYLD_LIBRARY_PATH"):
+        value = environ.get(key)
+        if not value:
+            continue
+        parts = [p for p in value.split(":") if p]
+        kept = [p for p in parts if "Qt" not in p or pyside_dir in p]
+        if kept != parts:
+            removed.append(key)
+            if kept:
+                environ[key] = ":".join(kept)
+            else:
+                environ.pop(key, None)
+    if environ.get("QT_QPA_PLATFORM") in ("offscreen", "minimal"):
+        environ.pop("QT_QPA_PLATFORM", None)
+        removed.append("QT_QPA_PLATFORM")
+    return removed
+
+
+def main() -> None:
+    import os
+
+    import PySide6
+
+    scrubbed = scrub_qt_env(os.environ, str(Path(PySide6.__file__).parent))
+    if scrubbed:
+        print(f"[crew] ignored foreign Qt environment: {', '.join(scrubbed)}",
+              file=sys.stderr)
+
+    # and make sure our own Qt is first for the dynamic linker
+    venv_qt = Path(PySide6.__file__).parent / "Qt" / "lib"
     if venv_qt.exists():
         cur = os.environ.get("DYLD_FRAMEWORK_PATH", "")
         os.environ["DYLD_FRAMEWORK_PATH"] = str(venv_qt) + (":" + cur if cur else "")
