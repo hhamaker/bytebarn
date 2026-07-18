@@ -78,9 +78,13 @@ class ProjectWorkspace(QWidget):
         w = QWidget()
         layout = QVBoxLayout(w)
         layout.setContentsMargins(0, 4, 0, 0)
+        from .delegates import SessionRowDelegate
+
         new_btn = QPushButton("+ New chat")
         new_btn.clicked.connect(lambda: self.new_chat.emit(self.project_id))
         self.chat_list = QListWidget()
+        self.chat_list.setMouseTracking(True)
+        self.chat_list.setItemDelegate(SessionRowDelegate(self.chat_list))
         self.chat_list.itemClicked.connect(self._chat_clicked)
         self.chat_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.chat_list.customContextMenuRequested.connect(self._chat_menu)
@@ -272,20 +276,23 @@ class ProjectWorkspace(QWidget):
         self.default_model.set_model(project.default_model)
 
     def _session_item(self, session: Any, agent_colors: dict) -> QListWidgetItem:
+        from .delegates import KIND_ROLE, META_ROLE, RUNNING_ROLE, TITLE_ROLE
+
         running = self.engine.is_running(session.id)
-        label = f"{'● ' if running else ''}{session.title or '(untitled)'}" \
+        title = session.title or "(untitled)"
+        label = f"{'● ' if running else ''}{title}" \
                 f" · {relative_time(session.updated_at)}"
         item = QListWidgetItem(label)
         item.setData(_ID_ROLE, session.id)
+        item.setData(KIND_ROLE, "session")
+        item.setData(TITLE_ROLE, title)
+        item.setData(META_ROLE,
+                     f"{session.agent} · {relative_time(session.updated_at)}")
+        item.setData(RUNNING_ROLE, running)
         from .sprites import critter_pixmap
 
         color = agent_colors.get(session.agent, "#98c379")
         item.setIcon(QIcon(critter_pixmap(session.agent, color, scale=2)))
-        if running:
-            item.setForeground(QColor(_RUNNING_COLOR))
-            font = QFont()
-            font.setBold(True)
-            item.setFont(font)
         return item
 
     # -- chats ---------------------------------------------------------------

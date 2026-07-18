@@ -196,34 +196,149 @@ class TextBlock(QLabel):
 
 
 class _Welcome(QWidget):
-    """Empty-session greeting: a little crew waiting for work."""
+    """Empty-session greeting: the workshop at night.
+
+    A painted scene — gradient night sky, softly twinkling pixel stars, a
+    warm lantern glow pooling behind the crew — with the shortcuts drawn as
+    keycaps. Colors follow the active theme; light mode gets a daylight
+    room without stars."""
+
+    _KEYS = (("/", "commands"), ("@", "files"),
+             ("⇧⏎", "newline"), ("esc", "stop"))
 
     def __init__(self):
         super().__init__()
+        import random
+
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMinimumHeight(380)
+        rng = random.Random(7)  # deterministic sky
+        self._stars = [(rng.random(), rng.random() * 0.62, rng.choice((1, 1, 2)),
+                        rng.random() * 6.28) for _ in range(70)]
+        self._phase = 0.0
+        self._timer = QTimer(self)
+        self._timer.setInterval(120)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start()
+
+    def _tick(self) -> None:
+        self._phase += 0.09
+        self.update()
+
+    def hideEvent(self, event) -> None:
+        self._timer.stop()
+        super().hideEvent(event)
+
+    def showEvent(self, event) -> None:
+        self._timer.start()
+        super().showEvent(event)
+
+    def sizeHint(self):
+        from PySide6.QtCore import QSize
+
+        return QSize(640, 460)
+
+    def paintEvent(self, event) -> None:
+        import math
+
+        from PySide6.QtGui import QColor, QFont, QFontMetrics, QLinearGradient, QPainter, QRadialGradient
+        from PySide6.QtCore import QPointF, QRectF
+
+        from . import theme
         from .sprites import crew_banner
 
-        layout = QVBoxLayout(self)
-        layout.setAlignment(Qt.AlignCenter)
-        layout.setSpacing(10)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        light = theme.current_mode() == "light"
+        modern = theme.is_modern()
+        accent = QColor(theme.MODERN_ACCENT if modern else theme.ACCENT)
 
-        sprites = QLabel()
-        sprites.setPixmap(crew_banner())
-        sprites.setAlignment(Qt.AlignCenter)
+        # sky
+        sky = QLinearGradient(0, 0, 0, h)
+        if light:
+            sky.setColorAt(0, QColor("#f3f4f7"))
+            sky.setColorAt(1, QColor("#e9ebef"))
+        else:
+            sky.setColorAt(0.0, QColor("#101318"))
+            sky.setColorAt(0.62, QColor("#161a22"))
+            sky.setColorAt(1.0, QColor("#1c1a1f") if modern else QColor("#191d26"))
+        painter.fillRect(self.rect(), sky)
 
-        text = QLabel(
-            "<div style='text-align:center; color:#8f96a3'>"
-            "<h3 style='color:#c8ccd4'>The crew is ready.</h3>"
-            "<p>Type a prompt below — or try <b>/goal …</b> to put the whole crew on it.</p>"
-            "<p><b>/</b> commands · <b>@</b> attach files · <b>Shift+Enter</b> newline · "
-            "<b>Esc</b> stop</p>"
-            "<p>Connect models via <b>⚡ providers</b>, tune your crew via <b>🐾 agents</b> "
-            "(status bar).</p></div>"
-        )
-        text.setAlignment(Qt.AlignCenter)
-        layout.addStretch(1)
-        layout.addWidget(sprites)
-        layout.addWidget(text)
-        layout.addStretch(2)
+        # stars (night only) — slow asynchronous twinkle
+        if not light:
+            for fx, fy, size, offset in self._stars:
+                alpha = 36 + int(52 * (0.5 + 0.5 * math.sin(self._phase + offset)))
+                painter.fillRect(int(fx * w), int(fy * h), size, size,
+                                 QColor(174, 184, 204, alpha))
+
+        # lantern glow pooling behind the crew
+        banner = crew_banner()
+        cx, cy = w / 2, h * 0.42
+        glow = QRadialGradient(QPointF(cx, cy), max(w, h) * 0.40)
+        g = QColor(accent)
+        g.setAlpha(26 if light else 46)
+        glow.setColorAt(0.0, g)
+        mid = QColor(accent)
+        mid.setAlpha(10 if light else 18)
+        glow.setColorAt(0.55, mid)
+        edge = QColor(accent)
+        edge.setAlpha(0)
+        glow.setColorAt(1.0, edge)
+        painter.fillRect(self.rect(), glow)  # falls off to transparent — no seam
+
+        painter.drawPixmap(int(cx - banner.width() / 2),
+                           int(cy - banner.height() / 2), banner)
+
+        # title + invitation
+        text_color = QColor("#3a3f4a") if light else QColor("#d6dae2")
+        muted = QColor("#7c828e") if light else QColor("#7d8590")
+        title_font = QFont()
+        title_font.setPointSizeF(16)
+        title_font.setWeight(QFont.DemiBold)
+        painter.setFont(title_font)
+        painter.setPen(text_color)
+        painter.drawText(QRectF(0, cy + banner.height() / 2 + 14, w, 30),
+                         Qt.AlignHCenter, "The crew is ready.")
+        sub_font = QFont()
+        sub_font.setPointSizeF(11.5)
+        painter.setFont(sub_font)
+        painter.setPen(muted)
+        painter.drawText(
+            QRectF(0, cy + banner.height() / 2 + 46, w, 24), Qt.AlignHCenter,
+            "Type a prompt below — or set a goal and let them work.")
+
+        # shortcuts as keycaps
+        cap_font = QFont("Menlo")
+        cap_font.setStyleHint(QFont.Monospace)
+        cap_font.setPointSizeF(9.5)
+        label_font = QFont()
+        label_font.setPointSizeF(10)
+        cm, lm = QFontMetrics(cap_font), QFontMetrics(label_font)
+        gap, pad = 22, 8
+        widths = []
+        for key, label in self._KEYS:
+            widths.append(cm.horizontalAdvance(key) + pad * 2 + 6
+                          + lm.horizontalAdvance(label))
+        x = (w - (sum(widths) + gap * (len(widths) - 1))) / 2
+        y = cy + banner.height() / 2 + 92
+        cap_bg = QColor("#ffffff") if light else QColor("#252b36")
+        cap_border = QColor("#c9cdd6") if light else QColor("#333a47")
+        for (key, label), width in zip(self._KEYS, widths):
+            cap_w = cm.horizontalAdvance(key) + pad * 2
+            cap = QRectF(x, y, cap_w, 22)
+            painter.setPen(cap_border)
+            painter.setBrush(cap_bg)
+            painter.drawRoundedRect(cap, 5, 5)
+            painter.setFont(cap_font)
+            painter.setPen(text_color)
+            painter.drawText(cap, Qt.AlignCenter, key)
+            painter.setFont(label_font)
+            painter.setPen(muted)
+            painter.drawText(QRectF(cap.right() + 6, y, width - cap_w, 22),
+                             Qt.AlignVCenter | Qt.AlignLeft, label)
+            x += width + gap
+        painter.end()
 
 
 class _Thinking(QWidget):

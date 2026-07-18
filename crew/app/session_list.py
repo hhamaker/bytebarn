@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QPoint, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QIcon
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -26,8 +26,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-_RUNNING_COLOR = "#98c379"
-_MUTED_COLOR = "#8f96a3"
 _ID_ROLE = Qt.UserRole          # session id or project id
 _KIND_ROLE = Qt.UserRole + 1    # "session" | "project" | "header"
 
@@ -112,6 +110,10 @@ class SessionList(QWidget):
         self.tree.setDragDropMode(QTreeWidget.InternalMove)
         self.tree.setRootIsDecorated(False)
         self.tree.setIndentation(12)
+        self.tree.setMouseTracking(True)  # hover states for the painted rows
+        from .delegates import SessionRowDelegate
+
+        self.tree.setItemDelegate(SessionRowDelegate(self.tree))
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -214,28 +216,27 @@ class SessionList(QWidget):
 
     @staticmethod
     def _header_item(label: str) -> QTreeWidgetItem:
+        from .delegates import TITLE_ROLE
+
         item = QTreeWidgetItem([label])
         item.setData(0, _KIND_ROLE, "header")
         item.setData(0, _ID_ROLE, label)
+        item.setData(0, TITLE_ROLE, label.split("  (")[0])
         item.setFlags(Qt.ItemIsEnabled)  # no select, no drag
-        item.setForeground(0, QColor(_MUTED_COLOR))
-        font = QFont()
-        font.setBold(True)
-        font.setPointSizeF(font.pointSizeF() * 0.85)
-        item.setFont(0, font)
         return item
 
     @staticmethod
     def _project_item(project: Any, count: int) -> QTreeWidgetItem:
+        from .delegates import COUNT_ROLE, TITLE_ROLE
+
         name = project.name or "(project)"
         item = QTreeWidgetItem([f"📁 {name}  ({count})"])
         item.setData(0, _ID_ROLE, project.id)
         item.setData(0, _KIND_ROLE, "project")
+        item.setData(0, TITLE_ROLE, name)
+        item.setData(0, COUNT_ROLE, count)
         item.setToolTip(0, project.path)
         item.setFlags(item.flags() & ~Qt.ItemIsDragEnabled)  # projects don't drag
-        font = QFont()
-        font.setBold(True)
-        item.setFont(0, font)
         return item
 
     @staticmethod
@@ -245,6 +246,8 @@ class SessionList(QWidget):
         agent_colors: dict[str, str] | None,
         project_name: str = "",
     ) -> QTreeWidgetItem:
+        from .delegates import META_ROLE, RUNNING_ROLE, TITLE_ROLE
+
         title = session.title or "(untitled)"
         is_running = session.id in running
         directory = getattr(session, "directory", "") or ""
@@ -257,6 +260,10 @@ class SessionList(QWidget):
         item = QTreeWidgetItem([label])
         item.setData(0, _ID_ROLE, session.id)
         item.setData(0, _KIND_ROLE, "session")
+        item.setData(0, TITLE_ROLE, title)
+        meta_bits = [b for b in (dir_name, relative_time(session.updated_at)) if b]
+        item.setData(0, META_ROLE, " · ".join(meta_bits))
+        item.setData(0, RUNNING_ROLE, is_running)
         tooltip = f"{session.agent} · {session.model or 'default model'}"
         if project_name:
             tooltip += f"\n{project_name}"
@@ -267,11 +274,6 @@ class SessionList(QWidget):
         from .sprites import critter_pixmap
 
         item.setIcon(0, QIcon(critter_pixmap(session.agent, color, scale=2)))
-        if is_running:
-            item.setForeground(0, QColor(_RUNNING_COLOR))
-            font = QFont()
-            font.setBold(True)
-            item.setFont(0, font)
         return item
 
     # -- selection ----------------------------------------------------------

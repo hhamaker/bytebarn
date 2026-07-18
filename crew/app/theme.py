@@ -165,6 +165,12 @@ QGroupBox::title {{ subcontrol-origin: margin; left: 8px; color: {_M_MUTED};
 QMenu {{ background: {_M_RAISED}; border: 2px solid {_M_BORDER}; border-radius: 8px; padding: 4px; }}
 QMenu::item {{ padding: 5px 18px; border-radius: 6px; }}
 QMenu::item:selected {{ background: #3a3325; color: {MODERN_ACCENT}; }}
+QPushButton#pill {{
+    background: #1f242d; border: 1px solid {_M_BORDER}; border-radius: 10px;
+    padding: 2px 10px; font-family: ui-monospace, Menlo, monospace;
+    font-size: 11px; font-weight: 500;
+}}
+QPushButton#pill:hover {{ border-color: {MODERN_ACCENT}; }}
 """
 
 
