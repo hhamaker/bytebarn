@@ -1112,8 +1112,17 @@ class MainWindow(QMainWindow):
         # live catalog is authoritative — drop stale curated ids
         merged = list(dict.fromkeys(
             ([keep] if keep and keep not in live else []) + live))
-        select = keep if keep in merged else (merged[0] if merged else "")
-        self.prompt_bar.set_models(merged, select)
+        if keep and keep in merged:
+            # selection didn't change; just refresh the list silently
+            self.prompt_bar.set_models(merged, keep)
+        else:
+            # selection will change — unblock so currentTextChanged fires
+            new = merged[0] if merged else ""
+            self.prompt_bar.model_combo.blockSignals(True)
+            self.prompt_bar.model_combo.clear()
+            self.prompt_bar.model_combo.addItems(merged)
+            self.prompt_bar.model_combo.blockSignals(False)
+            self.prompt_bar.model_combo.setCurrentText(new)
 
     def _provider_changed(self, provider: str) -> None:
         if not provider or provider.startswith("⚡"):

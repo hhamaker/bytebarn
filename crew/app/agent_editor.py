@@ -179,14 +179,21 @@ class AgentEditor(QDialog):
         keep = self.model_combo.currentText()
         merged = list(dict.fromkeys(
             ([keep] if keep and keep not in live else []) + live))
-        self.model_combo.blockSignals(True)
-        self.model_combo.clear()
-        self.model_combo.addItems(merged)
         if keep and keep in merged:
+            # selection didn't change; refresh silently
+            self.model_combo.blockSignals(True)
+            self.model_combo.clear()
+            self.model_combo.addItems(merged)
             self.model_combo.setCurrentText(keep)
+            self.model_combo.blockSignals(False)
         else:
-            self.model_combo.setCurrentText(merged[0] if merged else "")
-        self.model_combo.blockSignals(False)
+            # selection will change — unblock so currentTextChanged fires
+            new = merged[0] if merged else ""
+            self.model_combo.blockSignals(True)
+            self.model_combo.clear()
+            self.model_combo.addItems(merged)
+            self.model_combo.blockSignals(False)
+            self.model_combo.setCurrentText(new)
 
     def _provider_changed(self, provider: str) -> None:
         self._set_provider_models(provider)

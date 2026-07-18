@@ -125,12 +125,19 @@ class ModelPicker(QWidget):
         # current selection if the user typed a custom id not in the catalog
         merged = list(dict.fromkeys(
             ([keep] if keep and keep not in live else []) + live))
-        self.model_combo.blockSignals(True)
-        self.model_combo.clear()
-        self.model_combo.addItems(merged)
         if keep and keep in merged:
+            # selection didn't change, just update the list
+            self.model_combo.blockSignals(True)
+            self.model_combo.clear()
+            self.model_combo.addItems(merged)
             self.model_combo.setCurrentText(keep)
+            self.model_combo.blockSignals(False)
         else:
-            self.model_combo.setCurrentText(merged[0] if merged else "")
-        self.model_combo.blockSignals(False)
-        self.model_changed.emit(self.value())
+            # selection will change (e.g., first curated id no longer valid)
+            new = merged[0] if merged else ""
+            self.model_combo.blockSignals(True)
+            self.model_combo.clear()
+            self.model_combo.addItems(merged)
+            self.model_combo.blockSignals(False)
+            # unblock so the new selection triggers currentTextChanged → model_changed
+            self.model_combo.setCurrentText(new)
