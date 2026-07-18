@@ -154,9 +154,13 @@ class MainWindow(QMainWindow):
         self.mode_combo.setMinimumWidth(90)
         self.mode_combo.setSizePolicy(self.mode_combo.sizePolicy().horizontalPolicy(),
                                       self.mode_combo.sizePolicy().verticalPolicy())
-        self.mode_combo.setCurrentIndex(1)
         mode = (self.engine.config.model_extra or {}).get("session_mode")
-        self.mode_combo.setCurrentIndex({"safe": 0, "ask": 1, "full": 2}.get(mode, 1))
+        index = {"safe": 0, "ask": 1, "full": 2}.get(mode, 1)
+        self.mode_combo.setCurrentIndex(index)
+        # the combo isn't wired up yet, so push the persisted mode into the
+        # engine explicitly — otherwise Full-auto shows in the UI but the
+        # policy still asks
+        self.engine.set_session_mode([SAFE, ASK_MODE, FULL_AUTO][index])
         self.mode_combo.currentIndexChanged.connect(self._mode_changed)
         self.mode_combo.setToolTip(
             "Permission mode — Safe: read-only · Ask: confirm risky tools · "

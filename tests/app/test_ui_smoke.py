@@ -976,3 +976,28 @@ async def test_mcp_dialog_add_and_remove_server(qapp, tmp_path):
         await asyncio.sleep(0.3)  # drain pending reconnect tasks before stop
     finally:
         await engine.stop()
+
+
+async def test_persisted_full_auto_mode_applies_to_engine(qapp, tmp_path):
+    from crew.app.main_window import MainWindow
+    from crew.engine.facade import Engine
+    from crew.engine.permissions import FULL_AUTO
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    gdir = tmp_path / "g"
+    gdir.mkdir()
+    (gdir / "config.json").write_text(json.dumps(
+        {"model": "fake/m", "session_mode": "full"}))
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=gdir)
+    await engine.start()
+    try:
+        window = MainWindow(engine)
+        # the persisted mode must reach the ENGINE, not just the combo box
+        assert window.mode_combo.currentIndex() == 2
+        assert engine.session_mode == FULL_AUTO
+        # and the policy the runner consults must auto-allow
+        policy = engine.policy_for(engine.agents.get("build"))
+        assert policy.resolve("bash", "rm -rf build") == "allow"
+    finally:
+        await engine.stop()
