@@ -138,6 +138,7 @@ class StageState:
 class CrewStage(QWidget):
     open_session = Signal(str)
     stop_requested = Signal(str)   # right-click on a running agent → stop it
+    shown = Signal()               # stage became visible → restore pane height
 
     def __init__(self):
         super().__init__()
@@ -148,8 +149,14 @@ class CrewStage(QWidget):
         self._timer = QTimer(self)
         self._timer.setInterval(80)  # ~12 fps
         self._timer.timeout.connect(self._tick)
-        self.setFixedHeight(164)
+        # height is user-adjustable via the splitter; sprites scale with it
+        self.setMinimumHeight(110)
         self.setVisible(False)
+
+    def sizeHint(self):
+        from PySide6.QtCore import QSize
+
+        return QSize(640, 164)
 
     # -- state ----------------------------------------------------------------
 
@@ -161,6 +168,7 @@ class CrewStage(QWidget):
         if should_show and not self.isVisible():
             self.setVisible(True)
             self._timer.start()
+            self.shown.emit()
         elif not should_show and self.isVisible():
             self._timer.stop()
             self.setVisible(False)
@@ -192,23 +200,27 @@ class CrewStage(QWidget):
 
         members = self.state.visible_members()
         shown = members[:MAX_VISIBLE]
-        scale = 4
+        # sprites grow with the pane: drag the splitter for a bigger crew
+        scale = max(3, min(8, (self.height() - 68) // 24))
         sprite_w = SPRITE_W * scale
         sprite_h = SPRITE_H * scale
         width = self.width()
 
-        # hub (orchestrator) on the left
+        # hub (orchestrator) on the left; y clears the headline + crown at
+        # any sprite scale
         hub_x = 30
-        hub_y = 34
+        hub_y = 22 + 3 * scale
         n = len(shown)
         # cap slot width so a small crew clusters near the hub instead of
         # scattering across the full window
-        slot = min(max((width - 140) // max(n, 1), sprite_w + 40), 170) if n else 0
+        start_x = hub_x + sprite_w + 50
+        slot = min(max((width - start_x - 20) // max(n, 1), sprite_w + 40),
+                   sprite_w + 130) if n else 0
 
         metrics = QFontMetrics(painter.font())
         for index, member in enumerate(shown):
-            cx = 120 + index * slot
-            cy = 26 + (10 if index % 2 else 0)
+            cx = start_x + index * slot
+            cy = hub_y - 8 + (10 if index % 2 else 0)
             self._draw_rope(painter, hub_x + sprite_w // 2, hub_y + sprite_h // 2,
                             cx + sprite_w // 2, cy + sprite_h // 2, member)
         # ropes under critters: draw hub + critters after
@@ -218,8 +230,8 @@ class CrewStage(QWidget):
                      frame=self._frame, crowned=True, accent=hub_accent)
         dots = "." * (1 + (self._frame // 4) % 3)
         for index, member in enumerate(shown):
-            cx = 120 + index * slot
-            cy = 26 + (10 if index % 2 else 0)
+            cx = start_x + index * slot
+            cy = hub_y - 8 + (10 if index % 2 else 0)
             state = {"running": "working", "retrying": "retrying",
                      "done": "done", "error": "retrying"}.get(member.status, "working")
             species, accent = look_for(member.agent)
@@ -251,8 +263,9 @@ class CrewStage(QWidget):
             painter.setPen(QColor("#c8ccd4"))
             painter.drawText(width - 80, 16, f"+{self.state.overflow} more")
 
-        # waiting rows: faded sleeping critters for undelegated todos
-        wait_y = 118
+        # waiting rows: faded sleeping critters for undelegated todos,
+        # pinned near the bottom so they never collide with the cast labels
+        wait_y = max(hub_y + sprite_h + 44, self.height() - 46)
         for windex, content in enumerate(self.state.waiting[:6]):
             wx = 120 + windex * 200
             if wx + sprite_w > width:

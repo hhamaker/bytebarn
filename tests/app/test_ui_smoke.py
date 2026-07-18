@@ -1094,3 +1094,36 @@ def test_dog_and_cat_modes_render_distinct_breeds(qapp):
         assert dogs != critter
     finally:
         sprites.set_crew_style("critters")
+
+
+async def test_crew_stage_resizable_and_persisted(qapp, tmp_path):
+    from crew.app.main_window import MainWindow
+    from crew.engine.facade import Engine
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    gdir = tmp_path / "g"
+    gdir.mkdir()
+    (gdir / "config.json").write_text(json.dumps(
+        {"model": "fake/m", "stage_height": 240}))
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=gdir)
+    await engine.start()
+    try:
+        window = MainWindow(engine)
+        window.resize(1100, 800)
+        window.show()
+        # stage appears (goal starts) -> persisted height restored
+        window.crew_stage.setVisible(True)
+        window._restore_stage_height()
+        assert window.stage_split.sizes()[1] == 240
+        # no fixed height anymore — the pane can grow and shrink
+        assert window.crew_stage.minimumHeight() <= 120
+        assert window.crew_stage.maximumHeight() > 100000
+
+        # drag simulation: set sizes then persist path
+        window.stage_split.setSizes([500, 300])
+        window._save_stage_height()
+        config = json.loads((gdir / "config.json").read_text())
+        assert config["stage_height"] == window.stage_split.sizes()[1] > 0
+    finally:
+        await engine.stop()

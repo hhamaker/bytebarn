@@ -117,13 +117,24 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(self.header_meta, 1)
         header_layout.addWidget(self.dir_button)
 
+        # transcript / crew stage boundary is draggable; size persists
+        self.stage_split = QSplitter(Qt.Vertical)
+        self.stage_split.addWidget(self.transcript)
+        self.stage_split.addWidget(self.crew_stage)
+        self.stage_split.setStretchFactor(0, 1)
+        self.stage_split.setStretchFactor(1, 0)
+        self.stage_split.setCollapsible(0, False)
+        self.stage_split.setHandleWidth(6)
+        self._stage_save_timer = None
+        self.stage_split.splitterMoved.connect(self._stage_resized)
+        self.crew_stage.shown.connect(self._restore_stage_height)
+
         right = QWidget()
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(2)
         right_layout.addWidget(header)
-        right_layout.addWidget(self.transcript, 1)
-        right_layout.addWidget(self.crew_stage)
+        right_layout.addWidget(self.stage_split, 1)
         right_layout.addWidget(self.todo_strip)
         right_layout.addWidget(self.prompt_bar)
 
@@ -1168,6 +1179,33 @@ class MainWindow(QMainWindow):
         )
         out, _ = await proc.communicate()
         self.status_git.setText(out.decode().strip() or "no git")
+
+    def _restore_stage_height(self) -> None:
+        """Give the crew stage its remembered share when it appears."""
+        stage_h = int((self.engine.config.model_extra or {}).get("stage_height") or 164)
+        total = sum(self.stage_split.sizes()) or 800
+        self.stage_split.setSizes([max(120, total - stage_h), stage_h])
+
+    def _stage_resized(self, _pos: int = 0, _index: int = 0) -> None:
+        """Debounced persist of the crew-stage pane height."""
+        from PySide6.QtCore import QTimer
+
+        if self._stage_save_timer is None:
+            self._stage_save_timer = QTimer(self)
+            self._stage_save_timer.setSingleShot(True)
+            self._stage_save_timer.timeout.connect(self._save_stage_height)
+        self._stage_save_timer.start(500)
+
+    def _save_stage_height(self) -> None:
+        from ..engine.config import patch_config_file
+
+        sizes = self.stage_split.sizes()
+        if len(sizes) == 2 and sizes[1] > 0:
+            try:
+                patch_config_file(self.engine.global_dir / "config.json",
+                                  {"stage_height": int(sizes[1])})
+            except Exception:
+                pass
 
     def _mode_changed(self, index: int) -> None:
         # set_session_mode also releases permission prompts already waiting
