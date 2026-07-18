@@ -1001,3 +1001,59 @@ async def test_persisted_full_auto_mode_applies_to_engine(qapp, tmp_path):
         assert policy.resolve("bash", "rm -rf build") == "allow"
     finally:
         await engine.stop()
+
+
+def test_waifu_mode_swaps_sprites(qapp):
+    from PySide6.QtGui import QImage
+
+    from crew.app import sprites
+
+    def render() -> QImage:
+        pixmap = sprites.critter_pixmap("build", "#61afef", scale=4)
+        return pixmap.toImage()
+
+    sprites.set_waifu(False)
+    critter = render()
+    sprites.set_waifu(True)
+    try:
+        waifu = render()
+        assert waifu != critter                       # different art
+        assert any(waifu.pixel(x, y) != 0             # actually drew something
+                   for x in range(waifu.width()) for y in range(0, waifu.height(), 5))
+        # all four hairstyles render for every state without errors
+        from PySide6.QtGui import QColor, QPainter
+
+        image = QImage(300, 300, QImage.Format_ARGB32)
+        image.fill(0)
+        painter = QPainter(image)
+        for i, species in enumerate(sprites.SPECIES):
+            for j, state in enumerate(("working", "retrying", "done", "waiting")):
+                sprites.draw_critter(painter, 10 + i * 60, 10 + j * 60, 4,
+                                     species, QColor("#e5a458"), state=state,
+                                     frame=7, crowned=(i == 0), accent="bow")
+        painter.end()
+    finally:
+        sprites.set_waifu(False)
+    assert not sprites.waifu_enabled()
+
+
+async def test_settings_waifu_toggle_persists(qapp, tmp_path):
+    from crew.app import sprites
+    from crew.app.settings import SettingsDialog
+    from crew.engine.facade import Engine
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    gdir = tmp_path / "g"
+    gdir.mkdir()
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=gdir)
+    try:
+        dlg = SettingsDialog(engine)
+        assert not dlg.waifu.isChecked()
+        dlg.waifu.setChecked(True)
+        dlg._save()
+        config = json.loads((gdir / "config.json").read_text())
+        assert config["waifu"] is True
+        assert sprites.waifu_enabled()
+    finally:
+        sprites.set_waifu(False)

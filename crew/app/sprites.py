@@ -77,6 +77,83 @@ _BEAR = [
 SPECIES = ["cat", "dog", "bunny", "bear"]
 _GRIDS = {"cat": _CAT, "dog": _DOG, "bunny": _BUNNY, "bear": _BEAR}
 
+# -- waifu mode -------------------------------------------------------------
+#
+# Same 12x11 footprint, same states and accessories, but the crew becomes
+# chibi anime characters: the agent color tints the hair, species maps to a
+# hairstyle. Grid legend adds 'H' hair (tinted), 'S' skin, 'W' dress.
+
+_TWINTAILS = [
+    ".HHHHHHHHHH.",
+    "HHHHHHHHHHHH",
+    "HHHHHHHHHHHH",
+    "HHSSSSSSSSHH",
+    "HSSSSSSSSSSH",
+    "HSSSSSSSSSSH",
+    "HSSSSSSSSSSH",
+    "H.SSSSSSSS.H",
+    "H..WWWWWW..H",
+    "HH.WWWWWW.HH",
+    "...OOOOOO...",
+]
+
+_PONYTAIL = [
+    "..HHHHHHHH..",
+    ".HHHHHHHHHHH",
+    "HHHHHHHHHHHH",
+    "HSSSSSSSSHHH",
+    "HSSSSSSSSSSH",
+    "HSSSSSSSSSHH",
+    "HSSSSSSSSSH.",
+    ".SSSSSSSSHH.",
+    "..WWWWWW.H..",
+    "..WWWWWW....",
+    "..OOOOOO....",
+]
+
+_LONGHAIR = [
+    ".HHHHHHHHHH.",
+    "HHHHHHHHHHHH",
+    "HHHHHHHHHHHH",
+    "HHSSSSSSSSHH",
+    "HHSSSSSSSSHH",
+    "HHSSSSSSSSHH",
+    "HHSSSSSSSSHH",
+    "HHSSSSSSSSHH",
+    "HH.WWWWWW.HH",
+    "HH.WWWWWW.HH",
+    "HH.OOOOOO.HH",
+]
+
+_BOB = [
+    ".HHHHHHHHHH.",
+    "HHHHHHHHHHHH",
+    "HHHHHHHHHHHH",
+    "HHSSSSSSSSHH",
+    "HSSSSSSSSSSH",
+    "HSSSSSSSSSSH",
+    "HHSSSSSSSSHH",
+    ".HSSSSSSSSH.",
+    "...WWWWWW...",
+    "..WWWWWWWW..",
+    "..OOOOOOOO..",
+]
+
+_WAIFU_GRIDS = {"cat": _TWINTAILS, "dog": _PONYTAIL,
+                "bunny": _LONGHAIR, "bear": _BOB}
+
+_waifu_mode = False
+
+
+def set_waifu(enabled: bool) -> None:
+    """Flip the whole crew between critters and anime characters."""
+    global _waifu_mode
+    _waifu_mode = bool(enabled)
+
+
+def waifu_enabled() -> bool:
+    return _waifu_mode
+
 # small overlays drawn after the base sprite + eyes
 ACCENTS = ["none", "glasses", "goggles", "hat", "scarf", "bow"]
 
@@ -174,7 +251,11 @@ def draw_critter(
     crowned: bool = False,
     accent: str = "none",     # none | glasses | goggles | hat | scarf | bow
 ) -> None:
-    """Draw one critter with its top-left logical origin at (x, y)."""
+    """Draw one crew member with its top-left logical origin at (x, y)."""
+    if _waifu_mode:
+        _draw_waifu(painter, x, y, scale, species, color, state, frame,
+                    crowned, accent)
+        return
     painter.save()
     painter.setRenderHint(QPainter.Antialiasing, False)  # crisp pixels
     grid = _GRIDS.get(species, _CAT)
@@ -233,6 +314,101 @@ def draw_critter(
 
     if state == "waiting":
         # drifting z pixels
+        z = QColor(170, 170, 190, 200)
+        phase = (frame // 4) % 3
+        px(10, 1 - phase if 1 - phase >= -2 else 1, z)
+        if phase > 0:
+            px(11, 0, z)
+    painter.restore()
+
+
+def _draw_waifu(
+    painter: QPainter,
+    x: int,
+    y: int,
+    scale: int,
+    species: str,
+    color: QColor,
+    state: str = "working",
+    frame: int = 0,
+    crowned: bool = False,
+    accent: str = "none",
+) -> None:
+    """Anime crew member in the critter footprint: tinted hair, sparkle eyes,
+    blush, and the same working/retrying/done/waiting language."""
+    painter.save()
+    painter.setRenderHint(QPainter.Antialiasing, False)
+    grid = _WAIFU_GRIDS.get(species, _TWINTAILS)
+    dim = state == "waiting"
+    hair = _tint(color, state)
+    hair_shade = _mix(hair, QColor(25, 22, 34), 0.35)
+    skin = QColor(255, 223, 196, 150 if dim else 255)
+    dress = QColor(244, 240, 250, 150 if dim else 255)
+    outline = QColor(30, 30, 36, 140 if dim else 255)
+
+    bob = 0
+    if state in ("working", "retrying"):
+        bob = -1 if (frame // 3) % 2 else 0
+
+    def px(cx: int, cy: int, c: QColor) -> None:
+        painter.fillRect(x + cx * scale, y + (cy + bob) * scale, scale, scale, c)
+
+    for row_index, row in enumerate(grid):
+        for col_index, ch in enumerate(row):
+            if ch == "H":
+                # outer strands read darker so the silhouette stays crisp
+                edge = col_index in (0, 11) or row_index == 0
+                px(col_index, row_index, hair_shade if edge else hair)
+            elif ch == "S":
+                px(col_index, row_index, skin)
+            elif ch == "W":
+                px(col_index, row_index, dress)
+            elif ch == "O":
+                px(col_index, row_index, outline)
+
+    ink = QColor(35, 30, 45)
+    iris = _mix(QColor(90, 110, 170), color, 0.35)
+    eye_y = 5
+    blink = state == "working" and (frame % 36) in (0, 1)
+    if state == "waiting" or blink:
+        # gentle closed lashes
+        for ex in (3, 7):
+            px(ex, eye_y + 1, ink)
+            px(ex + 1, eye_y + 1, ink)
+    elif state == "done":
+        # happy arcs + open smile + blush
+        px(2, eye_y, ink), px(3, eye_y - 1, ink), px(4, eye_y, ink)
+        px(7, eye_y, ink), px(8, eye_y - 1, ink), px(9, eye_y, ink)
+        px(5, 7, ink), px(6, 7, ink)
+    else:
+        # big 2x2 anime eyes: bright iris row over dark base = catchlight
+        shine = _mix(iris, QColor(255, 255, 255), 0.55)
+        for ex in (3, 7):
+            px(ex, eye_y, shine)
+            px(ex + 1, eye_y, iris)
+            px(ex, eye_y + 1, ink)
+            px(ex + 1, eye_y + 1, ink)
+        if state == "retrying":
+            brow = QColor(150, 40, 50)
+            px(2, eye_y - 1, brow), px(3, eye_y - 1, brow)
+            px(8, eye_y - 1, brow), px(9, eye_y - 1, brow)
+
+    if state in ("working", "done"):
+        blush = QColor(255, 150, 160, 170)
+        px(2, 7, blush)
+        px(9, 7, blush)
+
+    _draw_accent(px, accent if not (crowned and accent == "hat") else "none",
+                 hair, eye_y, state)
+
+    if crowned:
+        gold = QColor(240, 200, 60)
+        for cx in (3, 5, 7):
+            px(cx, -2, gold)
+        for cx in (3, 4, 5, 6, 7):
+            px(cx, -1, gold)
+
+    if state == "waiting":
         z = QColor(170, 170, 190, 200)
         phase = (frame // 4) % 3
         px(10, 1 - phase if 1 - phase >= -2 else 1, z)

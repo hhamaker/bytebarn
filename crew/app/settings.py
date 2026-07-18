@@ -62,6 +62,11 @@ class SettingsDialog(QDialog):
         self.theme.setCurrentText(
             (config.model_extra or {}).get("theme", "follow system"))
         form.addRow("theme", self.theme)
+        from PySide6.QtWidgets import QCheckBox
+
+        self.waifu = QCheckBox("Waifu mode — the crew becomes anime characters")
+        self.waifu.setChecked(bool((config.model_extra or {}).get("waifu")))
+        form.addRow("crew style", self.waifu)
 
         save = QPushButton("Save")
         save.clicked.connect(self._save)
@@ -100,6 +105,13 @@ class SettingsDialog(QDialog):
         theme = self.theme.currentText()
         if theme != (config.model_extra or {}).get("theme", "follow system"):
             updates["theme"] = theme
+
+        waifu = self.waifu.isChecked()
+        if waifu != bool((config.model_extra or {}).get("waifu")):
+            updates["waifu"] = waifu
+            from . import sprites
+
+            sprites.set_waifu(waifu)
 
         if updates:
             patch_config_file(self.engine.global_dir / "config.json", updates)

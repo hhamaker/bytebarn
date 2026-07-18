@@ -1185,6 +1185,10 @@ class MainWindow(QMainWindow):
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self.engine, self)
         dialog.exec()
+        # crew style may have flipped — redraw sidebar avatars and header
+        self._fire(self._refresh_sessions())
+        if self.current_session_id:
+            self._fire(self._load_session(self.current_session_id))
 
     def _open_providers(self) -> None:
         from .provider_manager import ProviderManager

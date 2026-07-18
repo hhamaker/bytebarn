@@ -61,6 +61,9 @@ def main() -> None:
 
     engine = Engine(project_dir)
     apply_theme(app, (engine.config.model_extra or {}).get("theme", "follow system"))
+    from .app import sprites
+
+    sprites.set_waifu(bool((engine.config.model_extra or {}).get("waifu")))
     window = MainWindow(engine)
     window.setWindowIcon(app_icon())
 
