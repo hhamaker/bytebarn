@@ -142,17 +142,121 @@ _BOB = [
 _WAIFU_GRIDS = {"cat": _TWINTAILS, "dog": _PONYTAIL,
                 "bunny": _LONGHAIR, "bear": _BOB}
 
-_waifu_mode = False
+# -- dog mode / cat mode ----------------------------------------------------
+#
+# The whole crew becomes dogs (or cats) — four breeds keep agents visually
+# distinct, mapped from the same stable species slots.
+
+_PUP_POINTY = [           # shepherd: upright triangle ears
+    "OO........OO",
+    "OBO......OBO",
+    "OBBOOOOOOBBO",
+    "OBBBBBBBBBBO",
+    "OBBBBBBBBBBO",
+    "OBBBBBBBBBBO",
+    "OBBBBBBBBBBO",
+    "OBBWWWWWWBBO",
+    ".OBBWWWWBBO.",
+    ".OBBBBBBBBO.",
+    "..OOOOOOOO..",
+]
+
+_PUP_BEAGLE = [           # long droopy ears down the sides
+    "............",
+    ".OOO....OOO.",
+    "OBBOOOOOOBBO",
+    "OBBBBBBBBBBO",
+    "OBOBBBBBBOBO",
+    "OBOBBBBBBOBO",
+    "OBOBBBBBBOBO",
+    "OBBWWWWWWBBO",
+    ".OBBWWWWBBO.",
+    ".OBBBBBBBBO.",
+    "..OOOOOOOO..",
+]
+
+_PUP_PUG = [              # tiny fold ears, big pale muzzle
+    "............",
+    ".OO......OO.",
+    "OBBOOOOOOBBO",
+    "OBBBBBBBBBBO",
+    "OBBBBBBBBBBO",
+    "OBBBBBBBBBBO",
+    "OBBWWWWWWBBO",
+    "OBWWWWWWWWBO",
+    ".OBWWWWWWBO.",
+    ".OBBBBBBBBO.",
+    "..OOOOOOOO..",
+]
+
+_CAT_TUFT = [             # lynx: tall tufted ear tips
+    ".O........O.",
+    ".OO......OO.",
+    ".OBO....OBO.",
+    ".OBOOOOOOBO.",
+    "OBBBBBBBBBBO",
+    "OBBBBBBBBBBO",
+    "OBBBBBBBBBBO",
+    "OBBWWWWWWBBO",
+    ".OBBWWWWBBO.",
+    ".OBBBBBBBBO.",
+    "..OOOOOOOO..",
+]
+
+_CAT_FOLD = [             # scottish fold: flat folded ears
+    "............",
+    ".OOO....OOO.",
+    ".OBBO..OBBO.",
+    "OBBBOOOOBBBO",
+    "OBBBBBBBBBBO",
+    "OBBBBBBBBBBO",
+    "OBBBBBBBBBBO",
+    "OBBWWWWWWBBO",
+    ".OBBWWWWBBO.",
+    ".OBBBBBBBBO.",
+    "..OOOOOOOO..",
+]
+
+_CAT_SIAM = [             # siamese: big wide ears
+    "OO........OO",
+    "OBO......OBO",
+    "OBBO....OBBO",
+    "OBBOOOOOOBBO",
+    "OBBBBBBBBBBO",
+    "OBBBBBBBBBBO",
+    "OBBBBBBBBBBO",
+    "OBBWWWWWWBBO",
+    ".OBBWWWWBBO.",
+    ".OBBBBBBBBO.",
+    "..OOOOOOOO..",
+]
+
+_DOG_GRIDS = {"cat": _PUP_POINTY, "dog": _DOG,
+              "bunny": _PUP_BEAGLE, "bear": _PUP_PUG}
+_CAT_GRIDS = {"cat": _CAT, "dog": _CAT_TUFT,
+              "bunny": _CAT_FOLD, "bear": _CAT_SIAM}
+
+CREW_STYLES = ("critters", "waifu", "dogs", "cats")
+_crew_style = "critters"
+
+
+def set_crew_style(style: str) -> None:
+    """Choose how the whole crew renders: critters, waifu, dogs, or cats."""
+    global _crew_style
+    _crew_style = style if style in CREW_STYLES else "critters"
+
+
+def crew_style() -> str:
+    return _crew_style
 
 
 def set_waifu(enabled: bool) -> None:
-    """Flip the whole crew between critters and anime characters."""
-    global _waifu_mode
-    _waifu_mode = bool(enabled)
+    """Back-compat toggle for the original waifu switch."""
+    set_crew_style("waifu" if enabled else "critters")
 
 
 def waifu_enabled() -> bool:
-    return _waifu_mode
+    return _crew_style == "waifu"
 
 # small overlays drawn after the base sprite + eyes
 ACCENTS = ["none", "glasses", "goggles", "hat", "scarf", "bow"]
@@ -252,13 +356,14 @@ def draw_critter(
     accent: str = "none",     # none | glasses | goggles | hat | scarf | bow
 ) -> None:
     """Draw one crew member with its top-left logical origin at (x, y)."""
-    if _waifu_mode:
+    if _crew_style == "waifu":
         _draw_waifu(painter, x, y, scale, species, color, state, frame,
                     crowned, accent)
         return
     painter.save()
     painter.setRenderHint(QPainter.Antialiasing, False)  # crisp pixels
-    grid = _GRIDS.get(species, _CAT)
+    grids = {"dogs": _DOG_GRIDS, "cats": _CAT_GRIDS}.get(_crew_style, _GRIDS)
+    grid = grids.get(species, _CAT)
     body = _tint(color, state)
     outline = QColor(30, 30, 36, 140 if state == "waiting" else 255)
     white = QColor(240, 236, 226, 140 if state == "waiting" else 255)
@@ -300,6 +405,16 @@ def draw_critter(
             brow = QColor(120, 30, 30)
             px(2, eye_y - 2, brow), px(3, eye_y - 2, brow)
             px(8, eye_y - 2, brow), px(9, eye_y - 2, brow)
+
+    # dog/cat modes get species flavor: a nose, and whiskers for cats
+    if _crew_style == "dogs":
+        px(5, eye_y + 2, dark)
+        px(6, eye_y + 2, dark)
+    elif _crew_style == "cats":
+        px(5, eye_y + 2, QColor(235, 140, 150))
+        whisker = QColor(30, 30, 36, 90 if state == "waiting" else 170)
+        px(0, eye_y + 1, whisker), px(1, eye_y + 2, whisker)
+        px(11, eye_y + 1, whisker), px(10, eye_y + 2, whisker)
 
     # type-specific accents (after eyes so frames sit on top)
     _draw_accent(px, accent if not (crowned and accent == "hat") else "none",

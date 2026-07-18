@@ -24,6 +24,15 @@ _PERMISSION_TOOLS = ("bash", "edit", "write", "webfetch")
 _THEMES = ("follow system", "dark", "light", "modern")
 
 
+def _current_crew_style(config) -> str:
+    """Configured crew style; the legacy 'waifu' bool maps to 'waifu'."""
+    extra = config.model_extra or {}
+    style = extra.get("crew_style")
+    if style in ("critters", "waifu", "dogs", "cats"):
+        return style
+    return "waifu" if extra.get("waifu") else "critters"
+
+
 class SettingsDialog(QDialog):
     def __init__(self, engine: Engine, parent=None):
         super().__init__(parent)
@@ -62,11 +71,14 @@ class SettingsDialog(QDialog):
         self.theme.setCurrentText(
             (config.model_extra or {}).get("theme", "follow system"))
         form.addRow("theme", self.theme)
-        from PySide6.QtWidgets import QCheckBox
 
-        self.waifu = QCheckBox("Waifu mode — the crew becomes anime characters")
-        self.waifu.setChecked(bool((config.model_extra or {}).get("waifu")))
-        form.addRow("crew style", self.waifu)
+        self.crew_style = QComboBox()
+        self.crew_style.addItems(["critters", "waifu", "dogs", "cats"])
+        self.crew_style.setCurrentText(_current_crew_style(config))
+        self.crew_style.setToolTip(
+            "How the crew renders everywhere: pixel critters (default), "
+            "anime characters, all dogs, or all cats")
+        form.addRow("crew style", self.crew_style)
 
         save = QPushButton("Save")
         save.clicked.connect(self._save)
@@ -106,12 +118,12 @@ class SettingsDialog(QDialog):
         if theme != (config.model_extra or {}).get("theme", "follow system"):
             updates["theme"] = theme
 
-        waifu = self.waifu.isChecked()
-        if waifu != bool((config.model_extra or {}).get("waifu")):
-            updates["waifu"] = waifu
+        style = self.crew_style.currentText()
+        if style != _current_crew_style(config):
+            updates["crew_style"] = style
             from . import sprites
 
-            sprites.set_waifu(waifu)
+            sprites.set_crew_style(style)
 
         if updates:
             patch_config_file(self.engine.global_dir / "config.json", updates)

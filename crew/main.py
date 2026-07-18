@@ -63,7 +63,10 @@ def main() -> None:
     apply_theme(app, (engine.config.model_extra or {}).get("theme", "follow system"))
     from .app import sprites
 
-    sprites.set_waifu(bool((engine.config.model_extra or {}).get("waifu")))
+    _extra = engine.config.model_extra or {}
+    sprites.set_crew_style(
+        _extra.get("crew_style")
+        or ("waifu" if _extra.get("waifu") else "critters"))
     window = MainWindow(engine)
     window.setWindowIcon(app_icon())
 

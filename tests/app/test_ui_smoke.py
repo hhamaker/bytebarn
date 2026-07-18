@@ -1049,11 +1049,48 @@ async def test_settings_waifu_toggle_persists(qapp, tmp_path):
     engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=gdir)
     try:
         dlg = SettingsDialog(engine)
-        assert not dlg.waifu.isChecked()
-        dlg.waifu.setChecked(True)
+        assert dlg.crew_style.currentText() == "critters"
+        dlg.crew_style.setCurrentText("waifu")
         dlg._save()
         config = json.loads((gdir / "config.json").read_text())
-        assert config["waifu"] is True
+        assert config["crew_style"] == "waifu"
         assert sprites.waifu_enabled()
+
+        dlg2 = SettingsDialog(engine)
+        dlg2.crew_style.setCurrentText("dogs")
+        dlg2._save()
+        assert sprites.crew_style() == "dogs"
     finally:
-        sprites.set_waifu(False)
+        sprites.set_crew_style("critters")
+
+
+def test_dog_and_cat_modes_render_distinct_breeds(qapp):
+    from PySide6.QtGui import QColor, QImage, QPainter
+
+    from crew.app import sprites
+
+    def render(style: str, species: str) -> QImage:
+        sprites.set_crew_style(style)
+        image = QImage(80, 80, QImage.Format_ARGB32)
+        image.fill(0)
+        painter = QPainter(image)
+        sprites.draw_critter(painter, 5, 15, 5, species, QColor("#61afef"),
+                             state="working", frame=7)
+        painter.end()
+        return image
+
+    try:
+        # every species slot renders in both modes, and breeds differ
+        for style in ("dogs", "cats"):
+            images = [render(style, s) for s in sprites.SPECIES]
+            assert all(any(img.pixel(x, y) != 0 for x in range(80)
+                           for y in range(0, 80, 4)) for img in images)
+            assert len({img.cacheKey() for img in images}) == 4  # sanity
+            assert images[0] != images[2]        # distinct breed grids
+        # a dog-mode render differs from critter mode for the same agent
+        dogs = render("dogs", "bear")
+        sprites.set_crew_style("critters")
+        critter = render("critters", "bear")
+        assert dogs != critter
+    finally:
+        sprites.set_crew_style("critters")
