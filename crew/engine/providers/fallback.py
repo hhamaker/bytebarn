@@ -32,12 +32,20 @@ def comparable_model(
     config: "Config",
     auth: "AuthStore",
     exclude: Iterable[str] = (),
+    live: dict[str, list[str]] | None = None,
 ) -> str | None:
-    """Best available stand-in for ``model``, or None if there is none."""
+    """Best available stand-in for ``model``, or None if there is none.
+
+    ``live`` is the engine's last-successful model list per provider — when
+    present it beats the static curated recipes so fallback never jumps to a
+    model id the provider no longer serves.
+    """
     if "/" not in model:
         return None
     excluded = set(exclude) | {model}
-    candidates = [m for m in available_models(config, auth) if m not in excluded]
+    candidates = [
+        m for m in available_models(config, auth, live=live) if m not in excluded
+    ]
     if not candidates:
         return None
 

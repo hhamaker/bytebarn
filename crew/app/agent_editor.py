@@ -151,14 +151,17 @@ class AgentEditor(QDialog):
             self.model_combo.blockSignals(False)
             return
         self.model_combo.setEnabled(True)
-        models = curated_models(provider)
+        cached = self.engine.cached_models(provider)
+        models = list(cached) if cached is not None else curated_models(provider)
         if current_id and current_id not in models:
             models.insert(0, current_id)
         self.model_combo.addItems(models)
         if current_id:
             self.model_combo.setCurrentText(current_id)
+        elif models:
+            self.model_combo.setCurrentIndex(0)
         self.model_combo.blockSignals(False)
-        # live list replaces the curated one when the fetch lands
+        # always re-fetch so the list matches what the provider serves right now
         import asyncio
 
         try:
@@ -168,15 +171,21 @@ class AgentEditor(QDialog):
         loop.create_task(self._load_live_models(provider))
 
     async def _load_live_models(self, provider: str) -> None:
-        live = await self.engine.list_models(provider)
-        if not live or self.provider_combo.currentText() != provider:
+        live = await self.engine.list_models(provider, force=True)
+        if self.provider_combo.currentText() != provider:
+            return
+        if not live:
             return
         keep = self.model_combo.currentText()
-        merged = list(dict.fromkeys(([keep] if keep and keep not in live else []) + live))
+        merged = list(dict.fromkeys(
+            ([keep] if keep and keep not in live else []) + live))
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
         self.model_combo.addItems(merged)
-        self.model_combo.setCurrentText(keep or (merged[0] if merged else ""))
+        if keep and keep in merged:
+            self.model_combo.setCurrentText(keep)
+        else:
+            self.model_combo.setCurrentText(merged[0] if merged else "")
         self.model_combo.blockSignals(False)
 
     def _provider_changed(self, provider: str) -> None:

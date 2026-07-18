@@ -234,21 +234,28 @@ def curated_models(provider_id: str) -> list[str]:
     return list(spec.models) if spec else []
 
 
-def available_models(config: "Config", auth: "AuthStore") -> list[str]:
+def available_models(
+    config: "Config",
+    auth: "AuthStore",
+    live: dict[str, list[str]] | None = None,
+) -> list[str]:
     """"provider/model" strings for connected providers only.
 
-    Connected known providers contribute their curated model list; providers
-    configured by hand contribute whatever models config names for them. The
-    config default models appear only when their provider is itself connected
-    (no dead entries in the pickers).
+    Connected known providers contribute their **live** model list when the
+    engine has fetched one, otherwise the curated recipe. Hand-configured
+    providers contribute whatever models config names for them. Config default
+    models appear only when their provider is itself connected (no dead
+    entries in the pickers).
     """
     models: list[str] = []
     connected: set[str] = set()
+    live = live or {}
     for spec in KNOWN_PROVIDERS.values():
         if not is_connected(connection_status(spec, config, auth)):
             continue
         connected.add(spec.id)
-        models.extend(f"{spec.id}/{m}" for m in spec.models)
+        ids = live.get(spec.id) or list(spec.models)
+        models.extend(f"{spec.id}/{m}" for m in ids)
     # hand-configured providers outside the known list: connected if they
     # resolve a key or point at a custom endpoint
     extra_catalog = (config.model_extra or {}).get("catalog") or {}
@@ -257,7 +264,16 @@ def available_models(config: "Config", auth: "AuthStore") -> list[str]:
             continue
         if pconf.resolve_key() or pconf.base_url:
             connected.add(name)
-            models.extend(f"{name}/{model_id}" for model_id in extra_catalog)
+            ids = live.get(name) or list(extra_catalog)
+            models.extend(f"{name}/{model_id}" for model_id in ids)
+    # also surface live lists for connected known providers that somehow
+    # only appear via live cache (defensive; normally covered above)
+    for name, ids in live.items():
+        if name in connected:
+            continue
+        if name in KNOWN_PROVIDERS or name in config.provider:
+            connected.add(name)
+            models.extend(f"{name}/{m}" for m in ids)
     # config defaults: only when their provider is connected
     for m in (config.small_model, config.model):
         if m and "/" in m and m.split("/", 1)[0] in connected and m not in models:

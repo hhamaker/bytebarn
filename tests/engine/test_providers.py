@@ -481,6 +481,86 @@ async def test_fetch_models_cloudflare_paginates(tmp_path, monkeypatch):
     assert len(models) == 101
 
 
+async def test_engine_list_models_caches_live_and_prefers_over_curated(
+    tmp_path, monkeypatch
+):
+    """Every selection path goes through Engine.list_models — it must refresh
+    from the provider and remember the result for pickers + fallback."""
+    import httpx
+
+    from crew.engine.facade import Engine
+    from crew.engine.providers import probe
+    from crew.engine.providers.fallback import comparable_model
+    from crew.engine.providers.known import available_models
+
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(200, json={
+            "data": [{"id": "live-a"}, {"id": "live-b"}],
+        })
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        probe.httpx, "AsyncClient",
+        lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw),
+    )
+    for var in ("GROQ_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    eng = Engine(proj, db_path=tmp_path / "crew.db", global_dir=tmp_path / "g")
+    eng.providers.auth.set("groq", {"type": "api", "key": "g"})
+
+    assert eng.cached_models("groq") is None
+    live = await eng.list_models("groq", force=True)
+    assert live == ["live-a", "live-b"]
+    assert eng.cached_models("groq") == ["live-a", "live-b"]
+    assert calls["n"] == 1
+
+    # force=False reuses cache (no second network hit)
+    assert await eng.list_models("groq", force=False) == ["live-a", "live-b"]
+    assert calls["n"] == 1
+
+    # force=True always re-fetches
+    assert await eng.list_models("groq", force=True) == ["live-a", "live-b"]
+    assert calls["n"] == 2
+
+    # available_models + fallback must use live ids, not curated recipes
+    models = available_models(eng.config, eng.providers.auth, live=eng._live_models)
+    assert "groq/live-a" in models and "groq/live-b" in models
+    assert "groq/llama-3.3-70b-versatile" not in models
+
+    eng.providers.auth.set("xai", {"type": "api", "key": "x"})
+    eng._live_models["xai"] = ["grok-live"]
+    pick = comparable_model(
+        "anthropic/claude-sonnet-4-5", eng.config, eng.providers.auth,
+        live=eng._live_models,
+    )
+    # only live ids are candidates (plus any still-curated for providers
+    # without a live list — xai has live, groq has live)
+    assert pick is None or pick.split("/", 1)[1] in {"live-a", "live-b", "grok-live"}
+
+
+def test_available_models_live_overrides_curated(tmp_path, monkeypatch):
+    from crew.engine.auth import AuthStore
+    from crew.engine.providers.known import available_models
+
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    cfg = Config()
+    auth = AuthStore(tmp_path)
+    auth.set("groq", {"type": "api", "key": "g"})
+
+    curated = available_models(cfg, auth)
+    assert "groq/llama-3.3-70b-versatile" in curated
+
+    live = available_models(cfg, auth, live={"groq": ["only-this"]})
+    assert live == ["groq/only-this"] or "groq/only-this" in live
+    assert "groq/llama-3.3-70b-versatile" not in live
+
+
 def test_cloudflare_provider_disables_compression(tmp_path, monkeypatch):
     monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "abc123")
     cfg = Config(provider={})

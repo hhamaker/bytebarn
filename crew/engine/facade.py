@@ -59,6 +59,10 @@ class Engine:
         self._files_read: dict[str, set[str]] = {}
         self._pending: dict[str, asyncio.Future] = {}  # permission/question futures
         self._pending_permissions: set[str] = set()
+        # last successful live model list per provider — pickers + fallback
+        # prefer this over the static curated recipes in known.py
+        self._live_models: dict[str, list[str]] = {}
+        self._live_model_fetches: dict[str, asyncio.Task] = {}
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -67,6 +71,11 @@ class Engine:
         await self.store.open()
         self.project = await self.store.open_project(str(self.project_dir))
         await self.mcp.start(self.config)
+        # warm the live model cache so pickers/fallback aren't stuck on curated
+        try:
+            asyncio.get_running_loop().create_task(self.refresh_all_models())
+        except RuntimeError:
+            pass
 
     async def stop(self) -> None:
         """Cancel all running sessions and close the store."""
@@ -83,9 +92,16 @@ class Engine:
         self.agents = AgentRegistry(self.config, self.project_dir, self.global_dir)
         self.commands.reload()
         self.skills.reload()
+        # auth/base URLs may have changed — drop stale live lists and re-warm
+        self._live_models.clear()
+        for task in self._live_model_fetches.values():
+            if not task.done():
+                task.cancel()
+        self._live_model_fetches.clear()
         try:  # reconnect MCP servers with the fresh config
-            asyncio.get_running_loop()
+            loop = asyncio.get_running_loop()
             asyncio.ensure_future(self.mcp.restart(self.config))
+            loop.create_task(self.refresh_all_models())
         except RuntimeError:
             pass  # no loop (sync test contexts): connect on next start()
 
@@ -136,17 +152,66 @@ class Engine:
         self._runs.pop(session_id, None)
         self.bus.emit(SessionUpdated(session_id=session_id))
 
-    async def list_models(self, provider_name: str) -> list[str]:
-        """Live model ids for a connected provider ([] if unreachable)."""
+    async def list_models(self, provider_name: str, *, force: bool = True) -> list[str]:
+        """Live model ids for a connected provider ([] if unreachable).
+
+        Always hits the provider when ``force`` (the default) so every picker
+        selection gets an up-to-date catalog. Successful fetches update
+        ``_live_models``; failures leave the previous cache entry alone and
+        return [].
+        """
         from .providers.probe import fetch_models
 
-        return await fetch_models(provider_name, self.config, self.providers.auth)
+        if not provider_name:
+            return []
+        if not force and provider_name in self._live_models:
+            return list(self._live_models[provider_name])
+
+        # coalesce concurrent fetches for the same provider
+        existing = self._live_model_fetches.get(provider_name)
+        if existing and not existing.done():
+            return list(await existing)
+
+        async def _fetch() -> list[str]:
+            live = await fetch_models(
+                provider_name, self.config, self.providers.auth)
+            if live:
+                self._live_models[provider_name] = list(live)
+            return list(live)
+
+        task = asyncio.create_task(_fetch())
+        self._live_model_fetches[provider_name] = task
+        try:
+            return await task
+        finally:
+            if self._live_model_fetches.get(provider_name) is task:
+                self._live_model_fetches.pop(provider_name, None)
+
+    def cached_models(self, provider_name: str) -> list[str] | None:
+        """Last successful live list for ``provider_name``, or None if never fetched."""
+        cached = self._live_models.get(provider_name)
+        return list(cached) if cached is not None else None
+
+    async def refresh_all_models(self) -> None:
+        """Prefetch live model lists for every currently connected provider."""
+        from .providers.known import connected_providers
+
+        providers = connected_providers(self.config, self.providers.auth)
+        if not providers:
+            return
+        await asyncio.gather(
+            *(self.list_models(name, force=True) for name in providers),
+            return_exceptions=True,
+        )
 
     def fallback_model(self, model: str, exclude: list[str]) -> str | None:
         """Comparable available model for automatic fallback (None = give up)."""
         from .providers.fallback import comparable_model
 
-        return comparable_model(model, self.config, self.providers.auth, exclude)
+        return comparable_model(
+            model, self.config, self.providers.auth, exclude,
+            live=self._live_models,
+        )
 
     def files_read(self, session_id: str) -> set[str]:
         """Paths the session has read (gates edit-before-read, spec §5.4)."""

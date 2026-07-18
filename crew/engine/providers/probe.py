@@ -25,9 +25,16 @@ def _endpoint_and_headers(
     record = auth.get(name)
     if key is None and record:
         if record.get("type") == "api":
-            key = record.get("key")
+            key = record.get("key") or record.get("api_key")
         elif record.get("type") == "oauth":
-            key = record.get("access")
+            # copilot stores the long-lived GitHub token as refresh (registry
+            # does the same); everyone else uses access
+            if name == "github-copilot":
+                key = record.get("refresh") or record.get("access")
+            else:
+                key = record.get("access") or record.get("refresh")
+        elif record.get("type") == "bedrock" or name == "bedrock":
+            key = record.get("api_key")
     if key is None and spec and spec.key_env:
         import os
 

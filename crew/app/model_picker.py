@@ -94,7 +94,9 @@ class ModelPicker(QWidget):
             self.model_changed.emit(self.value())
             return
         self.model_combo.setEnabled(True)
-        models = curated_models(provider)
+        # prefer last live fetch; curated is only a placeholder until refresh lands
+        cached = self.engine.cached_models(provider)
+        models = list(cached) if cached is not None else curated_models(provider)
         if current_id and current_id not in models:
             models.insert(0, current_id)
         self.model_combo.addItems(models)
@@ -105,7 +107,7 @@ class ModelPicker(QWidget):
         self.model_combo.blockSignals(False)
         self.model_changed.emit(self.value())
 
-        # live list replaces the curated one when the fetch lands
+        # always re-fetch so the list matches what the provider serves right now
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:  # no loop (offscreen widget tests)
@@ -113,13 +115,22 @@ class ModelPicker(QWidget):
         loop.create_task(self._load_live_models(provider))
 
     async def _load_live_models(self, provider: str) -> None:
-        live = await self.engine.list_models(provider)
-        if not live or self.provider_combo.currentText() != provider:
+        live = await self.engine.list_models(provider, force=True)
+        if self.provider_combo.currentText() != provider:
             return
+        if not live:
+            return  # leave cache/curated placeholder; network or auth failed
         keep = self.model_combo.currentText()
-        merged = list(dict.fromkeys(([keep] if keep and keep not in live else []) + live))
+        # live list is authoritative — drop stale curated ids; keep only the
+        # current selection if the user typed a custom id not in the catalog
+        merged = list(dict.fromkeys(
+            ([keep] if keep and keep not in live else []) + live))
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
         self.model_combo.addItems(merged)
-        self.model_combo.setCurrentText(keep or (merged[0] if merged else ""))
+        if keep and keep in merged:
+            self.model_combo.setCurrentText(keep)
+        else:
+            self.model_combo.setCurrentText(merged[0] if merged else "")
         self.model_combo.blockSignals(False)
+        self.model_changed.emit(self.value())

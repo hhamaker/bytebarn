@@ -1091,23 +1091,29 @@ class MainWindow(QMainWindow):
         self._set_provider_models(provider, model_id)
 
     def _set_provider_models(self, provider: str, current_id: str = "") -> None:
-        """Curated list immediately, live-fetched full list when it arrives."""
+        """Cached/curated list immediately; always refresh live from the provider."""
         if not provider:
             self.prompt_bar.set_models([], "")
             return
-        curated = curated_models(provider)
-        if current_id and current_id not in curated:
-            curated.insert(0, current_id)
-        self.prompt_bar.set_models(curated, current_id or (curated[0] if curated else ""))
+        cached = self.engine.cached_models(provider)
+        models = list(cached) if cached is not None else curated_models(provider)
+        if current_id and current_id not in models:
+            models.insert(0, current_id)
+        self.prompt_bar.set_models(models, current_id or (models[0] if models else ""))
         self._fire(self._load_live_models(provider))
 
     async def _load_live_models(self, provider: str) -> None:
-        live = await self.engine.list_models(provider)
-        if not live or self.prompt_bar.provider_combo.currentText() != provider:
-            return  # provider changed meanwhile, or nothing better than curated
+        live = await self.engine.list_models(provider, force=True)
+        if self.prompt_bar.provider_combo.currentText() != provider:
+            return  # provider changed meanwhile
+        if not live:
+            return  # leave cache/curated placeholder on fetch failure
         keep = self.prompt_bar.model_combo.currentText()
-        merged = list(dict.fromkeys(([keep] if keep and keep not in live else []) + live))
-        self.prompt_bar.set_models(merged, keep or (merged[0] if merged else ""))
+        # live catalog is authoritative — drop stale curated ids
+        merged = list(dict.fromkeys(
+            ([keep] if keep and keep not in live else []) + live))
+        select = keep if keep in merged else (merged[0] if merged else "")
+        self.prompt_bar.set_models(merged, select)
 
     def _provider_changed(self, provider: str) -> None:
         if not provider or provider.startswith("⚡"):
