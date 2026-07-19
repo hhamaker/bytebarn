@@ -714,3 +714,77 @@ async def test_list_bedrock_models_via_api_key():
         ids = await bedrock.list_bedrock_models(region="us-west-2", api_key="tok-123")
     # only ON_DEMAND models are returned
     assert ids == ["anthropic.claude-sonnet-4-5"]
+
+
+def test_openai_messages_assistant_tool_call_content_is_string():
+    from crew.engine.providers.base import Msg
+    from crew.engine.providers.openai_compat import _to_openai_messages
+
+    msgs = [
+        Msg("user", [{"type": "text", "text": "list files"}]),
+        Msg("assistant", [
+            {"type": "tool_call", "id": "c1", "name": "bash", "input": {"command": "ls"}},
+        ]),
+        Msg("user", [
+            {"type": "tool_result", "call_id": "c1", "output": "a.py", "is_error": False},
+        ]),
+    ]
+    out = _to_openai_messages("system", msgs)
+    assistant = next(m for m in out if m["role"] == "assistant")
+    assert isinstance(assistant["content"], str)  # not None
+    assert assistant["content"] == ""
+    assert assistant["tool_calls"][0]["function"]["name"] == "bash"
+    for m in out:
+        if "content" in m:
+            assert m["content"] is not None
+            assert isinstance(m["content"], str)
+
+
+def test_openai_messages_assistant_text_joins_correctly():
+    from crew.engine.providers.base import Msg
+    from crew.engine.providers.openai_compat import _to_openai_messages
+
+    msgs = [
+        Msg("user", [{"type": "text", "text": "hi"}]),
+        Msg("assistant", [
+            {"type": "text", "text": "hello"},
+            {"type": "text", "text": "world"},
+        ]),
+    ]
+    out = _to_openai_messages("system", msgs)
+    assistant = next(m for m in out if m["role"] == "assistant")
+    assert assistant["content"] == "hello\nworld"
+
+
+def test_bedrock_usable_ids_include_inference_profiles():
+    """Current-gen Claude on Bedrock is INFERENCE_PROFILE-only — the live
+    list must surface the us.… profile ids, not just legacy ON_DEMAND."""
+    from crew.engine.providers.bedrock import usable_bedrock_ids
+
+    models = [
+        {"modelId": "anthropic.claude-3-5-haiku-20241022-v1:0",
+         "providerName": "Anthropic", "inferenceTypesSupported": ["ON_DEMAND"]},
+        {"modelId": "anthropic.claude-sonnet-4-5-20250929-v1:0",
+         "providerName": "Anthropic",
+         "inferenceTypesSupported": ["INFERENCE_PROFILE"]},   # no direct invoke
+        {"modelId": "amazon.nova-pro-v1:0", "providerName": "Amazon",
+         "inferenceTypesSupported": ["ON_DEMAND"]},           # wrong protocol
+    ]
+    profiles = [
+        {"inferenceProfileId": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+         "status": "ACTIVE"},
+        {"inferenceProfileId": "us.anthropic.claude-opus-4-8-v1:0",
+         "status": "ACTIVE"},
+        {"inferenceProfileId": "us.amazon.nova-pro-v1:0", "status": "ACTIVE"},
+        {"inferenceProfileId": "us.anthropic.claude-old-v1:0",
+         "status": "INACTIVE"},                               # not usable
+    ]
+    ids = usable_bedrock_ids(models, profiles)
+    assert "anthropic.claude-3-5-haiku-20241022-v1:0" in ids        # legacy direct
+    assert "us.anthropic.claude-sonnet-4-5-20250929-v1:0" in ids    # via profile
+    assert "us.anthropic.claude-opus-4-8-v1:0" in ids
+    # non-Anthropic and inactive profiles excluded
+    assert not any("nova" in i for i in ids)
+    assert "us.anthropic.claude-old-v1:0" not in ids
+    # the profile-only base id is not offered raw (it can't be invoked)
+    assert "anthropic.claude-sonnet-4-5-20250929-v1:0" not in ids

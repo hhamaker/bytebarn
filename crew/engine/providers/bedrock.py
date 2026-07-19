@@ -78,14 +78,33 @@ class BedrockProvider(AnthropicProvider):
         self._client = client or anthropic.AsyncAnthropicBedrock(**kwargs)
 
 
-def _on_demand_ids(summaries: list[dict]) -> list[str]:
-    """Model ids that support ON_DEMAND inference, from a modelSummaries list."""
-    ids = []
-    for model in summaries:
-        if "ON_DEMAND" not in model.get("inferenceTypesSupported", []):
+def usable_bedrock_ids(
+    model_summaries: list[dict], profile_summaries: list[dict]
+) -> list[str]:
+    """Every model id this provider can actually invoke.
+
+    Two invocation paths exist on Bedrock:
+    - legacy models support ON_DEMAND — the bare ``anthropic.…`` id works
+    - current-generation Claude is INFERENCE_PROFILE-only — invokable solely
+      through a region-prefixed profile id (``us.anthropic.…``), which the
+      foundation-models list does *not* contain
+
+    Filtering foundation models to ON_DEMAND (the old behavior) therefore
+    silently dropped every current Claude model. Non-Anthropic entries are
+    excluded — this provider speaks the Anthropic wire protocol only."""
+    ids: set[str] = set()
+    for model in model_summaries:
+        if "anthropic" not in model.get("modelId", "").lower():
             continue
-        ids.append(model["modelId"])
-    return sorted(set(ids))
+        if "ON_DEMAND" in model.get("inferenceTypesSupported", []):
+            ids.add(model["modelId"])
+    for profile in profile_summaries:
+        pid = profile.get("inferenceProfileId", "")
+        if "anthropic" not in pid.lower():
+            continue
+        if profile.get("status", "ACTIVE") == "ACTIVE":
+            ids.add(pid)
+    return sorted(ids)
 
 
 async def list_bedrock_models_via_api_key(
@@ -95,16 +114,26 @@ async def list_bedrock_models_via_api_key(
     API key (bearer token) — no boto3 needed. [] on any failure."""
     import httpx
 
-    url = f"https://bedrock.{resolve_region(region)}.amazonaws.com/foundation-models"
+    base = f"https://bedrock.{resolve_region(region)}.amazonaws.com"
+    headers = {"Authorization": f"Bearer {api_key}"}
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                url,
-                params={"byOutputModality": "TEXT"},
-                headers={"Authorization": f"Bearer {api_key}"},
-            )
-            resp.raise_for_status()
-            return _on_demand_ids(resp.json().get("modelSummaries", []))
+            models = await client.get(
+                f"{base}/foundation-models",
+                params={"byOutputModality": "TEXT"}, headers=headers)
+            models.raise_for_status()
+            profiles: list[dict] = []
+            try:  # profiles are additive — a failure shouldn't kill the list
+                resp = await client.get(
+                    f"{base}/inference-profiles",
+                    params={"typeEquals": "SYSTEM_DEFINED", "maxResults": 1000},
+                    headers=headers)
+                resp.raise_for_status()
+                profiles = resp.json().get("inferenceProfileSummaries", [])
+            except Exception:
+                pass
+            return usable_bedrock_ids(
+                models.json().get("modelSummaries", []), profiles)
     except Exception:
         return []
 
@@ -132,7 +161,19 @@ async def list_bedrock_models(
             kwargs["aws_secret_access_key"] = client_secret
         client = boto3.client("bedrock", **kwargs)
         response = client.list_foundation_models(byOutputModality="TEXT")
-        return _on_demand_ids(response.get("modelSummaries", []))
+        profiles: list[dict] = []
+        try:  # additive — current-gen Claude only appears here
+            page = client.list_inference_profiles(
+                typeEquals="SYSTEM_DEFINED", maxResults=1000)
+            profiles = page.get("inferenceProfileSummaries", [])
+            while page.get("nextToken"):
+                page = client.list_inference_profiles(
+                    typeEquals="SYSTEM_DEFINED", maxResults=1000,
+                    nextToken=page["nextToken"])
+                profiles += page.get("inferenceProfileSummaries", [])
+        except Exception:
+            pass
+        return usable_bedrock_ids(response.get("modelSummaries", []), profiles)
 
     try:
         return await asyncio.get_event_loop().run_in_executor(None, _list)
