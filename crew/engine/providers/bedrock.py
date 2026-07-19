@@ -5,8 +5,8 @@ same Messages API, differing only in auth (AWS credential chain: env vars,
 ~/.aws/credentials, SSO, instance roles) and model ids
 ("us.anthropic.claude-sonnet-4-5-...-v1:0" style).
 
-boto3 is optional — only used to list available models live; inference
-itself needs nothing beyond the anthropic SDK.
+boto3 (a dependency) lists models live and drives the Converse API for
+non-Claude models; Claude inference uses the anthropic SDK.
 """
 
 from __future__ import annotations

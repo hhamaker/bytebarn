@@ -113,7 +113,7 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
             note="Auth two ways: a Bedrock API key (bearer token), or AWS "
                  "credentials as Client ID (Access Key ID) + Client Secret "
                  "(Secret Access Key). Region from AWS_REGION (default "
-                 "us-east-1). Install boto3 for live model lists.",
+                 "us-east-1).",
             id_fields=("client_id", "client_secret"),
         ),
         ProviderSpec(
