@@ -782,9 +782,65 @@ def test_bedrock_usable_ids_include_inference_profiles():
     ids = usable_bedrock_ids(models, profiles)
     assert "anthropic.claude-3-5-haiku-20241022-v1:0" in ids        # legacy direct
     assert "us.anthropic.claude-sonnet-4-5-20250929-v1:0" in ids    # via profile
-    assert "us.anthropic.claude-opus-4-8-v1:0" in ids
-    # non-Anthropic and inactive profiles excluded
-    assert not any("nova" in i for i in ids)
+    # every vendor the key can invoke is offered (Converse runs non-Claude)
+    assert "amazon.nova-pro-v1:0" in ids
+    # inactive profiles and profiles without a TEXT-catalog base are excluded
     assert "us.anthropic.claude-old-v1:0" not in ids
+    assert "us.anthropic.claude-opus-4-8-v1:0" not in ids  # base not in catalog
     # the profile-only base id is not offered raw (it can't be invoked)
     assert "anthropic.claude-sonnet-4-5-20250929-v1:0" not in ids
+
+
+async def test_bedrock_converse_routes_non_claude_models():
+    """Non-Claude Bedrock ids stream through the Converse API and map onto
+    the provider-neutral event contract."""
+    from crew.engine.providers.base import (
+        Done, ModelRequest, Msg, TextDelta, ToolCallDelta, ToolCallEnd,
+        ToolCallStart, ToolDef, Usage,
+    )
+    from crew.engine.providers.bedrock import BedrockProvider
+
+    captured: dict = {}
+
+    class StubConverse:
+        def converse_stream(self, **request):
+            captured.update(request)
+            return {"stream": iter([
+                {"contentBlockDelta": {"contentBlockIndex": 0,
+                                       "delta": {"text": "hello "}}},
+                {"contentBlockDelta": {"contentBlockIndex": 0,
+                                       "delta": {"text": "nova"}}},
+                {"contentBlockStart": {"contentBlockIndex": 1, "start": {
+                    "toolUse": {"toolUseId": "t1", "name": "read"}}}},
+                {"contentBlockDelta": {"contentBlockIndex": 1, "delta": {
+                    "toolUse": {"input": '{"path": "a.py"}'}}}},
+                {"contentBlockStop": {"contentBlockIndex": 1}},
+                {"metadata": {"usage": {"inputTokens": 12, "outputTokens": 7}}},
+                {"messageStop": {"stopReason": "tool_use"}},
+            ])}
+
+    provider = BedrockProvider(client=object())
+    provider._converse_client = StubConverse()
+    req = ModelRequest(
+        model_id="us.amazon.nova-pro-v1:0",
+        system="be brief",
+        messages=[Msg("user", [{"type": "text", "text": "hi"}])],
+        tools=[ToolDef("read", "read a file", {"type": "object", "properties": {}})],
+        max_tokens=512,
+    )
+    events = [e async for e in provider.stream(req)]
+
+    texts = "".join(e.text for e in events if isinstance(e, TextDelta))
+    assert texts == "hello nova"
+    assert any(isinstance(e, ToolCallStart) and e.name == "read" for e in events)
+    assert any(isinstance(e, ToolCallDelta) and "a.py" in e.json_fragment
+               for e in events)
+    assert any(isinstance(e, ToolCallEnd) for e in events)
+    assert any(isinstance(e, Usage) and e.tokens_in == 12 for e in events)
+    assert events[-1] == Done("tool_use")
+
+    # request mapping: converse shapes, not anthropic shapes
+    assert captured["modelId"] == "us.amazon.nova-pro-v1:0"
+    assert captured["system"] == [{"text": "be brief"}]
+    assert captured["toolConfig"]["tools"][0]["toolSpec"]["name"] == "read"
+    assert captured["inferenceConfig"]["maxTokens"] == 512
