@@ -177,15 +177,34 @@ def test_prompt_bar_two_stage_picker(qapp):
     bar.set_providers(["groq", "ollama"], "groq")
     bar.set_models(["llama-3.3-70b-versatile", "llama-3.1-8b-instant"], "")
     assert bar.provider_combo.currentText() == "groq"
-    assert bar.current_model() == "groq/llama-3.3-70b-versatile"
+    # empty current → leave unselected (user must pick; no models[0] auto-pick)
+    assert bar.current_model() == ""
 
     bar.model_combo.setCurrentIndex(1)
     assert picked[-1] == "groq/llama-3.1-8b-instant"
+    assert bar.current_model() == "groq/llama-3.1-8b-instant"
+
+    # explicit current still selects
+    bar.set_models(["llama-3.3-70b-versatile", "llama-3.1-8b-instant"], "llama-3.3-70b-versatile")
+    assert bar.current_model() == "groq/llama-3.3-70b-versatile"
 
     # empty state: no combined model, guidance placeholder
     bar.set_providers([], "")
     bar.set_models([], "")
     assert bar.current_model() == ""
+
+
+def test_prompt_bar_set_models_does_not_auto_pick(qapp):
+    """set_models with empty current must leave selection empty (no models[0])."""
+    from crew.app.prompt_bar import PromptBar
+
+    bar = PromptBar()
+    bar.set_providers(["anthropic"], "anthropic")
+    bar.set_models(["claude-opus-4", "claude-sonnet-4"], "")
+    assert bar.current_model() == ""
+    # user then picks
+    bar.model_combo.setCurrentIndex(0)
+    assert bar.current_model() == "anthropic/claude-opus-4"
 
 
 def test_transcript_image_attachment_preview(qapp, tmp_path):
@@ -1126,4 +1145,127 @@ async def test_crew_stage_resizable_and_persisted(qapp, tmp_path):
         config = json.loads((gdir / "config.json").read_text())
         assert config["stage_height"] == window.stage_split.sizes()[1] > 0
     finally:
+        await engine.stop()
+
+
+async def test_load_live_models_preserves_selection(qapp, tmp_path):
+    from crew.app.main_window import MainWindow
+    from crew.engine.facade import Engine
+
+    proj = tmp_path / "p"
+    proj.mkdir()
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=tmp_path / "g")
+    engine.providers.auth.set("groq", {"type": "api", "key": "gsk-x"})
+    await engine.start()
+    try:
+        window = MainWindow(engine)
+        window.prompt_bar.set_providers(["groq"], "groq")
+        window.prompt_bar.set_models(["keep-me", "other"], "keep-me")
+        assert window.prompt_bar.current_model() == "groq/keep-me"
+
+        async def fake_list(provider, force=False):
+            return ["other", "brand-new"]  # keep-me NOT in live
+
+        engine.list_models = fake_list
+        await window._load_live_models("groq")
+        # keep-me must still be selected (prepended), not swapped to other/brand-new
+        assert window.prompt_bar.current_model() == "groq/keep-me"
+
+        # empty selection must stay empty (not auto models[0])
+        window.prompt_bar.set_models(["a", "b"], "")
+        assert window.prompt_bar.current_model() == ""
+        await window._load_live_models("groq")
+        assert window.prompt_bar.current_model() == ""
+    finally:
+        for task in getattr(window, "_tasks", []):
+            task.cancel()
+        await engine.stop()
+
+
+async def test_model_picker_empty_current_does_not_autopick(qapp, tmp_path):
+    from crew.app.model_picker import ModelPicker
+    from crew.engine.facade import Engine
+
+    proj = tmp_path / "p"
+    proj.mkdir()
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=tmp_path / "g")
+    engine.providers.auth.set("openai", {"type": "api", "key": "sk-x"})
+    await engine.start()
+    try:
+        picker = ModelPicker(engine)
+        # direct construction leaves combos empty; simulate provider set with no model
+        picker._set_provider_models("openai", "")
+        assert picker.model_combo.currentText() == ""
+    finally:
+        await engine.stop()
+
+
+async def test_refresh_pickers_preserves_provider_on_bare_model_id(qapp, tmp_path):
+    """AgentRegistryChanged used to pass model_combo bare text, flipping provider."""
+    from crew.app.main_window import MainWindow
+    from crew.engine.facade import Engine
+
+    proj = tmp_path / "p"
+    proj.mkdir()
+    g = tmp_path / "g"
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=g)
+    engine.providers.auth.set("groq", {"type": "api", "key": "gsk-x"})
+    engine.providers.auth.set("anthropic", {"type": "api", "key": "sk-x"})
+    # remember a non-anthropic default
+    from crew.engine.config import patch_config_file
+    patch_config_file(g / "config.json", {"last_model": "groq/llama-3.1-8b-instant", "model": "groq/llama-3.1-8b-instant"})
+    engine.reload_config()
+    await engine.start()
+    try:
+        window = MainWindow(engine)
+        window.prompt_bar.set_providers(["anthropic", "groq"], "groq")
+        window.prompt_bar.set_models(["llama-3.1-8b-instant", "llama-3.3-70b-versatile"], "llama-3.1-8b-instant")
+        assert window.prompt_bar.provider_combo.currentText() == "groq"
+        assert window.prompt_bar.current_model() == "groq/llama-3.1-8b-instant"
+
+        # simulate the OLD buggy call shape (bare model id) — must NOT flip to anthropic
+        window._refresh_pickers("build", window.prompt_bar.model_combo.currentText())
+        assert window.prompt_bar.provider_combo.currentText() == "groq"
+        assert "llama-3.1-8b-instant" in window.prompt_bar.model_combo.currentText()
+
+        # and the fixed call shape also works
+        window._refresh_pickers("build", window.prompt_bar.current_model())
+        assert window.prompt_bar.provider_combo.currentText() == "groq"
+    finally:
+        for task in getattr(window, "_tasks", []):
+            task.cancel()
+        await engine.stop()
+
+
+async def test_switching_provider_clears_previous_model(qapp, tmp_path):
+    """Selecting a new provider must not keep the old provider's model shown."""
+    from crew.app.main_window import MainWindow
+    from crew.engine.facade import Engine
+
+    proj = tmp_path / "p"
+    proj.mkdir()
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=tmp_path / "g")
+    engine.providers.auth.set("groq", {"type": "api", "key": "gsk-x"})
+    engine.providers.auth.set("xai", {"type": "api", "key": "xai-x"})
+    await engine.start()
+    try:
+        window = MainWindow(engine)
+        # start on xai with a model selected
+        window.prompt_bar.set_providers(["xai", "groq"], "xai")
+        window.prompt_bar.set_models(["grok-4.5", "grok-4"], "grok-4.5")
+        assert window.prompt_bar.current_model() == "xai/grok-4.5"
+
+        # user switches provider to groq — simulate provider_combo change
+        window.prompt_bar.provider_combo.setCurrentText("groq")  # fires provider_changed
+        window._provider_changed("groq")  # ensure handler ran (blockSignals-safe)
+
+        # the old xai model must NOT be shown for groq
+        shown = window.prompt_bar.model_combo.currentText().strip()
+        assert shown != "grok-4.5", f"stale model still shown: {shown}"
+        # current_model is either empty or a groq model, never xai/grok-4.5
+        cm = window.prompt_bar.current_model()
+        assert cm == "" or cm.startswith("groq/"), cm
+    finally:
+        for task in getattr(window, "_tasks", []):
+            task.cancel()
         await engine.stop()

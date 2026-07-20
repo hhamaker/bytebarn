@@ -39,7 +39,7 @@ def _to_openai_messages(system: str, messages: list[Msg]) -> list[dict[str, Any]
                 for i in msg.content
                 if i["type"] == "tool_call"
             ]
-            entry: dict[str, Any] = {"role": "assistant", "content": "\n".join(text_parts) or None}
+            entry: dict[str, Any] = {"role": "assistant", "content": "\n".join(text_parts)}
             if tool_calls:
                 entry["tool_calls"] = tool_calls
             out.append(entry)

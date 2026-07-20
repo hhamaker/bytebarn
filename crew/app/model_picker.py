@@ -102,8 +102,8 @@ class ModelPicker(QWidget):
         self.model_combo.addItems(models)
         if current_id:
             self.model_combo.setCurrentText(current_id)
-        elif models:
-            self.model_combo.setCurrentIndex(0)
+        else:
+            self.model_combo.setCurrentText("")
         self.model_combo.blockSignals(False)
         self.model_changed.emit(self.value())
 
@@ -119,25 +119,18 @@ class ModelPicker(QWidget):
         if self.provider_combo.currentText() != provider:
             return
         if not live:
-            return  # leave cache/curated placeholder; network or auth failed
-        keep = self.model_combo.currentText()
-        # live list is authoritative — drop stale curated ids; keep only the
-        # current selection if the user typed a custom id not in the catalog
-        merged = list(dict.fromkeys(
-            ([keep] if keep and keep not in live else []) + live))
-        if keep and keep in merged:
-            # selection didn't change, just update the list
-            self.model_combo.blockSignals(True)
-            self.model_combo.clear()
-            self.model_combo.addItems(merged)
+            return
+        keep = self.model_combo.currentText().strip()
+        merged = list(dict.fromkeys(([keep] if keep and keep not in live else []) + live))
+        prev = self.value()
+        self.model_combo.blockSignals(True)
+        self.model_combo.clear()
+        self.model_combo.addItems(merged)
+        if keep:
             self.model_combo.setCurrentText(keep)
-            self.model_combo.blockSignals(False)
         else:
-            # selection will change (e.g., first curated id no longer valid)
-            new = merged[0] if merged else ""
-            self.model_combo.blockSignals(True)
-            self.model_combo.clear()
-            self.model_combo.addItems(merged)
-            self.model_combo.blockSignals(False)
-            # unblock so the new selection triggers currentTextChanged → model_changed
-            self.model_combo.setCurrentText(new)
+            self.model_combo.setCurrentText("")
+        self.model_combo.blockSignals(False)
+        # only notify if user-visible value actually changed
+        if self.value() != prev:
+            self.model_changed.emit(self.value())

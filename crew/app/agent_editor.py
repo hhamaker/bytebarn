@@ -158,8 +158,8 @@ class AgentEditor(QDialog):
         self.model_combo.addItems(models)
         if current_id:
             self.model_combo.setCurrentText(current_id)
-        elif models:
-            self.model_combo.setCurrentIndex(0)
+        else:
+            self.model_combo.setCurrentText("")
         self.model_combo.blockSignals(False)
         # always re-fetch so the list matches what the provider serves right now
         import asyncio
@@ -176,24 +176,18 @@ class AgentEditor(QDialog):
             return
         if not live:
             return
-        keep = self.model_combo.currentText()
-        merged = list(dict.fromkeys(
-            ([keep] if keep and keep not in live else []) + live))
-        if keep and keep in merged:
-            # selection didn't change; refresh silently
-            self.model_combo.blockSignals(True)
-            self.model_combo.clear()
-            self.model_combo.addItems(merged)
+        keep = self.model_combo.currentText().strip()
+        merged = list(dict.fromkeys(([keep] if keep and keep not in live else []) + live))
+        prev = self._selected_model()
+        self.model_combo.blockSignals(True)
+        self.model_combo.clear()
+        self.model_combo.addItems(merged)
+        if keep:
             self.model_combo.setCurrentText(keep)
-            self.model_combo.blockSignals(False)
         else:
-            # selection will change — unblock so currentTextChanged fires
-            new = merged[0] if merged else ""
-            self.model_combo.blockSignals(True)
-            self.model_combo.clear()
-            self.model_combo.addItems(merged)
-            self.model_combo.blockSignals(False)
-            self.model_combo.setCurrentText(new)
+            self.model_combo.setCurrentText("")
+        self.model_combo.blockSignals(False)
+        # no emit needed; settings dialog reads _selected_model() on OK
 
     def _provider_changed(self, provider: str) -> None:
         self._set_provider_models(provider)

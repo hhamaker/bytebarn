@@ -277,7 +277,11 @@ class PromptBar(QWidget):
         self.provider_combo.blockSignals(False)
 
     def set_models(self, models: list[str], current: str) -> None:
-        """``models`` are bare model ids for the selected provider."""
+        """``models`` are bare model ids for the selected provider.
+
+        If ``current`` is empty, leave the combo without a selection (user must
+        pick). Only auto-select when an explicit current id is provided.
+        """
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
         self.model_combo.addItems(models)
@@ -288,7 +292,8 @@ class PromptBar(QWidget):
         elif current:
             self.model_combo.setCurrentText(current)
         else:
-            self.model_combo.setCurrentIndex(0)
+            # leave unselected; do not auto-pick first item
+            self.model_combo.setCurrentText("")
         self.model_combo.blockSignals(False)
 
     def current_model(self) -> str:

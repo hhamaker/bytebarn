@@ -643,10 +643,12 @@ class MainWindow(QMainWindow):
                     agent_colors = {
                         a.name: a.color or "#98c379" for a in self.engine.agents.agents.values()
                     }
-                    # keep the session's current picks; only the lists refresh
+                    # keep the session's current picks; only the lists refresh.
+                    # Must pass full "provider/model-id" — bare model_combo text has no
+                    # provider and would make _refresh_pickers fall back to providers[0].
                     self._refresh_pickers(
                         self.prompt_bar.agent_combo.currentText(),
-                        self.prompt_bar.model_combo.currentText(),
+                        self.prompt_bar.current_model(),
                     )
             except Exception:  # keep the loop alive no matter what
                 import traceback
@@ -1079,14 +1081,27 @@ class MainWindow(QMainWindow):
         agents = [_AGENT_DISPLAY.get(a.name, a.name) for a in self.engine.agents.primaries()]
         self.prompt_bar.set_agents(agents, _AGENT_DISPLAY.get(agent, agent) or "build")
 
-        # two-stage picker: connected providers, then that provider's models.
-        # new sessions (no per-session model) start on the last one you chose
         model = model or self._default_model()
-        provider, _, model_id = model.partition("/")
+        if model and "/" not in model:
+            # bare model id (e.g. from model_combo.currentText) — keep current provider
+            provider = self.prompt_bar.provider_combo.currentText()
+            if not provider or provider.startswith("⚡"):
+                default = self._default_model()
+                provider = default.partition("/")[0] if default else ""
+            model_id = model
+        else:
+            provider, _, model_id = model.partition("/")
+
         providers = connected_providers(self.engine.config, self.engine.providers.auth)
-        if provider not in providers:
+        if provider and provider not in providers:
+            if model_id:
+                providers = [provider] + [p for p in providers if p != provider]
+            else:
+                provider = providers[0] if providers else ""
+                model_id = ""
+        elif not provider:
             provider = providers[0] if providers else ""
-            model_id = ""
+            model_id = model_id or ""
         self.prompt_bar.set_providers(providers, provider)
         self._set_provider_models(provider, model_id)
 
@@ -1099,7 +1114,16 @@ class MainWindow(QMainWindow):
         models = list(cached) if cached is not None else curated_models(provider)
         if current_id and current_id not in models:
             models.insert(0, current_id)
-        self.prompt_bar.set_models(models, current_id or (models[0] if models else ""))
+        # Only auto-select when current_id explicitly provided.
+        # Otherwise preserve an existing selection for the provider, else leave empty.
+        if current_id:
+            select = current_id
+        elif self.prompt_bar.provider_combo.currentText() == provider:
+            keep = self.prompt_bar.model_combo.currentText().strip()
+            select = keep if keep in models else ""
+        else:
+            select = ""
+        self.prompt_bar.set_models(models, select)
         self._fire(self._load_live_models(provider))
 
     async def _load_live_models(self, provider: str) -> None:
@@ -1112,25 +1136,17 @@ class MainWindow(QMainWindow):
         # live catalog is authoritative — drop stale curated ids
         merged = list(dict.fromkeys(
             ([keep] if keep and keep not in live else []) + live))
-        if keep and keep in merged:
-            # selection didn't change; just refresh the list silently
-            self.prompt_bar.set_models(merged, keep)
-        else:
-            # selection will change — unblock so currentTextChanged fires
-            new = merged[0] if merged else ""
-            self.prompt_bar.model_combo.blockSignals(True)
-            self.prompt_bar.model_combo.clear()
-            self.prompt_bar.model_combo.addItems(merged)
-            self.prompt_bar.model_combo.blockSignals(False)
-            self.prompt_bar.model_combo.setCurrentText(new)
+        # Always delegate to set_models (signals blocked inside it). Never
+        # auto-pick merged[0] when keep is empty.
+        self.prompt_bar.set_models(merged, keep if keep else "")
 
     def _provider_changed(self, provider: str) -> None:
         if not provider or provider.startswith("⚡"):
             return
-        self._set_provider_models(provider)
-        model = self.prompt_bar.current_model()
-        if self.current_session_id and model:
-            self._fire(self.engine.store.update_session(self.current_session_id, model=model))
+        # provider dropdown changed — do not auto-pick a model; just populate
+        # the list and let the user choose. The model_changed handler will
+        # persist once they actually pick one.
+        self._set_provider_models(provider, current_id="")
 
     async def _refresh_cost(self) -> None:
         if not self.current_session_id:
