@@ -28,9 +28,9 @@ def _current_crew_style(config) -> str:
     """Configured crew style; the legacy 'waifu' bool maps to 'waifu'."""
     extra = config.model_extra or {}
     style = extra.get("crew_style")
-    if style in ("critters", "waifu", "dogs", "cats"):
+    if style in ("farm", "critters", "waifu", "dogs", "cats"):
         return style
-    return "waifu" if extra.get("waifu") else "critters"
+    return "waifu" if extra.get("waifu") else "farm"
 
 
 class SettingsDialog(QDialog):
@@ -73,11 +73,11 @@ class SettingsDialog(QDialog):
         form.addRow("theme", self.theme)
 
         self.crew_style = QComboBox()
-        self.crew_style.addItems(["critters", "waifu", "dogs", "cats"])
+        self.crew_style.addItems(["farm", "critters", "waifu", "dogs", "cats"])
         self.crew_style.setCurrentText(_current_crew_style(config))
         self.crew_style.setToolTip(
-            "How the crew renders everywhere: pixel critters (default), "
-            "anime characters, all dogs, or all cats")
+            "How the barn crew renders everywhere: farm animals (default), "
+            "woodland critters, anime characters, all dogs, or all cats")
         form.addRow("crew style", self.crew_style)
 
         save = QPushButton("Save")

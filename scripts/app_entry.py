@@ -1,5 +1,5 @@
 """PyInstaller entry point: run crew as a proper package import."""
 
-from crew.main import main
+from bytebarn.main import main
 
 main()

@@ -8,9 +8,9 @@ def test_engine_importable_without_qt():
     code = (
         "import sys\n"
         "sys.modules['PySide6'] = None  # any Qt import will explode\n"
-        "import crew.engine.facade, crew.engine.runner, crew.engine.compaction\n"
-        "import crew.engine.tools.registry, crew.engine.agents, crew.engine.commands\n"
-        "import crew.cli\n"
+        "import bytebarn.engine.facade, bytebarn.engine.runner, bytebarn.engine.compaction\n"
+        "import bytebarn.engine.tools.registry, bytebarn.engine.agents, bytebarn.engine.commands\n"
+        "import bytebarn.cli\n"
         "qt = [m for m in sys.modules if m.startswith('PySide6.')]\n"
         "assert not qt, f'engine imported Qt modules: {qt}'\n"
         "print('clean')\n"

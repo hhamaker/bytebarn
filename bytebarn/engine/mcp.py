@@ -1,6 +1,6 @@
 """MCP client support: plug external tool servers into every agent.
 
-Servers are declared in config (global or project ``.crew/config.json``,
+Servers are declared in config (global or project ``.bytebarn/config.json``,
 project wins per key)::
 
     "mcp": {

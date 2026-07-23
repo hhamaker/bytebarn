@@ -55,7 +55,7 @@ async def _consume_events(engine: Engine) -> None:
 
 
 async def main() -> None:
-    parser = argparse.ArgumentParser(description="Crew engine CLI harness")
+    parser = argparse.ArgumentParser(description="ByteBarn engine CLI harness")
     parser.add_argument("prompt")
     parser.add_argument("--project", default=".")
     parser.add_argument("--agent", default="")

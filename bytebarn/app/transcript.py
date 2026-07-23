@@ -396,7 +396,7 @@ class _Welcome(QWidget):
         painter.setFont(title_font)
         painter.setPen(text_color)
         painter.drawText(QRectF(0, cy + banner.height() / 2 + 14, w, 30),
-                         Qt.AlignHCenter, "The crew is ready.")
+                         Qt.AlignHCenter, "The barn crew is ready.")
         sub_font = QFont()
         sub_font.setPointSizeF(11.5)
         painter.setFont(sub_font)

@@ -127,7 +127,7 @@ class ProjectWorkspace(QWidget):
 
         # routines: recurring goals on a schedule (app must be running)
         layout.addWidget(QLabel("<b>Routines</b> — run a goal on a schedule"
-                                " while Crew is open"))
+                                " while ByteBarn is open"))
         routine_row = QHBoxLayout()
         self.routine_input = QLineEdit()
         self.routine_input.setPlaceholderText("Prompt to run repeatedly…")

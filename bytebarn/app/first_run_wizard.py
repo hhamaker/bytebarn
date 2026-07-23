@@ -1,4 +1,4 @@
-"""First-run welcome dialog: what Crew is, how to start, sample prompts.
+"""First-run welcome dialog: what ByteBarn is, how to start, sample prompts.
 
 Shown once (``onboarded: true`` is written to global config afterwards).
 Deliberately one screen — a short how-to and sample prompts, not a slideshow.
@@ -26,7 +26,7 @@ class FirstRunWizard(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Welcome to Crew")
+        self.setWindowTitle("Welcome to ByteBarn")
         self.setMinimumWidth(520)
 
         sprites = QLabel()
@@ -35,7 +35,7 @@ class FirstRunWizard(QDialog):
 
         intro = QLabel(
             "<h2>Meet your crew</h2>"
-            "<p>Crew runs AI coding agents against your project. Type a prompt,"
+            "<p>ByteBarn runs AI coding agents against your project. Type a prompt,"
             " or pick the <b>goal</b> agent to have the whole crew plan and"
             " execute a bigger task together.</p>"
             "<p><b>Get started:</b></p>"

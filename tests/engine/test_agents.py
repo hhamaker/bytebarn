@@ -1,6 +1,6 @@
-from crew.engine.agents import AgentRegistry, builtin_agents, parse_agent_file
-from crew.engine.commands import CommandRegistry
-from crew.engine.config import Config
+from bytebarn.engine.agents import AgentRegistry, builtin_agents, parse_agent_file
+from bytebarn.engine.commands import CommandRegistry
+from bytebarn.engine.config import Config
 
 
 def test_builtin_agents_present_and_restricted():
@@ -47,9 +47,9 @@ def _registry(tmp_path, config=None, with_files=None):
     gdir = tmp_path / "global"
     pdir = tmp_path / "proj"
     (gdir / "agent").mkdir(parents=True)
-    (pdir / ".crew" / "agent").mkdir(parents=True)
+    (pdir / ".bytebarn" / "agent").mkdir(parents=True)
     for scope, name, text in with_files or []:
-        base = gdir / "agent" if scope == "global" else pdir / ".crew" / "agent"
+        base = gdir / "agent" if scope == "global" else pdir / ".bytebarn" / "agent"
         (base / f"{name}.md").write_text(text)
     return AgentRegistry(config or Config(), project_dir=pdir, global_dir=gdir)
 
@@ -95,8 +95,8 @@ def test_hidden_excluded_from_lists(tmp_path):
 def test_command_registry(tmp_path):
     gdir = tmp_path / "g"
     pdir = tmp_path / "p"
-    (pdir / ".crew" / "command").mkdir(parents=True)
-    (pdir / ".crew" / "command" / "review.md").write_text(
+    (pdir / ".bytebarn" / "command").mkdir(parents=True)
+    (pdir / ".bytebarn" / "command" / "review.md").write_text(
         "---\ndescription: review code\nagent: plan\n---\nReview: $ARGUMENTS"
     )
     reg = CommandRegistry(project_dir=pdir, global_dir=gdir)
@@ -112,7 +112,7 @@ def test_command_registry(tmp_path):
 def test_user_command_overrides_builtin(tmp_path):
     gdir = tmp_path / "g"
     pdir = tmp_path / "p"
-    (pdir / ".crew" / "command").mkdir(parents=True)
-    (pdir / ".crew" / "command" / "goal.md").write_text("---\ndescription: my goal\n---\nCustom $ARGUMENTS")
+    (pdir / ".bytebarn" / "command").mkdir(parents=True)
+    (pdir / ".bytebarn" / "command" / "goal.md").write_text("---\ndescription: my goal\n---\nCustom $ARGUMENTS")
     reg = CommandRegistry(project_dir=pdir, global_dir=gdir)
     assert reg.get("goal").render("x") == "Custom x"

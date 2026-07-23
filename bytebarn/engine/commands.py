@@ -111,7 +111,7 @@ class CommandRegistry:
         commands = builtin_commands()
         dirs = [self.global_dir / "command"]
         if self.project_dir:
-            dirs.append(self.project_dir / ".crew" / "command")
+            dirs.append(self.project_dir / ".bytebarn" / "command")
         for directory in dirs:
             if not directory.is_dir():
                 continue

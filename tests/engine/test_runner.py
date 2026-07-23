@@ -3,10 +3,10 @@ import json
 
 import pytest
 
-from crew.engine.facade import Engine
-from crew.engine.providers.base import Done, TextDelta, ToolCallDelta, ToolCallEnd, ToolCallStart, Usage
-from crew.engine.providers.fake import FakeProvider, text_turn, tool_turn
-from crew.engine.runner import history_to_messages
+from bytebarn.engine.facade import Engine
+from bytebarn.engine.providers.base import Done, TextDelta, ToolCallDelta, ToolCallEnd, ToolCallStart, Usage
+from bytebarn.engine.providers.fake import FakeProvider, text_turn, tool_turn
+from bytebarn.engine.runner import history_to_messages
 
 
 @pytest.fixture
@@ -348,7 +348,7 @@ async def test_goal_command_routes_to_orchestrator(engine):
 
 
 async def test_provider_error_visible_in_transcript(engine):
-    from crew.engine.providers.base import ErrorEv
+    from bytebarn.engine.providers.base import ErrorEv
 
     class Failing:
         name = "fake"
@@ -370,8 +370,8 @@ async def test_provider_error_visible_in_transcript(engine):
 
 
 async def test_model_fallback_switches_after_failures(engine):
-    from crew.engine.providers.base import ErrorEv
-    from crew.engine.providers.fake import FakeProvider, text_turn
+    from bytebarn.engine.providers.base import ErrorEv
+    from bytebarn.engine.providers.fake import FakeProvider, text_turn
 
     class AlwaysFails:
         name = "fake"
@@ -404,8 +404,8 @@ async def test_model_fallback_switches_after_failures(engine):
 async def test_model_fallback_disabled_by_config(tmp_path):
     import json as _json
 
-    from crew.engine.facade import Engine
-    from crew.engine.providers.base import ErrorEv
+    from bytebarn.engine.facade import Engine
+    from bytebarn.engine.providers.base import ErrorEv
 
     proj = tmp_path / "proj2"
     proj.mkdir()
@@ -428,7 +428,7 @@ async def test_model_fallback_disabled_by_config(tmp_path):
                 yield ErrorEv("boom")
 
         eng.providers.register("fake", AlwaysFails())
-        from crew.engine.providers.fake import FakeProvider, text_turn
+        from bytebarn.engine.providers.fake import FakeProvider, text_turn
 
         eng.providers.register("small", FakeProvider(lambda req: text_turn("t")))
         eng.fallback_model = lambda model, exclude: "backup/never"
@@ -444,9 +444,9 @@ async def test_model_fallback_disabled_by_config(tmp_path):
 async def test_full_auto_switch_releases_pending_permission(engine):
     import asyncio
 
-    from crew.engine.events import PermissionAsked
-    from crew.engine.permissions import FULL_AUTO
-    from crew.engine.providers.fake import FakeProvider, text_turn, tool_turn
+    from bytebarn.engine.events import PermissionAsked
+    from bytebarn.engine.permissions import FULL_AUTO
+    from bytebarn.engine.providers.fake import FakeProvider, text_turn, tool_turn
 
     # config in the fixture allows bash, so force ask via agent override
     engine.config.permission["bash"] = "ask"
@@ -480,8 +480,8 @@ async def test_full_auto_switch_releases_pending_permission(engine):
 
 
 async def test_out_of_credit_switches_immediately_and_skips_provider(engine):
-    from crew.engine.providers.base import ErrorEv
-    from crew.engine.providers.fake import FakeProvider, text_turn
+    from bytebarn.engine.providers.base import ErrorEv
+    from bytebarn.engine.providers.fake import FakeProvider, text_turn
 
     class Broke:
         name = "fake"
@@ -517,7 +517,7 @@ async def test_out_of_credit_switches_immediately_and_skips_provider(engine):
 
 
 async def test_non_string_stream_fragments_do_not_crash(engine):
-    from crew.engine.providers.base import Done, TextDelta, Usage
+    from bytebarn.engine.providers.base import Done, TextDelta, Usage
 
     class WeirdTypes:
         name = "fake"
@@ -540,7 +540,7 @@ async def test_non_string_stream_fragments_do_not_crash(engine):
 
 
 async def test_init_command_routes_to_build_with_template(engine):
-    from crew.engine.providers.fake import FakeProvider, text_turn
+    from bytebarn.engine.providers.fake import FakeProvider, text_turn
 
     _install(engine, [text_turn("AGENTS.md written")])
     session = await engine.new_session(agent="chat")
@@ -558,7 +558,7 @@ async def test_init_command_routes_to_build_with_template(engine):
 
 
 async def test_session_directory_overrides_tool_cwd(engine, tmp_path):
-    from crew.engine.providers.fake import FakeProvider, text_turn, tool_turn
+    from bytebarn.engine.providers.fake import FakeProvider, text_turn, tool_turn
 
     workdir = tmp_path / "elsewhere"
     workdir.mkdir()

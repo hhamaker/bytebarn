@@ -2,18 +2,18 @@ from pathlib import Path
 
 import pytest
 
-from crew.engine.skills import SkillRegistry
+from bytebarn.engine.skills import SkillRegistry
 
 
 @pytest.fixture
 def skill_dirs(tmp_path):
     g = tmp_path / "global"
     p = tmp_path / "proj"
-    (g / ".crew" / "skills").mkdir(parents=True)
-    (p / ".crew" / "skills").mkdir(parents=True)
-    (g / ".crew" / "skills" / "review.md").write_text("global review")
-    (p / ".crew" / "skills" / "review.md").write_text("project review")
-    (p / ".crew" / "skills" / "local.md").write_text("local only")
+    (g / ".bytebarn" / "skills").mkdir(parents=True)
+    (p / ".bytebarn" / "skills").mkdir(parents=True)
+    (g / ".bytebarn" / "skills" / "review.md").write_text("global review")
+    (p / ".bytebarn" / "skills" / "review.md").write_text("project review")
+    (p / ".bytebarn" / "skills" / "local.md").write_text("local only")
     return g, p
 
 

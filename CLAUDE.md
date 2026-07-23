@@ -4,8 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Crew — a local PySide6 desktop app that runs AI coding agents (an orchestrator
-delegating to subagents, rendered as pixel-art critters) against a user's
+ByteBarn — a local PySide6 desktop app that runs AI coding agents (an orchestrator
+delegating to subagents, rendered as pixel-art farm animals) against a user's
 codebase. `python-desktop-rebuild.md` is the original spec; code comments cite
 it by section (`spec §5.2` etc.) — check it when intent is unclear.
 
@@ -16,10 +16,10 @@ python3.12 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 
 # run the app (needs a project dir argument or it prompts with a file dialog)
-.venv/bin/python -m crew.main /path/to/project
+.venv/bin/python -m bytebarn.main /path/to/project
 
 # no-GUI engine harness
-.venv/bin/python -m crew.cli "prompt here" --project /path/to/project
+.venv/bin/python -m bytebarn.cli "prompt here" --project /path/to/project
 
 # tests — no network, no API keys; offscreen Qt is required
 QT_QPA_PLATFORM=offscreen .venv/bin/pytest
@@ -34,11 +34,11 @@ directly, no `@pytest.mark.asyncio` needed. No linter is configured.
 Two layers that meet only through the async event stream and the `Engine`
 facade:
 
-- **`crew/engine/`** — asyncio, **zero Qt**. Enforced by
+- **`bytebarn/engine/`** — asyncio, **zero Qt**. Enforced by
   `tests/engine/test_no_qt_in_engine.py`, which imports the engine with Qt
-  poisoned; importing PySide6 anywhere under `crew/engine/` breaks the suite.
-- **`crew/app/`** — PySide6 widgets, a pure projection of engine events plus
-  reads from the store. Main loop is qasync (`crew/main.py`), so dialogs can
+  poisoned; importing PySide6 anywhere under `bytebarn/engine/` breaks the suite.
+- **`bytebarn/app/`** — PySide6 widgets, a pure projection of engine events plus
+  reads from the store. Main loop is qasync (`bytebarn/main.py`), so dialogs can
   `asyncio.ensure_future` freely.
 
 Flow: UI calls `Engine` (facade.py) → `Runner` (runner.py) streams provider
@@ -53,7 +53,7 @@ Model strings are always `"provider/model-id"`. Resolution
 (`providers/registry.py`): explicit `config.provider` entry, else the recipe
 in `providers/known.py` (`KNOWN_PROVIDERS` — the single source of truth for
 supported services, curated model lists, auth kind). API keys resolve config
-key/env first, then `~/.crew/auth.json` (AuthStore — secrets never go in
+key/env first, then `~/.bytebarn/auth.json` (AuthStore — secrets never go in
 config files). OAuth records route specially: `xai` → loopback flow
 (`xai_oauth.py`), `github-copilot` → device-code flow
 (`github_copilot_oauth.py`). Wire protocols are just two: `anthropic` or
@@ -73,9 +73,9 @@ must enter/exit in the same task. Tests spawn a real FastMCP stdio server
 
 ### Config
 
-Two JSON-with-comments layers, project wins per key: `~/.crew/config.json`
-(overridable via `CREW_HOME` env — tests rely on this) and
-`<project>/.crew/config.json`. Programmatic writes must go through
+Two JSON-with-comments layers, project wins per key: `~/.bytebarn/config.json`
+(overridable via `BYTEBARN_HOME` env — tests rely on this) and
+`<project>/.bytebarn/config.json`. Programmatic writes must go through
 `patch_config_file(path, {"dotted.key": value})` (config.py) — it patches
 spans in place preserving user comments/formatting; `DELETE` sentinel removes
 a key. Never rewrite config files wholesale.
@@ -83,7 +83,7 @@ a key. Never rewrite config files wholesale.
 ### Agents
 
 `agents.py` builtins (prompts live in `assets/prompts/agent_*.txt`) ←
-overridden by `agent/*.md` files (global then project `.crew/agent/`) ←
+overridden by `agent/*.md` files (global then project `.bytebarn/agent/`) ←
 `config.agent.<name>` overrides on top. Hot-reloaded by a watchfiles task in
 main_window. The GUI agent editor writes config overrides for builtins but
 `.md` files for custom agents.
@@ -113,7 +113,7 @@ there, not in the widget.
 - **Agent** — named prompt persona; can be builtin, `.md` file, or config override.
 - **Stage** — headless `StageState` that manages on-screen sprite placement/logic.
 - **Sprite** — pixel-art critter chosen by `sprites.look_for(name)` for an agent.
-- **Config** — two-layer JSON-with-comments (`~/.crew` then project `.crew`).
+- **Config** — two-layer JSON-with-comments (`~/.bytebarn` then project `.bytebarn`).
 
 ## Glossary
 
@@ -124,7 +124,7 @@ there, not in the widget.
 - **compaction** — summarizing old history into a synthetic part when context nears the model's window (`compaction.py`).
 - **provider / model string** — always `"provider/model-id"`; resolution order in `providers/registry.py`.
 - **known provider** — an entry in `providers/known.py` with connection recipe + curated models; drives the ⚡ providers GUI.
-- **auth record** — per-provider credential in `~/.crew/auth.json`: `{"type": "api"|"oauth", ...}`.
+- **auth record** — per-provider credential in `~/.bytebarn/auth.json`: `{"type": "api"|"oauth", ...}`.
 - **model fallback** — automatic switch to a comparable connected model after repeated failures (`providers/fallback.py`).
 - **permission mode** — session-wide Safe / Ask / Full-auto toggle layered under per-tool config rules (`permissions.py`).
 - **subagent session** — child session created by the task tool; `parent_session_id` set, shown nested in the sidebar.

@@ -5,9 +5,9 @@ import sys
 
 import pytest
 
-from crew.engine.facade import Engine
-from crew.engine.permissions import ASK, DENY, FULL_AUTO, SAFE, PermissionPolicy
-from crew.engine.providers.fake import FakeProvider, text_turn, tool_turn
+from bytebarn.engine.facade import Engine
+from bytebarn.engine.permissions import ASK, DENY, FULL_AUTO, SAFE, PermissionPolicy
+from bytebarn.engine.providers.fake import FakeProvider, text_turn, tool_turn
 
 _SERVER = '''
 from mcp.server.fastmcp import FastMCP
@@ -118,7 +118,7 @@ async def test_bad_mcp_server_fails_gracefully(tmp_path):
 
 
 def test_known_mcp_servers_catalog():
-    from crew.engine.mcp import KNOWN_MCP_SERVERS, config_entry
+    from bytebarn.engine.mcp import KNOWN_MCP_SERVERS, config_entry
 
     assert {"github", "google-drive", "google-maps"} <= set(KNOWN_MCP_SERVERS)
     for spec in KNOWN_MCP_SERVERS.values():

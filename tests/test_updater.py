@@ -5,7 +5,7 @@ import subprocess
 
 import pytest
 
-from crew import updater
+from bytebarn import updater
 
 
 def _git(cwd, *args):

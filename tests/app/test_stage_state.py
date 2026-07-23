@@ -3,11 +3,11 @@
 (Imports Qt types transitively, so runs offscreen-safe: no widgets created.)
 """
 
-from crew.engine.events import RunFinished, TaskFinished, TaskStarted, TaskUpdated, TodoUpdated
+from bytebarn.engine.events import RunFinished, TaskFinished, TaskStarted, TaskUpdated, TodoUpdated
 
 
 def _state():
-    from crew.app.crew_stage import StageState
+    from bytebarn.app.crew_stage import StageState
 
     return StageState()
 
@@ -79,14 +79,14 @@ def test_child_run_finished_does_not_reset_stage():
 
 
 def test_species_stable():
-    from crew.app.sprites import SPECIES, species_for
+    from bytebarn.app.sprites import SPECIES, species_for
 
     assert species_for("explore") == species_for("explore")
     assert species_for("explore") in SPECIES
 
 
 def test_current_todo_and_planning_activation():
-    from crew.engine.events import TodoUpdated
+    from bytebarn.engine.events import TodoUpdated
 
     state = _state()
     state.on_event(TodoUpdated(session_id="p", todos=[
@@ -99,7 +99,7 @@ def test_current_todo_and_planning_activation():
 
 
 def test_summary_headline():
-    from crew.engine.events import RunFinished, TaskFinished, TaskStarted, TaskUpdated, TodoUpdated
+    from bytebarn.engine.events import RunFinished, TaskFinished, TaskStarted, TaskUpdated, TodoUpdated
 
     state = _state()
     assert state.summary() == "planning…"

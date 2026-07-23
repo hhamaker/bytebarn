@@ -236,14 +236,79 @@ _DOG_GRIDS = {"cat": _PUP_POINTY, "dog": _DOG,
 _CAT_GRIDS = {"cat": _CAT, "dog": _CAT_TUFT,
               "bunny": _CAT_FOLD, "bear": _CAT_SIAM}
 
-CREW_STYLES = ("critters", "waifu", "dogs", "cats")
-_crew_style = "critters"
+# -- farm mode (the ByteBarn default) ---------------------------------------
+#
+# The barn crew: pig, chicken, sheep, cow mapped onto the same stable
+# species slots so looks stay consistent when the style changes.
+
+_PIG = [                  # perky round ears; snout drawn as flavor
+    "............",
+    ".OO......OO.",
+    "OBBOOOOOOBBO",
+    "OBBBBBBBBBBO",
+    "OBBBBBBBBBBO",
+    "OBBBBBBBBBBO",
+    "OBBBBBBBBBBO",
+    "OBBWWWWWWBBO",
+    ".OBBWWWWBBO.",
+    ".OBBBBBBBBO.",
+    "..OOOOOOOO..",
+]
+
+_CHICK = [                # comb nubs on top; beak drawn as flavor
+    "...B..B..B..",
+    "..OOOOOOOO..",
+    ".OBBBBBBBBO.",
+    "OBBBBBBBBBBO",
+    "OBBBBBBBBBBO",
+    "OBBBBBBBBBBO",
+    "OBBBBBBBBBBO",
+    "OBBWWWWWWBBO",
+    ".OBBWWWWBBO.",
+    ".OBBBBBBBBO.",
+    "..OOOOOOOO..",
+]
+
+_SHEEP = [                # wool cloud on top, ears poking out the sides
+    "..WWWWWWWW..",
+    ".WWWWWWWWWW.",
+    "OOWWWWWWWWOO",
+    "OBBBBBBBBBBO",
+    "OBBBBBBBBBBO",
+    "OBBBBBBBBBBO",
+    "OBBBBBBBBBBO",
+    "OBBWWWWWWBBO",
+    ".OBBWWWWBBO.",
+    ".OBBBBBBBBO.",
+    "..OOOOOOOO..",
+]
+
+_COW = [                  # little horns + side-set ears; nostrils as flavor
+    ".WO......OW.",
+    ".OO......OO.",
+    "OBOOOOOOOOBO",
+    "OBBBBBBBBBBO",
+    "OBBBBBBBBBBO",
+    "OBBBBBBBBBBO",
+    "OBBBBBBBBBBO",
+    "OBBWWWWWWBBO",
+    ".OBBWWWWBBO.",
+    ".OBBBBBBBBO.",
+    "..OOOOOOOO..",
+]
+
+_FARM_GRIDS = {"cat": _PIG, "dog": _CHICK,
+               "bunny": _SHEEP, "bear": _COW}
+
+CREW_STYLES = ("farm", "critters", "waifu", "dogs", "cats")
+_crew_style = "farm"
 
 
 def set_crew_style(style: str) -> None:
-    """Choose how the whole crew renders: critters, waifu, dogs, or cats."""
+    """Choose how the whole crew renders: farm (default), critters, waifu,
+    dogs, or cats."""
     global _crew_style
-    _crew_style = style if style in CREW_STYLES else "critters"
+    _crew_style = style if style in CREW_STYLES else "farm"
 
 
 def crew_style() -> str:
@@ -362,7 +427,8 @@ def draw_critter(
         return
     painter.save()
     painter.setRenderHint(QPainter.Antialiasing, False)  # crisp pixels
-    grids = {"dogs": _DOG_GRIDS, "cats": _CAT_GRIDS}.get(_crew_style, _GRIDS)
+    grids = {"dogs": _DOG_GRIDS, "cats": _CAT_GRIDS,
+             "farm": _FARM_GRIDS}.get(_crew_style, _GRIDS)
     grid = grids.get(species, _CAT)
     body = _tint(color, state)
     outline = QColor(30, 30, 36, 140 if state == "waiting" else 255)
@@ -407,7 +473,18 @@ def draw_critter(
             px(8, eye_y - 2, brow), px(9, eye_y - 2, brow)
 
     # dog/cat modes get species flavor: a nose, and whiskers for cats
-    if _crew_style == "dogs":
+    if _crew_style == "farm":
+        if species == "cat":       # pig: pink snout with nostrils
+            snout = QColor(235, 150, 160, 140 if state == "waiting" else 255)
+            px(4, eye_y + 2, snout), px(5, eye_y + 2, snout)
+            px(6, eye_y + 2, snout), px(7, eye_y + 2, snout)
+            px(5, eye_y + 2, dark), px(6, eye_y + 2, dark)
+        elif species == "dog":     # chicken: little orange beak
+            beak = QColor(240, 160, 60, 140 if state == "waiting" else 255)
+            px(5, eye_y + 1, beak), px(6, eye_y + 1, beak)
+        elif species == "bear":    # cow: wide nostrils
+            px(4, eye_y + 3, dark), px(7, eye_y + 3, dark)
+    elif _crew_style == "dogs":
         px(5, eye_y + 2, dark)
         px(6, eye_y + 2, dark)
     elif _crew_style == "cats":

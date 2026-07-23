@@ -145,7 +145,7 @@ async def check_release_update(repo: str = DEFAULT_REPO, fetch=None) -> UpdateIn
 
 
 async def check_for_update() -> UpdateInfo:
-    """Pick the right strategy for how this copy of Crew is installed."""
+    """Pick the right strategy for how this copy of ByteBarn is installed."""
     root = repo_root()
     if root is not None:
         return await check_git_update(root)

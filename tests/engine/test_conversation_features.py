@@ -7,10 +7,10 @@ from pathlib import Path
 import httpx
 import pytest
 
-from crew.engine.facade import Engine
-from crew.engine.providers.fake import FakeProvider, text_turn
-from crew.engine.tools.base import ToolContext
-from crew.engine.tools.websearch import WebSearchParams, WebSearchTool, parse_results
+from bytebarn.engine.facade import Engine
+from bytebarn.engine.providers.fake import FakeProvider, text_turn
+from bytebarn.engine.tools.base import ToolContext
+from bytebarn.engine.tools.websearch import WebSearchParams, WebSearchTool, parse_results
 
 
 @pytest.fixture
@@ -71,8 +71,8 @@ async def test_websearch_tool_network_error(tmp_path):
 
 
 def test_websearch_registered_and_permissioned():
-    from crew.engine.permissions import _DEFAULTS, PermissionPolicy, SAFE
-    from crew.engine.tools.registry import ALL_TOOLS
+    from bytebarn.engine.permissions import _DEFAULTS, PermissionPolicy, SAFE
+    from bytebarn.engine.tools.registry import ALL_TOOLS
 
     assert "websearch" in ALL_TOOLS
     assert _DEFAULTS["websearch"] == "ask"
@@ -180,7 +180,7 @@ def test_image_file_parts_become_image_content(tmp_path):
     import base64
     from types import SimpleNamespace
 
-    from crew.engine.runner import history_to_messages
+    from bytebarn.engine.runner import history_to_messages
 
     png = tmp_path / "shot.png"
     png.write_bytes(b"\x89PNG-fake-bytes")
@@ -201,9 +201,9 @@ def test_image_file_parts_become_image_content(tmp_path):
 
 
 def test_image_content_reaches_both_wire_formats():
-    from crew.engine.providers.anthropic import _to_anthropic_messages
-    from crew.engine.providers.base import Msg
-    from crew.engine.providers.openai_compat import _to_openai_messages
+    from bytebarn.engine.providers.anthropic import _to_anthropic_messages
+    from bytebarn.engine.providers.base import Msg
+    from bytebarn.engine.providers.openai_compat import _to_openai_messages
 
     msgs = [Msg("user", [{"type": "text", "text": "look"},
                          {"type": "image", "media_type": "image/png", "data": "QUJD"}])]
@@ -263,8 +263,8 @@ async def test_routines_schedule_and_queue_goals(engine):
 
 
 async def test_thinking_maps_to_anthropic_budget():
-    from crew.engine.providers.anthropic import AnthropicProvider
-    from crew.engine.providers.base import Msg, ModelRequest
+    from bytebarn.engine.providers.anthropic import AnthropicProvider
+    from bytebarn.engine.providers.base import Msg, ModelRequest
 
     captured = {}
 

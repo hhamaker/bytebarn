@@ -9,9 +9,9 @@ import json
 
 import pytest
 
-from crew.engine.facade import Engine
-from crew.engine.providers.base import Done, TextDelta, ToolCallDelta, ToolCallEnd, ToolCallStart, Usage
-from crew.engine.providers.fake import FakeProvider, text_turn, tool_turn
+from bytebarn.engine.facade import Engine
+from bytebarn.engine.providers.base import Done, TextDelta, ToolCallDelta, ToolCallEnd, ToolCallStart, Usage
+from bytebarn.engine.providers.fake import FakeProvider, text_turn, tool_turn
 
 
 def multi_tool_turn(calls: list[tuple[str, str, dict]], text: str = ""):

@@ -1,4 +1,4 @@
-from crew.engine.permissions import ALLOW, ASK, DENY, FULL_AUTO, SAFE, PermissionPolicy
+from bytebarn.engine.permissions import ALLOW, ASK, DENY, FULL_AUTO, SAFE, PermissionPolicy
 
 
 def test_defaults_ask_for_dangerous_tools():
@@ -51,7 +51,7 @@ def test_allow_always_session_effect():
 
 
 def test_session_mode_is_live_when_callable():
-    from crew.engine.permissions import ASK_MODE, FULL_AUTO, PermissionPolicy
+    from bytebarn.engine.permissions import ASK_MODE, FULL_AUTO, PermissionPolicy
 
     mode = {"value": ASK_MODE}
     policy = PermissionPolicy({}, {}, session_mode=lambda: mode["value"])

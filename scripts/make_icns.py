@@ -1,4 +1,4 @@
-"""Render the app icon to Crew.icns (macOS) using the in-app sprite art.
+"""Render the app icon to ByteBarn.icns (macOS) using the in-app sprite art.
 
 Usage: .venv/bin/python scripts/make_icns.py [output.icns]
 """
@@ -18,11 +18,11 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 
 def main() -> None:
-    out = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("build/Crew.icns")
+    out = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("build/ByteBarn.icns")
     out.parent.mkdir(parents=True, exist_ok=True)
 
     _app = QApplication([])
-    from crew.app.icon import _render
+    from bytebarn.app.icon import _render
 
     with tempfile.TemporaryDirectory() as tmp:
         iconset = Path(tmp) / "Crew.iconset"

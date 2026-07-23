@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from crew.engine.facade import Engine
+from bytebarn.engine.facade import Engine
 
 
 @pytest.fixture
@@ -68,7 +68,7 @@ async def test_project_asset_copied_into_knowledge_dir(engine, tmp_path):
 
 
 async def test_system_prompt_includes_project_knowledge(engine, tmp_path):
-    from crew.engine.runner import build_system_prompt
+    from bytebarn.engine.runner import build_system_prompt
 
     await engine.store.set_project_instructions(
         engine.project.id, "Prefer functional style.")

@@ -240,7 +240,7 @@ class PromptBar(QWidget):
         if not self._project_dir:
             return
         results: list[tuple[str, str]] = []
-        skip = {".git", ".venv", "node_modules", "__pycache__", ".crew"}
+        skip = {".git", ".venv", "node_modules", "__pycache__", ".bytebarn"}
         count = 0
         for path in self._project_dir.rglob("*"):
             if count > 2000:
@@ -282,7 +282,7 @@ class PromptBar(QWidget):
         import time
 
         directory = self._attachments_dir or (
-            (self._project_dir or Path.home()) / ".crew" / "attachments")
+            (self._project_dir or Path.home()) / ".bytebarn" / "attachments")
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f"pasted-{int(time.time() * 1000)}.png"
         if image is not None and image.save(str(path), "PNG"):

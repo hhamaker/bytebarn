@@ -56,7 +56,7 @@ _SUCCESS_HTML = (
     "<body style='font-family:system-ui;background:#1e1e1e;color:#ddd;"
     "display:flex;align-items:center;justify-content:center;height:100vh;margin:0'>"
     "<div style='text-align:center'><h2>Signed in to xAI (Grok)</h2>"
-    "<p>You can close this window and return to Crew.</p></div>"
+    "<p>You can close this window and return to ByteBarn.</p></div>"
 )
 _ERROR_HTML = (
     "<!doctype html><meta charset=utf-8><title>Sign-in failed</title>"

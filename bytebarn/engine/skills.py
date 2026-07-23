@@ -1,7 +1,7 @@
 """Skill library – prompt fragments agents can reference.
 
 Skills follow the same three-layer pattern as agents:
-builtin (empty for now) → global (~/.crew/skills) → project (.crew/skills)
+builtin (empty for now) → global (~/.bytebarn/skills) → project (.bytebarn/skills)
 """
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ def _load_md_dir(d: Path, source: str) -> Dict[str, SkillDef]:
 def load_skills(global_dir: Path, project_dir: Path | None = None) -> Dict[str, SkillDef]:
     skills = _load_md_dir(global_dir / "skills", "global")
     if project_dir:
-        skills.update(_load_md_dir(project_dir / ".crew" / "skills", "project"))
+        skills.update(_load_md_dir(project_dir / ".bytebarn" / "skills", "project"))
     return skills
 
 

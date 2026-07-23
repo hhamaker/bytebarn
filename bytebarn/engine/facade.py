@@ -483,7 +483,7 @@ class Engine:
         if answer == "allow_always":
             pattern = arg + "*" if tool == "bash" else arg
             policy.with_added_allow(tool, pattern)
-            path = self.project_dir / ".crew" / "config.json"
+            path = self.project_dir / ".bytebarn" / "config.json"
             rule = policy.rules[tool]
             patch_config_file(path, {
                 f"permission.{tool}": {

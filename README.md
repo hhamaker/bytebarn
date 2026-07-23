@@ -1,4 +1,4 @@
-# Crew
+# ByteBarn
 
 A local desktop app that runs AI coding agents against your own codebases.
 Open a project, type a prompt or a `/goal`, and watch a crew of pixel-art
@@ -13,7 +13,7 @@ only network traffic is to the LLM providers you configure.
 python3.12 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 
-.venv/bin/python -m crew.main          # opens on your last-used folder
+.venv/bin/python -m bytebarn.main          # opens on your last-used folder
 ```
 
 Connect providers in-app (**⚡ providers**) — or export `ANTHROPIC_API_KEY`
@@ -24,7 +24,7 @@ etc. before launching. Each session picks its own working directory via the
 No-GUI engine harness:
 
 ```bash
-.venv/bin/python -m crew.cli "explain this repo" --project /path/to/project
+.venv/bin/python -m bytebarn.cli "explain this repo" --project /path/to/project
 ```
 
 Tests (no network, no API keys needed):
@@ -39,7 +39,7 @@ Type `/goal add a --verbose flag to the CLI and test it` in the prompt bar:
 
 1. The **orchestrator** agent restates the goal and writes a todo plan.
 2. It casts a crew from the available subagents (`general`, `explore`, plus
-   any you drop into `.crew/agent/*.md`) and delegates tasks — in parallel
+   any you drop into `.bytebarn/agent/*.md`) and delegates tasks — in parallel
    when independent.
 3. The **crew stage** appears: one pixel-art critter per subagent, roped to
    the crowned orchestrator, with a live headline (working/done/failed/queued
@@ -52,8 +52,8 @@ Type `/goal add a --verbose flag to the CLI and test it` in the prompt bar:
 
 ## Configuration
 
-Two layers, project wins per key: `~/.crew/config.json` and
-`<project>/.crew/config.json`. JSON with `//` comments and trailing commas
+Two layers, project wins per key: `~/.bytebarn/config.json` and
+`<project>/.bytebarn/config.json`. JSON with `//` comments and trailing commas
 tolerated; in-app edits patch files key-by-key, preserving your comments.
 
 ```jsonc
@@ -102,7 +102,7 @@ Pick a provider, paste a key or **🌐 log in via web**, hit *Test connection*:
 Web login flavors: xAI and Copilot show a short code to confirm in the
 browser (auto-copied to your clipboard; the dialog closes itself on
 approval). Anthropic opens claude.ai's consent page, which shows a code you
-paste back. Tokens refresh automatically. Keys go to `~/.crew/auth.json`
+paste back. Tokens refresh automatically. Keys go to `~/.bytebarn/auth.json`
 (0600) — never project config. Model pickers only list models from
 connected providers.
 
@@ -119,7 +119,7 @@ going. Tune or disable it:
 
 ### Custom agents: drop in a file, the crew grows
 
-`.crew/agent/tester.md` (hot-reloaded, no restart):
+`.bytebarn/agent/tester.md` (hot-reloaded, no restart):
 
 ```markdown
 ---
@@ -141,7 +141,7 @@ Prefer a GUI? **🐾 agents** in the status bar opens the agent editor with a
 live critter preview per agent. Sessions are managed from the sidebar:
 right-click one to **close** (archive) or **delete** it, subagents and all.
 
-Custom commands: `.crew/command/foo.md` with a `$ARGUMENTS` template →
+Custom commands: `.bytebarn/command/foo.md` with a `$ARGUMENTS` template →
 `/foo`. Built-ins: `/init` (analyze the repo and write AGENTS.md — loaded
 into every agent's system prompt), `/goal`, `/compact`, `/new`, `/model`,
 `/agents`.
@@ -157,14 +157,14 @@ pattern to project config.
 ## Architecture
 
 ```
-crew/engine/   asyncio, zero Qt — session store (SQLite WAL), provider
+bytebarn/engine/   asyncio, zero Qt — session store (SQLite WAL), provider
                adapters (anthropic, openai-compatible), tool suite, agent
                registry, runner loop, compaction, event bus
-crew/app/      PySide6 widgets — pure projection of engine events + DB
+bytebarn/app/      PySide6 widgets — pure projection of engine events + DB
 assets/        agent/tool prompts (prompt engineering lives here)
 ```
 
-Engine and UI meet only through the async event stream (`crew/engine/events.py`)
+Engine and UI meet only through the async event stream (`bytebarn/engine/events.py`)
 and the `Engine` facade — enforced by a test that imports the engine with Qt
 poisoned.
 

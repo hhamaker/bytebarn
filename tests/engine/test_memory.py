@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from crew.engine.facade import Engine
-from crew.engine.tools.base import ToolContext
-from crew.engine.tools.memory import MemoryParams, MemoryTool
+from bytebarn.engine.facade import Engine
+from bytebarn.engine.tools.base import ToolContext
+from bytebarn.engine.tools.memory import MemoryParams, MemoryTool
 
 
 @pytest.fixture
@@ -58,7 +58,7 @@ async def test_memory_delete_and_guards(ctx, tmp_path):
 
 
 async def test_load_memory_orders_and_caps(tmp_path):
-    from crew.engine.runner import load_memory
+    from bytebarn.engine.runner import load_memory
 
     root = tmp_path / "memory"
     root.mkdir()
@@ -78,7 +78,7 @@ async def test_load_memory_orders_and_caps(tmp_path):
 async def test_memory_survives_session_death(tmp_path):
     """Session 1 saves a memory via the tool; a brand-new session's system
     prompt carries it."""
-    from crew.engine.providers.fake import FakeProvider, text_turn, tool_turn
+    from bytebarn.engine.providers.fake import FakeProvider, text_turn, tool_turn
 
     proj = tmp_path / "proj"
     proj.mkdir()

@@ -136,7 +136,7 @@ class AgentRegistry:
     def _agent_dirs(self) -> list[tuple[Path, str]]:
         dirs = [(self.global_dir / "agent", "global")]
         if self.project_dir:
-            dirs.append((self.project_dir / ".crew" / "agent", "project"))
+            dirs.append((self.project_dir / ".bytebarn" / "agent", "project"))
         return dirs
 
     def reload(self) -> None:

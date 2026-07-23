@@ -1,4 +1,4 @@
-"""OAuth / credential store for providers (~/.crew/auth.json).
+"""OAuth / credential store for providers (~/.bytebarn/auth.json).
 
 Separate from config.json so secrets never leak into the (often committed)
 project config. Stored as a flat map: provider name -> credential record.

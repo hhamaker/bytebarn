@@ -1,6 +1,6 @@
 import pytest
 
-from crew.engine.store import Store, Todo
+from bytebarn.engine.store import Store, Todo
 
 
 @pytest.fixture

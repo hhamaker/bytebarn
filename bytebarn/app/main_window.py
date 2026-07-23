@@ -66,7 +66,7 @@ class MainWindow(QMainWindow):
         self._running: set[str] = set()
         self._activity: str = ""  # live run detail for the open session
 
-        self.setWindowTitle("Crew")
+        self.setWindowTitle("ByteBarn")
         self.resize(1200, 800)
 
         # widgets
@@ -284,7 +284,7 @@ class MainWindow(QMainWindow):
             from .icon import app_icon
 
             self._tray = QSystemTrayIcon(app_icon(), self)
-            self._tray.setToolTip("Crew")
+            self._tray.setToolTip("ByteBarn")
             self._tray.show()
 
         # wiring
@@ -328,7 +328,7 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
     def _build_menus(self) -> None:
-        """Native menu bar (on macOS this fills the "Crew" application menu)."""
+        """Native menu bar (on macOS this fills the "ByteBarn" application menu)."""
         from PySide6.QtGui import QAction, QKeySequence
 
         bar = self.menuBar()
@@ -345,7 +345,7 @@ class MainWindow(QMainWindow):
         close_action.triggered.connect(
             lambda: self.current_session_id
             and self._fire(self._close_session(self.current_session_id)))
-        quit_action = QAction("Quit Crew", self)
+        quit_action = QAction("Quit ByteBarn", self)
         quit_action.setShortcut(QKeySequence.Quit)
         quit_action.setMenuRole(QAction.QuitRole)
         quit_action.triggered.connect(self.close)
@@ -441,7 +441,7 @@ class MainWindow(QMainWindow):
         help_menu.addAction(update_action)
         shortcuts_action = QAction("Keyboard Shortcuts", self)
         shortcuts_action.triggered.connect(self._show_shortcuts)
-        about_action = QAction("About Crew", self)
+        about_action = QAction("About ByteBarn", self)
         about_action.setMenuRole(QAction.AboutRole)  # macOS app menu
         about_action.triggered.connect(self._show_about)
         help_menu.addAction(shortcuts_action)
@@ -563,8 +563,8 @@ class MainWindow(QMainWindow):
     def _show_about(self) -> None:
         from PySide6.QtWidgets import QMessageBox
 
-        QMessageBox.about(self, "About Crew", (
-            "<h3>Crew</h3>"
+        QMessageBox.about(self, "About ByteBarn", (
+            "<h3>ByteBarn</h3>"
             "<p>A local desktop app that runs AI coding agents — a crew of"
             " pixel-art critters — against your own codebases.</p>"
             "<p>Everything runs locally; the only network traffic is to the"
@@ -714,7 +714,7 @@ class MainWindow(QMainWindow):
                     else:
                         if event.session_id == self.current_session_id:
                             self._set_activity(f"waiting: {event.tool}")
-                        self._notify("Crew needs permission",
+                        self._notify("ByteBarn needs permission",
                                      f"{event.tool}: {event.arg[:80]}")
                         dialog = PermissionDialog(event.tool, event.arg, event.input, self)
                         dialog.exec()
@@ -748,7 +748,7 @@ class MainWindow(QMainWindow):
         except ImportError:
             return
         paths = []
-        for base in (self.engine.global_dir, self.engine.project_dir / ".crew"):
+        for base in (self.engine.global_dir, self.engine.project_dir / ".bytebarn"):
             base.mkdir(parents=True, exist_ok=True)
             paths.append(str(base))
         def _relevant(_change, path: str) -> bool:
@@ -1002,7 +1002,7 @@ class MainWindow(QMainWindow):
         self.header_meta.setText(meta)
         directory = session.directory or str(self.engine.project_dir)
         self.status_project.setText(directory)
-        self.setWindowTitle(f"Crew — {Path(directory).name}")
+        self.setWindowTitle(f"ByteBarn — {Path(directory).name}")
         self.dir_button.setText(f"📁 {Path(directory).name}")
         self.dir_button.setToolTip(
             f"Working directory: {directory}\nClick to change (this session only)")
@@ -1569,7 +1569,7 @@ class MainWindow(QMainWindow):
 
         self.update_button.setVisible(True)
         if not manual:
-            self._notify("Crew update available", info.message)
+            self._notify("ByteBarn update available", info.message)
             return  # unobtrusive at startup — button + notification only
 
         if info.kind == "release":
@@ -1583,7 +1583,7 @@ class MainWindow(QMainWindow):
         note = ("\n\nNote: you have local uncommitted changes; the update "
                 "only proceeds if they don't conflict." if info.dirty else "")
         answer = QMessageBox.question(
-            self, "Update Crew",
+            self, "Update ByteBarn",
             f"{info.message}:\n\n{commits}{note}\n\nUpdate and restart now?",
             QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Yes)
         if answer != QMessageBox.Yes:
@@ -1597,7 +1597,7 @@ class MainWindow(QMainWindow):
                 return
             confirm = QMessageBox.question(
                 self, "Update installed",
-                "Crew was updated. Restart now?",
+                "ByteBarn was updated. Restart now?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
             if confirm == QMessageBox.Yes:
                 await self.engine.stop()

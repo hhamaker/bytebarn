@@ -44,5 +44,5 @@ Run with `QT_QPA_PLATFORM=offscreen .venv/bin/python harness.py`.
 - Cancel `window._tasks` and `await engine.stop()` before exiting or the
   loop hangs.
 - Filter noise: `2>&1 | grep -v "^qt.qpa\|propagateSizeHints"`.
-- CLI-only engine changes: `.venv/bin/python -m crew.cli "prompt" --project dir`
+- CLI-only engine changes: `.venv/bin/python -m bytebarn.cli "prompt" --project dir`
   is the no-GUI surface.

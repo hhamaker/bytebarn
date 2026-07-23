@@ -322,7 +322,7 @@ class AgentEditor(QDialog):
 
         if not updates:
             return
-        path = self.engine.project_dir / ".crew" / "config.json"
+        path = self.engine.project_dir / ".bytebarn" / "config.json"
         patch_config_file(path, updates)
         self.engine.reload_config()
         self.engine.bus.emit(AgentRegistryChanged())
@@ -332,7 +332,7 @@ class AgentEditor(QDialog):
         agent = self._current
         if agent is None or agent.name not in self.engine.config.agent:
             return
-        path = self.engine.project_dir / ".crew" / "config.json"
+        path = self.engine.project_dir / ".bytebarn" / "config.json"
         patch_config_file(path, {f"agent.{agent.name}": DELETE})
         self.engine.reload_config()
         self.engine.bus.emit(AgentRegistryChanged())

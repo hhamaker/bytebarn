@@ -1,6 +1,6 @@
 # CONTRIBUTING.md
 
-Thanks for your interest in contributing to Crew.
+Thanks for your interest in contributing to ByteBarn.
 
 ## Setup
 

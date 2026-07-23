@@ -1,6 +1,6 @@
 """Known LLM providers: connection recipes + curated model lists.
 
-This is the single source of truth for "what can Crew talk to". Each entry
+This is the single source of truth for "what can ByteBarn talk to". Each entry
 says how to reach the service (API kind + base URL), how it authenticates
 (env var, stored API key, OAuth, or nothing for local servers), and which
 models to offer in pickers. A provider the user adds by hand in config

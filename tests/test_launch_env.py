@@ -1,6 +1,6 @@
 """Foreign-Qt environment scrubbing (the two-Qt startup abort)."""
 
-from crew.main import scrub_qt_env
+from bytebarn.main import scrub_qt_env
 
 _OURS = "/Users/dev/proj/.venv/lib/python3.12/site-packages/PySide6"
 _APP = "/Applications/Crew.app/Contents/Frameworks/PySide6"

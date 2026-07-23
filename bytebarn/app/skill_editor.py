@@ -1,4 +1,4 @@
-"""Skill manager dialog — edits live .md files under global/project .crew/skills/."""
+"""Skill manager dialog — edits live .md files under global/project .bytebarn/skills/."""
 
 from __future__ import annotations
 
@@ -80,7 +80,7 @@ class SkillEditor(QDialog):
     # ------------------------------------------------------------------
     def _skill_path(self, name: str, source: str) -> Path:
         base = self.engine.project_dir if source == "project" else self.engine.global_dir
-        return base / ".crew" / "skills" / f"{name}.md"
+        return base / ".bytebarn" / "skills" / f"{name}.md"
 
     def _new_skill(self):
         name, ok = QInputDialog.getText(self, "New skill", "Skill name:")

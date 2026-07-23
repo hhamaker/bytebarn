@@ -1,6 +1,6 @@
 import json
 
-from crew.engine.config import (
+from bytebarn.engine.config import (
     DELETE,
     Config,
     deep_merge,
@@ -45,8 +45,8 @@ def test_load_config_layering(tmp_path):
     gdir.mkdir()
     (gdir / "config.json").write_text(json.dumps({"model": "g/model", "small_model": "g/small"}))
     proj = tmp_path / "proj"
-    (proj / ".crew").mkdir(parents=True)
-    (proj / ".crew" / "config.json").write_text(json.dumps({"model": "p/model"}))
+    (proj / ".bytebarn").mkdir(parents=True)
+    (proj / ".bytebarn" / "config.json").write_text(json.dumps({"model": "p/model"}))
     cfg = load_config(proj, global_dir=gdir)
     assert cfg.model == "p/model"
     assert cfg.small_model == "g/small"

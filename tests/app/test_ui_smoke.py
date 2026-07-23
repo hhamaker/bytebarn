@@ -20,9 +20,9 @@ def qapp():
 
 
 async def test_main_window_builds_and_loads(qapp, tmp_path):
-    from crew.app.main_window import MainWindow
-    from crew.engine.facade import Engine
-    from crew.engine.providers.fake import FakeProvider, text_turn
+    from bytebarn.app.main_window import MainWindow
+    from bytebarn.engine.facade import Engine
+    from bytebarn.engine.providers.fake import FakeProvider, text_turn
 
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -45,7 +45,7 @@ async def test_main_window_builds_and_loads(qapp, tmp_path):
         assert window.session_list.tree.topLevelItemCount() == 1
 
         # crew stage responds to events
-        from crew.engine.events import TaskStarted
+        from bytebarn.engine.events import TaskStarted
 
         window.crew_stage.handle_event(
             TaskStarted(session_id=session.id, subagent_session_id="x",
@@ -56,8 +56,8 @@ async def test_main_window_builds_and_loads(qapp, tmp_path):
 
 
 async def test_dialogs_construct(qapp):
-    from crew.app.permission_dialog import PermissionDialog
-    from crew.app.question_dialog import QuestionDialog
+    from bytebarn.app.permission_dialog import PermissionDialog
+    from bytebarn.app.question_dialog import QuestionDialog
 
     p = PermissionDialog("bash", "rm -rf /tmp/x", {"command": "rm -rf /tmp/x"})
     assert p.verdict == "deny"
@@ -67,7 +67,7 @@ async def test_dialogs_construct(qapp):
 
 
 def test_transcript_streaming_updates(qapp):
-    from crew.app.transcript import Transcript
+    from bytebarn.app.transcript import Transcript
 
     t = Transcript()
     t.on_part_updated("p1", "text", {"text": "hello"})
@@ -78,7 +78,7 @@ def test_transcript_streaming_updates(qapp):
 
 
 def test_prompt_bar_fuzzy(qapp):
-    from crew.app.prompt_bar import fuzzy_match
+    from bytebarn.app.prompt_bar import fuzzy_match
 
     assert fuzzy_match("gl", "goal")
     assert fuzzy_match("", "anything")
@@ -88,7 +88,7 @@ def test_prompt_bar_fuzzy(qapp):
 def test_sprite_rendering_offscreen(qapp):
     from PySide6.QtGui import QColor, QImage, QPainter
 
-    from crew.app.sprites import draw_critter
+    from bytebarn.app.sprites import draw_critter
 
     image = QImage(120, 120, QImage.Format_ARGB32)
     image.fill(0)
@@ -101,7 +101,7 @@ def test_sprite_rendering_offscreen(qapp):
 
 
 def test_look_for_known_types_and_stability(qapp):
-    from crew.app.sprites import ACCENTS, SPECIES, look_for
+    from bytebarn.app.sprites import ACCENTS, SPECIES, look_for
 
     assert look_for("explore") == ("bunny", "none")
     assert look_for("orchestrator") == ("bear", "hat")
@@ -116,7 +116,7 @@ def test_look_for_known_types_and_stability(qapp):
 def test_accents_render(qapp):
     from PySide6.QtGui import QColor, QImage, QPainter
 
-    from crew.app.sprites import ACCENTS, draw_critter
+    from bytebarn.app.sprites import ACCENTS, draw_critter
 
     image = QImage(120, 120, QImage.Format_ARGB32)
     image.fill(0)
@@ -128,9 +128,9 @@ def test_accents_render(qapp):
 
 
 def test_agent_editor_and_provider_manager_build(qapp, tmp_path):
-    from crew.app.agent_editor import AgentEditor
-    from crew.app.provider_manager import ProviderManager
-    from crew.engine.facade import Engine
+    from bytebarn.app.agent_editor import AgentEditor
+    from bytebarn.app.provider_manager import ProviderManager
+    from bytebarn.engine.facade import Engine
 
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -155,8 +155,8 @@ def test_agent_editor_and_provider_manager_build(qapp, tmp_path):
 
 
 def test_skill_editor_builds(qapp, tmp_path):
-    from crew.app.skill_editor import SkillEditor
-    from crew.engine.facade import Engine
+    from bytebarn.app.skill_editor import SkillEditor
+    from bytebarn.engine.facade import Engine
 
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -168,7 +168,7 @@ def test_skill_editor_builds(qapp, tmp_path):
 
 
 def test_prompt_bar_two_stage_picker(qapp):
-    from crew.app.prompt_bar import PromptBar
+    from bytebarn.app.prompt_bar import PromptBar
 
     bar = PromptBar()
     picked: list[str] = []
@@ -196,7 +196,7 @@ def test_prompt_bar_two_stage_picker(qapp):
 
 def test_prompt_bar_set_models_does_not_auto_pick(qapp):
     """set_models with empty current must leave selection empty (no models[0])."""
-    from crew.app.prompt_bar import PromptBar
+    from bytebarn.app.prompt_bar import PromptBar
 
     bar = PromptBar()
     bar.set_providers(["anthropic"], "anthropic")
@@ -211,7 +211,7 @@ def test_transcript_image_attachment_preview(qapp, tmp_path):
     from PySide6.QtGui import QImage
     from PySide6.QtWidgets import QLabel
 
-    from crew.app.transcript import TextBlock, Transcript
+    from bytebarn.app.transcript import TextBlock, Transcript
 
     img = tmp_path / "shot.png"
     QImage(600, 300, QImage.Format_ARGB32).save(str(img))
@@ -228,7 +228,7 @@ def test_transcript_image_attachment_preview(qapp, tmp_path):
 
 
 def test_tool_card_autoexpands_error(qapp):
-    from crew.app.transcript import Transcript
+    from bytebarn.app.transcript import Transcript
 
     t = Transcript()
     t.on_part_updated("p", "tool", {"tool": "bash", "status": "error",
@@ -240,7 +240,7 @@ def test_tool_card_autoexpands_error(qapp):
 
 
 def test_tool_card_pretty_bash_input(qapp):
-    from crew.app.transcript import Transcript
+    from bytebarn.app.transcript import Transcript
 
     t = Transcript()
     t.on_part_updated("p", "tool", {"tool": "bash", "status": "done",
@@ -250,7 +250,7 @@ def test_tool_card_pretty_bash_input(qapp):
 
 
 def test_prompt_bar_queue_depth(qapp):
-    from crew.app.prompt_bar import PromptBar
+    from bytebarn.app.prompt_bar import PromptBar
 
     bar = PromptBar()
     bar.set_queue_depth(2)
@@ -261,7 +261,7 @@ def test_prompt_bar_queue_depth(qapp):
 
 
 def test_thinking_indicator_lifecycle(qapp):
-    from crew.app.transcript import Transcript, _Thinking
+    from bytebarn.app.transcript import Transcript, _Thinking
 
     t = Transcript()
     t.show_thinking("chat", "#d19a66")
@@ -276,7 +276,7 @@ def test_thinking_indicator_lifecycle(qapp):
 
 
 def test_promote_queued_clears_style(qapp):
-    from crew.app.transcript import TextBlock, Transcript
+    from bytebarn.app.transcript import TextBlock, Transcript
 
     t = Transcript()
     t.add_user_text("local-1", "first", queued=True)
@@ -289,7 +289,7 @@ def test_promote_queued_clears_style(qapp):
 
 
 def test_text_block_streams_plain_then_markdown(qapp):
-    from crew.app.transcript import TextBlock
+    from bytebarn.app.transcript import TextBlock
 
     block = TextBlock("hi", user=False)
     block.update_text("**bold**", streaming=True)
@@ -312,7 +312,7 @@ def _history_page(texts, t0):
 
 
 def _transcript_texts(t):
-    from crew.app.transcript import TextBlock
+    from bytebarn.app.transcript import TextBlock
     out = []
     for i in range(t._layout.count()):
         w = t._layout.itemAt(i).widget()
@@ -324,7 +324,7 @@ def _transcript_texts(t):
 
 
 def test_transcript_append_older_prepends_chronologically(qapp):
-    from crew.app.transcript import Transcript
+    from bytebarn.app.transcript import Transcript
 
     t = Transcript()
     t.load_history(_history_page(["c", "d"], 100))
@@ -339,7 +339,7 @@ def test_transcript_append_older_prepends_chronologically(qapp):
 
 
 def test_transcript_scroll_top_without_loader_is_safe(qapp):
-    from crew.app.transcript import Transcript
+    from bytebarn.app.transcript import Transcript
 
     t = Transcript()
     t.load_history(_history_page(["a"], 100))
@@ -365,7 +365,7 @@ def _sess(sid, agent="build", children=None):
 
 
 def test_session_list_keyboard_navigation_selects(qapp):
-    from crew.app.session_list import SessionList
+    from bytebarn.app.session_list import SessionList
 
     sl = SessionList()
     picked: list[str] = []
@@ -388,7 +388,7 @@ def test_session_list_keyboard_navigation_selects(qapp):
 def test_session_list_sessions_stay_within_projects(qapp):
     from PySide6.QtCore import Qt
 
-    from crew.app.session_list import SessionList
+    from bytebarn.app.session_list import SessionList
 
     sl = SessionList()
     projs = [_proj("p1", "Alpha"), _proj("p2", "Beta")]
@@ -415,7 +415,7 @@ def test_session_list_sessions_stay_within_projects(qapp):
 def test_session_list_buckets_by_recency(qapp):
     import time as _time
 
-    from crew.app.session_list import SessionList, bucket_label
+    from bytebarn.app.session_list import SessionList, bucket_label
 
     assert bucket_label(_time.time()) == "Today"
     assert bucket_label(_time.time() - 40 * 86400) == "Older"
@@ -432,7 +432,7 @@ def test_session_list_buckets_by_recency(qapp):
 def test_session_list_hides_subagent_children(qapp):
     from PySide6.QtCore import Qt
 
-    from crew.app.session_list import SessionList
+    from bytebarn.app.session_list import SessionList
 
     sl = SessionList()
     child = _sess("kid")
@@ -446,7 +446,7 @@ def test_session_list_hides_subagent_children(qapp):
 def test_session_list_projects_have_no_folder_nodes(qapp):
     from PySide6.QtCore import Qt
 
-    from crew.app.session_list import SessionList
+    from bytebarn.app.session_list import SessionList
 
     sl = SessionList()
     projs = [_proj("p1", "Alpha"), _proj("p2", "Beta")]
@@ -458,7 +458,7 @@ def test_session_list_projects_have_no_folder_nodes(qapp):
 
 
 def test_session_list_double_click_opens_project(qapp):
-    from crew.app.session_list import SessionList
+    from bytebarn.app.session_list import SessionList
 
     sl = SessionList()
     opened: list = []
@@ -476,8 +476,8 @@ def test_session_list_double_click_opens_project(qapp):
 
 
 def test_crew_stage_stop_signal(qapp):
-    from crew.app.crew_stage import CrewStage
-    from crew.engine.events import TaskStarted
+    from bytebarn.app.crew_stage import CrewStage
+    from bytebarn.engine.events import TaskStarted
 
     stage = CrewStage()
     stopped: list[str] = []
@@ -491,7 +491,7 @@ def test_crew_stage_stop_signal(qapp):
 
 
 def test_session_list_project_rename_delete_signals(qapp, monkeypatch):
-    from crew.app.session_list import SessionList
+    from bytebarn.app.session_list import SessionList
 
     sl = SessionList()
     renamed: list = []
@@ -508,7 +508,7 @@ def test_session_list_project_rename_delete_signals(qapp, monkeypatch):
 
 
 def test_session_list_multi_select_delete(qapp):
-    from crew.app.session_list import SessionList
+    from bytebarn.app.session_list import SessionList
 
     sl = SessionList()
     emitted: list[list] = []
@@ -526,8 +526,8 @@ def test_session_list_multi_select_delete(qapp):
 def test_agent_list_grouped_by_mode(qapp, tmp_path):
     from PySide6.QtCore import Qt
 
-    from crew.app.agent_editor import AgentEditor
-    from crew.engine.facade import Engine
+    from bytebarn.app.agent_editor import AgentEditor
+    from bytebarn.engine.facade import Engine
 
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -548,8 +548,8 @@ def test_agent_list_grouped_by_mode(qapp, tmp_path):
 
 
 def test_menu_bar_has_menus(qapp, tmp_path):
-    from crew.app.main_window import MainWindow
-    from crew.engine.facade import Engine
+    from bytebarn.app.main_window import MainWindow
+    from bytebarn.engine.facade import Engine
 
     proj = tmp_path / "proj2"
     proj.mkdir()
@@ -560,8 +560,8 @@ def test_menu_bar_has_menus(qapp, tmp_path):
 
 
 async def test_new_session_instant_inherits_directory(qapp, tmp_path):
-    from crew.app.main_window import MainWindow
-    from crew.engine.facade import Engine
+    from bytebarn.app.main_window import MainWindow
+    from bytebarn.engine.facade import Engine
 
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -598,8 +598,8 @@ async def test_new_session_instant_inherits_directory(qapp, tmp_path):
 
 
 async def test_bootstrap_empty_shows_no_session(qapp, tmp_path, monkeypatch):
-    from crew.app.main_window import MainWindow
-    from crew.engine.facade import Engine
+    from bytebarn.app.main_window import MainWindow
+    from bytebarn.engine.facade import Engine
 
     proj = tmp_path / "proj2"
     proj.mkdir()
@@ -619,9 +619,9 @@ async def test_bootstrap_empty_shows_no_session(qapp, tmp_path, monkeypatch):
 
 
 def test_settings_uses_model_pickers(qapp, tmp_path):
-    from crew.app.model_picker import ModelPicker
-    from crew.app.settings import SettingsDialog
-    from crew.engine.facade import Engine
+    from bytebarn.app.model_picker import ModelPicker
+    from bytebarn.app.settings import SettingsDialog
+    from bytebarn.engine.facade import Engine
 
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -638,8 +638,8 @@ def test_settings_uses_model_pickers(qapp, tmp_path):
 
 
 def test_model_picker_default_and_empty(qapp, tmp_path):
-    from crew.app.model_picker import ModelPicker
-    from crew.engine.facade import Engine
+    from bytebarn.app.model_picker import ModelPicker
+    from bytebarn.engine.facade import Engine
 
     proj = tmp_path / "proj2"
     proj.mkdir()
@@ -653,8 +653,8 @@ def test_model_picker_default_and_empty(qapp, tmp_path):
 
 
 async def test_last_model_persists_for_new_sessions(qapp, tmp_path, monkeypatch):
-    from crew.app.main_window import MainWindow
-    from crew.engine.facade import Engine
+    from bytebarn.app.main_window import MainWindow
+    from bytebarn.engine.facade import Engine
 
     proj = tmp_path / "lm-proj"
     proj.mkdir()
@@ -681,8 +681,8 @@ async def test_last_model_persists_for_new_sessions(qapp, tmp_path, monkeypatch)
 
 
 async def test_project_dialog_roundtrips_knowledge(qapp, tmp_path):
-    from crew.app.project_dialog import ProjectDialog
-    from crew.engine.facade import Engine
+    from bytebarn.app.project_dialog import ProjectDialog
+    from bytebarn.engine.facade import Engine
 
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -712,8 +712,8 @@ async def test_project_dialog_roundtrips_knowledge(qapp, tmp_path):
 
 
 async def test_project_workspace_tabs_and_data(qapp, tmp_path):
-    from crew.app.project_workspace import ProjectWorkspace
-    from crew.engine.facade import Engine
+    from bytebarn.app.project_workspace import ProjectWorkspace
+    from bytebarn.engine.facade import Engine
 
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -723,7 +723,7 @@ async def test_project_workspace_tabs_and_data(qapp, tmp_path):
         s1 = await engine.store.create_session(engine.project.id, title="chat one")
         goal = await engine.store.create_session(
             engine.project.id, agent="orchestrator", title="ship it")
-        from crew.engine.store import Todo
+        from bytebarn.engine.store import Todo
         await engine.store.set_todos(goal.id, [Todo("a", "completed"), Todo("b", "pending")])
         mem = engine.memory_dir(engine.project.id)
         mem.mkdir(parents=True)
@@ -757,8 +757,8 @@ async def test_project_workspace_tabs_and_data(qapp, tmp_path):
 
 
 async def test_main_window_two_project_views(qapp, tmp_path):
-    from crew.app.main_window import MainWindow
-    from crew.engine.facade import Engine
+    from bytebarn.app.main_window import MainWindow
+    from bytebarn.engine.facade import Engine
 
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -785,7 +785,7 @@ async def test_main_window_two_project_views(qapp, tmp_path):
 
 
 def test_theme_modes_and_modern_overhaul(qapp):
-    from crew.app import theme
+    from bytebarn.app import theme
 
     # dark is the flagship and still the non-modern path
     theme.apply_theme(qapp, "dark")
@@ -812,7 +812,7 @@ def test_theme_modes_and_modern_overhaul(qapp):
 def test_theme_crossfade_animates_only_in_modern(qapp):
     from PySide6.QtWidgets import QLabel, QStackedWidget
 
-    from crew.app import theme
+    from bytebarn.app import theme
 
     stack = QStackedWidget()
     stack.addWidget(QLabel("a"))
@@ -832,9 +832,9 @@ def test_theme_crossfade_animates_only_in_modern(qapp):
 
 
 async def test_ui_toggle_button_switches_theme(qapp, tmp_path):
-    from crew.app import theme
-    from crew.app.main_window import MainWindow
-    from crew.engine.facade import Engine
+    from bytebarn.app import theme
+    from bytebarn.app.main_window import MainWindow
+    from bytebarn.engine.facade import Engine
 
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -856,8 +856,8 @@ async def test_ui_toggle_button_switches_theme(qapp, tmp_path):
 
 
 async def test_run_review_dialog_diff_and_revert(qapp, tmp_path):
-    from crew.app.run_review import RunReviewDialog
-    from crew.engine.facade import Engine
+    from bytebarn.app.run_review import RunReviewDialog
+    from bytebarn.engine.facade import Engine
 
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -887,9 +887,9 @@ async def test_run_review_dialog_diff_and_revert(qapp, tmp_path):
 
 
 async def test_workspace_goal_queue_ui(qapp, tmp_path):
-    from crew.app.project_workspace import ProjectWorkspace
-    from crew.engine.facade import Engine
-    from crew.engine.providers.fake import FakeProvider, text_turn
+    from bytebarn.app.project_workspace import ProjectWorkspace
+    from bytebarn.engine.facade import Engine
+    from bytebarn.engine.providers.fake import FakeProvider, text_turn
 
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -914,9 +914,9 @@ async def test_workspace_goal_queue_ui(qapp, tmp_path):
 
 
 async def test_context_meter_updates(qapp, tmp_path):
-    from crew.app.main_window import MainWindow
-    from crew.engine.facade import Engine
-    from crew.engine.providers.fake import FakeProvider, text_turn
+    from bytebarn.app.main_window import MainWindow
+    from bytebarn.engine.facade import Engine
+    from bytebarn.engine.providers.fake import FakeProvider, text_turn
 
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -942,8 +942,8 @@ async def test_context_meter_updates(qapp, tmp_path):
 
 
 async def test_mcp_dialog_builds(qapp, tmp_path):
-    from crew.app.mcp_dialog import MCPDialog
-    from crew.engine.facade import Engine
+    from bytebarn.app.mcp_dialog import MCPDialog
+    from bytebarn.engine.facade import Engine
 
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -959,8 +959,8 @@ async def test_mcp_dialog_builds(qapp, tmp_path):
 
 
 async def test_mcp_dialog_add_and_remove_server(qapp, tmp_path):
-    from crew.app.mcp_dialog import MCPDialog
-    from crew.engine.facade import Engine
+    from bytebarn.app.mcp_dialog import MCPDialog
+    from bytebarn.engine.facade import Engine
 
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -994,7 +994,7 @@ async def test_mcp_dialog_add_and_remove_server(qapp, tmp_path):
         assert config["mcp"]["memory"]["args"][-1].endswith("server-memory")
 
         # remove via config patch (menu path shares this code)
-        from crew.engine.config import DELETE, patch_config_file
+        from bytebarn.engine.config import DELETE, patch_config_file
         patch_config_file(gdir / "config.json", {"mcp.github": DELETE})
         config = json.loads((gdir / "config.json").read_text())
         assert "github" not in config["mcp"]
@@ -1004,9 +1004,9 @@ async def test_mcp_dialog_add_and_remove_server(qapp, tmp_path):
 
 
 async def test_persisted_full_auto_mode_applies_to_engine(qapp, tmp_path):
-    from crew.app.main_window import MainWindow
-    from crew.engine.facade import Engine
-    from crew.engine.permissions import FULL_AUTO
+    from bytebarn.app.main_window import MainWindow
+    from bytebarn.engine.facade import Engine
+    from bytebarn.engine.permissions import FULL_AUTO
 
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -1031,7 +1031,7 @@ async def test_persisted_full_auto_mode_applies_to_engine(qapp, tmp_path):
 def test_waifu_mode_swaps_sprites(qapp):
     from PySide6.QtGui import QImage
 
-    from crew.app import sprites
+    from bytebarn.app import sprites
 
     def render() -> QImage:
         pixmap = sprites.critter_pixmap("build", "#61afef", scale=4)
@@ -1063,9 +1063,9 @@ def test_waifu_mode_swaps_sprites(qapp):
 
 
 async def test_settings_waifu_toggle_persists(qapp, tmp_path):
-    from crew.app import sprites
-    from crew.app.settings import SettingsDialog
-    from crew.engine.facade import Engine
+    from bytebarn.app import sprites
+    from bytebarn.app.settings import SettingsDialog
+    from bytebarn.engine.facade import Engine
 
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -1074,7 +1074,7 @@ async def test_settings_waifu_toggle_persists(qapp, tmp_path):
     engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=gdir)
     try:
         dlg = SettingsDialog(engine)
-        assert dlg.crew_style.currentText() == "critters"
+        assert dlg.crew_style.currentText() == "farm"
         dlg.crew_style.setCurrentText("waifu")
         dlg._save()
         config = json.loads((gdir / "config.json").read_text())
@@ -1086,13 +1086,13 @@ async def test_settings_waifu_toggle_persists(qapp, tmp_path):
         dlg2._save()
         assert sprites.crew_style() == "dogs"
     finally:
-        sprites.set_crew_style("critters")
+        sprites.set_crew_style("farm")
 
 
 def test_dog_and_cat_modes_render_distinct_breeds(qapp):
     from PySide6.QtGui import QColor, QImage, QPainter
 
-    from crew.app import sprites
+    from bytebarn.app import sprites
 
     def render(style: str, species: str) -> QImage:
         sprites.set_crew_style(style)
@@ -1117,13 +1117,16 @@ def test_dog_and_cat_modes_render_distinct_breeds(qapp):
         sprites.set_crew_style("critters")
         critter = render("critters", "bear")
         assert dogs != critter
+        # farm mode (the default) renders its own distinct grids
+        farm = render("farm", "bear")
+        assert farm != critter and farm != dogs
     finally:
-        sprites.set_crew_style("critters")
+        sprites.set_crew_style("farm")
 
 
 async def test_crew_stage_resizable_and_persisted(qapp, tmp_path):
-    from crew.app.main_window import MainWindow
-    from crew.engine.facade import Engine
+    from bytebarn.app.main_window import MainWindow
+    from bytebarn.engine.facade import Engine
 
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -1155,8 +1158,8 @@ async def test_crew_stage_resizable_and_persisted(qapp, tmp_path):
 
 
 async def test_load_live_models_preserves_selection(qapp, tmp_path):
-    from crew.app.main_window import MainWindow
-    from crew.engine.facade import Engine
+    from bytebarn.app.main_window import MainWindow
+    from bytebarn.engine.facade import Engine
 
     proj = tmp_path / "p"
     proj.mkdir()
@@ -1189,8 +1192,8 @@ async def test_load_live_models_preserves_selection(qapp, tmp_path):
 
 
 async def test_model_picker_empty_current_does_not_autopick(qapp, tmp_path):
-    from crew.app.model_picker import ModelPicker
-    from crew.engine.facade import Engine
+    from bytebarn.app.model_picker import ModelPicker
+    from bytebarn.engine.facade import Engine
 
     proj = tmp_path / "p"
     proj.mkdir()
@@ -1208,8 +1211,8 @@ async def test_model_picker_empty_current_does_not_autopick(qapp, tmp_path):
 
 async def test_refresh_pickers_preserves_provider_on_bare_model_id(qapp, tmp_path):
     """AgentRegistryChanged used to pass model_combo bare text, flipping provider."""
-    from crew.app.main_window import MainWindow
-    from crew.engine.facade import Engine
+    from bytebarn.app.main_window import MainWindow
+    from bytebarn.engine.facade import Engine
 
     proj = tmp_path / "p"
     proj.mkdir()
@@ -1218,7 +1221,7 @@ async def test_refresh_pickers_preserves_provider_on_bare_model_id(qapp, tmp_pat
     engine.providers.auth.set("groq", {"type": "api", "key": "gsk-x"})
     engine.providers.auth.set("anthropic", {"type": "api", "key": "sk-x"})
     # remember a non-anthropic default
-    from crew.engine.config import patch_config_file
+    from bytebarn.engine.config import patch_config_file
     patch_config_file(g / "config.json", {"last_model": "groq/llama-3.1-8b-instant", "model": "groq/llama-3.1-8b-instant"})
     engine.reload_config()
     await engine.start()
@@ -1245,8 +1248,8 @@ async def test_refresh_pickers_preserves_provider_on_bare_model_id(qapp, tmp_pat
 
 async def test_switching_provider_clears_previous_model(qapp, tmp_path):
     """Selecting a new provider must not keep the old provider's model shown."""
-    from crew.app.main_window import MainWindow
-    from crew.engine.facade import Engine
+    from bytebarn.app.main_window import MainWindow
+    from bytebarn.engine.facade import Engine
 
     proj = tmp_path / "p"
     proj.mkdir()
@@ -1278,7 +1281,7 @@ async def test_switching_provider_clears_previous_model(qapp, tmp_path):
 
 
 def test_transcript_search_finds_and_steps(qapp):
-    from crew.app.transcript import Transcript
+    from bytebarn.app.transcript import Transcript
 
     t = Transcript()
     t.load_history(_history_page(["alpha beast", "gamma", "beta again"], 100))
@@ -1293,7 +1296,7 @@ def test_transcript_search_finds_and_steps(qapp):
 
 
 def test_prompt_bar_attachment_chips(qapp, tmp_path):
-    from crew.app.prompt_bar import PromptBar
+    from bytebarn.app.prompt_bar import PromptBar
 
     bar = PromptBar(attachments_dir=tmp_path)
     bar.add_attachments([str(tmp_path / "a.png"), str(tmp_path / "b.txt")])
@@ -1320,7 +1323,7 @@ def test_prompt_bar_attachment_chips(qapp, tmp_path):
 def test_session_list_content_search_results(qapp):
     from types import SimpleNamespace
 
-    from crew.app.session_list import SessionList
+    from bytebarn.app.session_list import SessionList
 
     sl = SessionList()
     session = SimpleNamespace(id="s1", title="found me", agent="build",
@@ -1335,7 +1338,7 @@ def test_session_list_content_search_results(qapp):
 
 
 def test_transcript_stamps_message_ids_for_edit(qapp):
-    from crew.app.transcript import TextBlock, Transcript
+    from bytebarn.app.transcript import TextBlock, Transcript
     from types import SimpleNamespace
 
     t = Transcript()

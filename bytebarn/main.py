@@ -1,4 +1,4 @@
-"""Crew entry point: qasync event loop + engine + main window."""
+"""ByteBarn entry point: qasync event loop + engine + main window."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from .engine.facade import Engine
 
 def scrub_qt_env(environ: dict, pyside_dir: str) -> list[str]:
     """Drop Qt environment leaked from another Qt install (e.g. a frozen
-    /Applications/Crew.app bundle whose launcher spawned us, or whose env
+    /Applications/ByteBarn.app bundle whose launcher spawned us, or whose env
     survived an updater restart).
 
     Loading a platform plugin or framework from a *different* Qt copy makes
@@ -80,14 +80,14 @@ def main() -> None:
 
     QApplication.setAttribute(_Qt.AA_ShareOpenGLContexts)
     app = QApplication(sys.argv)
-    app.setApplicationName("Crew")
+    app.setApplicationName("ByteBarn")
     app.setWindowIcon(app_icon())
     # Normal macOS behaviour: closing the last window quits the app.
     # The qasync loop is stopped via app.aboutToQuit below.
     app.setQuitOnLastWindowClosed(True)
 
     # directories are per session now — no startup picker. This only sets the
-    # engine's config root (global + project .crew); every session picks its
+    # engine's config root (global + project .bytebarn); every session picks its
     # own working directory explicitly when created.
     if len(sys.argv) > 1:
         project_dir = Path(sys.argv[1]).resolve()
@@ -115,7 +115,7 @@ def main() -> None:
     _extra = engine.config.model_extra or {}
     sprites.set_crew_style(
         _extra.get("crew_style")
-        or ("waifu" if _extra.get("waifu") else "critters"))
+        or ("waifu" if _extra.get("waifu") else "farm"))
     window = MainWindow(engine)
     window.setWindowIcon(app_icon())
 

@@ -4,9 +4,9 @@ import json
 
 import pytest
 
-from crew.engine.checkpoints import CheckpointStore
-from crew.engine.facade import Engine
-from crew.engine.providers.fake import FakeProvider, text_turn, tool_turn
+from bytebarn.engine.checkpoints import CheckpointStore
+from bytebarn.engine.facade import Engine
+from bytebarn.engine.providers.fake import FakeProvider, text_turn, tool_turn
 
 
 # -- checkpoint store (unit) --------------------------------------------------

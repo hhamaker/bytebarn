@@ -1,6 +1,6 @@
 """Config loading, merging, and format-preserving patching.
 
-Two layers: global (~/.crew/config.json) and project (<project>/.crew/config.json).
+Two layers: global (~/.bytebarn/config.json) and project (<project>/.bytebarn/config.json).
 Project wins per key via deep merge. Files are JSON with // comments and
 trailing commas tolerated. Programmatic writes patch key-by-key, preserving
 the untouched text of the file (comments, formatting).
@@ -15,7 +15,16 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-GLOBAL_DIR = Path(os.environ.get("CREW_HOME", str(Path.home() / ".crew")))
+def _default_home() -> str:
+    """~/.bytebarn, but grandfather an existing ~/.crew install (pre-rename)."""
+    fresh = Path.home() / ".bytebarn"
+    legacy = Path.home() / ".crew"
+    if not fresh.exists() and legacy.exists():
+        return str(legacy)
+    return str(fresh)
+
+
+GLOBAL_DIR = Path(os.environ.get("BYTEBARN_HOME", _default_home()))
 
 
 class _Deleted:
@@ -190,7 +199,11 @@ def load_config(project_dir: Path | str | None = None, global_dir: Path | None =
     if gpath.exists():
         merged = deep_merge(merged, lenient_json_loads(gpath.read_text()))
     if project_dir is not None:
-        ppath = Path(project_dir) / ".crew" / "config.json"
+        ppath = Path(project_dir) / ".bytebarn" / "config.json"
+        if not ppath.exists():  # grandfather pre-rename project configs
+            legacy = Path(project_dir) / ".crew" / "config.json"
+            if legacy.exists():
+                ppath = legacy
         if ppath.exists():
             merged = deep_merge(merged, lenient_json_loads(ppath.read_text()))
     return Config(**merged)

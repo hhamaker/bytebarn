@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from .base import Tool, ToolContext, ToolResult
 
 _ENDPOINT = "https://html.duckduckgo.com/html/"
-_HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh) Crew/1.0"}
+_HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh) ByteBarn/1.0"}
 
 # result anchors and snippets in the no-JS DuckDuckGo page
 _RESULT_RE = re.compile(

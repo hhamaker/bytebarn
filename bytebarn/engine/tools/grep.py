@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from .base import Tool, ToolContext, ToolResult
 
-_SKIP_DIRS = {".git", ".venv", "node_modules", "__pycache__", ".crew"}
+_SKIP_DIRS = {".git", ".venv", "node_modules", "__pycache__", ".bytebarn"}
 
 
 class GrepParams(BaseModel):

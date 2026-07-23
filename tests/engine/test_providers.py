@@ -1,7 +1,7 @@
 import pytest
 
-from crew.engine.config import Config
-from crew.engine.providers.base import (
+from bytebarn.engine.config import Config
+from bytebarn.engine.providers.base import (
     Done,
     ErrorEv,
     ModelRequest,
@@ -13,9 +13,9 @@ from crew.engine.providers.base import (
     Usage,
     stream_with_retry,
 )
-from crew.engine.providers.catalog import cost_of, model_info
-from crew.engine.providers.fake import FakeProvider, text_turn, tool_turn
-from crew.engine.providers.registry import ProviderRegistry
+from bytebarn.engine.providers.catalog import cost_of, model_info
+from bytebarn.engine.providers.fake import FakeProvider, text_turn, tool_turn
+from bytebarn.engine.providers.registry import ProviderRegistry
 
 
 def _req():
@@ -138,7 +138,7 @@ def test_registry_copilot_oauth_record(tmp_path):
 
 def test_registry_anthropic_oauth_record(tmp_path, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    from crew.engine.providers.anthropic_oauth import AnthropicOAuthProvider
+    from bytebarn.engine.providers.anthropic_oauth import AnthropicOAuthProvider
 
     cfg = Config()
     reg = ProviderRegistry(cfg, global_dir=tmp_path)
@@ -148,8 +148,8 @@ def test_registry_anthropic_oauth_record(tmp_path, monkeypatch):
 
 
 def test_probe_endpoint_and_headers(tmp_path, monkeypatch):
-    from crew.engine.auth import AuthStore
-    from crew.engine.providers.probe import _endpoint_and_headers
+    from bytebarn.engine.auth import AuthStore
+    from bytebarn.engine.providers.probe import _endpoint_and_headers
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
@@ -168,8 +168,8 @@ def test_probe_endpoint_and_headers(tmp_path, monkeypatch):
 
 def test_probe_anthropic_oauth_headers(tmp_path, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    from crew.engine.auth import AuthStore
-    from crew.engine.providers.probe import _endpoint_and_headers
+    from bytebarn.engine.auth import AuthStore
+    from bytebarn.engine.providers.probe import _endpoint_and_headers
 
     cfg = Config()
     auth = AuthStore(tmp_path)
@@ -183,7 +183,7 @@ def test_probe_anthropic_oauth_headers(tmp_path, monkeypatch):
 async def test_copilot_device_flow(monkeypatch):
     import httpx
 
-    from crew.engine.providers import github_copilot_oauth as gh
+    from bytebarn.engine.providers import github_copilot_oauth as gh
 
     polls = {"n": 0}
 
@@ -214,7 +214,7 @@ async def test_copilot_device_flow(monkeypatch):
 async def test_xai_device_flow(monkeypatch):
     import httpx
 
-    from crew.engine.providers import xai_oauth
+    from bytebarn.engine.providers import xai_oauth
 
     polls = {"n": 0}
 
@@ -250,7 +250,7 @@ async def test_xai_device_flow(monkeypatch):
 async def test_anthropic_oauth_exchange(monkeypatch):
     import httpx
 
-    from crew.engine.providers import anthropic_oauth as ao
+    from bytebarn.engine.providers import anthropic_oauth as ao
 
     seen = {}
 
@@ -273,12 +273,12 @@ async def test_anthropic_oauth_exchange(monkeypatch):
 async def test_anthropic_oauth_provider_prefixes_identity(tmp_path):
     import time as _time
 
-    from crew.engine.auth import AuthStore
-    from crew.engine.providers.anthropic_oauth import (
+    from bytebarn.engine.auth import AuthStore
+    from bytebarn.engine.providers.anthropic_oauth import (
         CLAUDE_CODE_IDENTITY,
         AnthropicOAuthProvider,
     )
-    from crew.engine.providers.fake import FakeProvider, text_turn
+    from bytebarn.engine.providers.fake import FakeProvider, text_turn
 
     auth = AuthStore(tmp_path)
     future_ms = int(_time.time() * 1000) + 3_600_000
@@ -292,7 +292,7 @@ async def test_anthropic_oauth_provider_prefixes_identity(tmp_path):
 
 
 def test_cloudflare_env_expansion(tmp_path, monkeypatch):
-    from crew.engine.providers.known import KNOWN_PROVIDERS, expand_env_vars
+    from bytebarn.engine.providers.known import KNOWN_PROVIDERS, expand_env_vars
 
     monkeypatch.delenv("CLOUDFLARE_ACCOUNT_ID", raising=False)
     spec = KNOWN_PROVIDERS["cloudflare"]
@@ -303,8 +303,8 @@ def test_cloudflare_env_expansion(tmp_path, monkeypatch):
 
 
 def test_cloudflare_probe_uses_models_search(tmp_path, monkeypatch):
-    from crew.engine.auth import AuthStore
-    from crew.engine.providers.probe import _endpoint_and_headers
+    from bytebarn.engine.auth import AuthStore
+    from bytebarn.engine.providers.probe import _endpoint_and_headers
 
     monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "abc123")
     cfg = Config()
@@ -317,8 +317,8 @@ def test_cloudflare_probe_uses_models_search(tmp_path, monkeypatch):
 
 
 async def test_cloudflare_probe_reports_missing_var(tmp_path, monkeypatch):
-    from crew.engine.auth import AuthStore
-    from crew.engine.providers.probe import probe_provider
+    from bytebarn.engine.auth import AuthStore
+    from bytebarn.engine.providers.probe import probe_provider
 
     monkeypatch.delenv("CLOUDFLARE_ACCOUNT_ID", raising=False)
     cfg = Config()
@@ -329,8 +329,8 @@ async def test_cloudflare_probe_reports_missing_var(tmp_path, monkeypatch):
 
 
 def test_known_providers_and_available_models(tmp_path, monkeypatch):
-    from crew.engine.auth import AuthStore
-    from crew.engine.providers.known import (
+    from bytebarn.engine.auth import AuthStore
+    from bytebarn.engine.providers.known import (
         KNOWN_PROVIDERS,
         available_models,
         connection_status,
@@ -365,8 +365,8 @@ def test_known_providers_and_available_models(tmp_path, monkeypatch):
 
 
 def test_comparable_model_fallback(tmp_path, monkeypatch):
-    from crew.engine.auth import AuthStore
-    from crew.engine.providers.fallback import comparable_model
+    from bytebarn.engine.auth import AuthStore
+    from bytebarn.engine.providers.fallback import comparable_model
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
@@ -389,8 +389,8 @@ def test_comparable_model_fallback(tmp_path, monkeypatch):
 
 
 def test_connected_providers_and_curated(tmp_path, monkeypatch):
-    from crew.engine.auth import AuthStore
-    from crew.engine.providers.known import connected_providers, curated_models
+    from bytebarn.engine.auth import AuthStore
+    from bytebarn.engine.providers.known import connected_providers, curated_models
 
     for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY", "XAI_API_KEY"):
         monkeypatch.delenv(var, raising=False)
@@ -409,8 +409,8 @@ def test_connected_providers_and_curated(tmp_path, monkeypatch):
 async def test_fetch_models_parses_provider_shapes(tmp_path, monkeypatch):
     import httpx
 
-    from crew.engine.auth import AuthStore
-    from crew.engine.providers import probe
+    from bytebarn.engine.auth import AuthStore
+    from bytebarn.engine.providers import probe
 
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
@@ -449,8 +449,8 @@ async def test_fetch_models_parses_provider_shapes(tmp_path, monkeypatch):
 async def test_fetch_models_cloudflare_paginates(tmp_path, monkeypatch):
     import httpx
 
-    from crew.engine.auth import AuthStore
-    from crew.engine.providers import probe
+    from bytebarn.engine.auth import AuthStore
+    from bytebarn.engine.providers import probe
 
     pages: list[int] = []
 
@@ -488,10 +488,10 @@ async def test_engine_list_models_caches_live_and_prefers_over_curated(
     from the provider and remember the result for pickers + fallback."""
     import httpx
 
-    from crew.engine.facade import Engine
-    from crew.engine.providers import probe
-    from crew.engine.providers.fallback import comparable_model
-    from crew.engine.providers.known import available_models
+    from bytebarn.engine.facade import Engine
+    from bytebarn.engine.providers import probe
+    from bytebarn.engine.providers.fallback import comparable_model
+    from bytebarn.engine.providers.known import available_models
 
     calls = {"n": 0}
 
@@ -545,8 +545,8 @@ async def test_engine_list_models_caches_live_and_prefers_over_curated(
 
 
 def test_available_models_live_overrides_curated(tmp_path, monkeypatch):
-    from crew.engine.auth import AuthStore
-    from crew.engine.providers.known import available_models
+    from bytebarn.engine.auth import AuthStore
+    from bytebarn.engine.providers.known import available_models
 
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     cfg = Config()
@@ -572,9 +572,9 @@ def test_cloudflare_provider_disables_compression(tmp_path, monkeypatch):
 
 
 def test_bedrock_spec_and_registry(tmp_path, monkeypatch):
-    from crew.engine.providers.bedrock import BedrockProvider, resolve_region
-    from crew.engine.providers.known import KNOWN_PROVIDERS, connection_status
-    from crew.engine.auth import AuthStore
+    from bytebarn.engine.providers.bedrock import BedrockProvider, resolve_region
+    from bytebarn.engine.providers.known import KNOWN_PROVIDERS, connection_status
+    from bytebarn.engine.auth import AuthStore
 
     spec = KNOWN_PROVIDERS["bedrock"]
     assert spec.api == "anthropic"
@@ -603,9 +603,9 @@ def test_bedrock_spec_and_registry(tmp_path, monkeypatch):
 
 
 async def test_bedrock_probe_without_creds(tmp_path, monkeypatch):
-    from crew.engine.auth import AuthStore
-    from crew.engine.providers import bedrock
-    from crew.engine.providers.probe import probe_provider
+    from bytebarn.engine.auth import AuthStore
+    from bytebarn.engine.providers import bedrock
+    from bytebarn.engine.providers.probe import probe_provider
 
     monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
     monkeypatch.delenv("AWS_PROFILE", raising=False)
@@ -615,9 +615,9 @@ async def test_bedrock_probe_without_creds(tmp_path, monkeypatch):
 
 
 def test_bedrock_client_id_secret(tmp_path, monkeypatch):
-    from crew.engine.auth import AuthStore
-    from crew.engine.providers.bedrock import BedrockProvider, credentials_present
-    from crew.engine.providers.known import KNOWN_PROVIDERS, connection_status
+    from bytebarn.engine.auth import AuthStore
+    from bytebarn.engine.providers.bedrock import BedrockProvider, credentials_present
+    from bytebarn.engine.providers.known import KNOWN_PROVIDERS, connection_status
 
     # explicit keys count as credentials even without env/~/.aws
     assert credentials_present("AKIA", "secret") is True
@@ -651,9 +651,9 @@ def test_bedrock_client_id_secret(tmp_path, monkeypatch):
 
 
 def test_bedrock_api_key(tmp_path, monkeypatch):
-    from crew.engine.auth import AuthStore
-    from crew.engine.providers.bedrock import BedrockProvider, credentials_present
-    from crew.engine.providers.known import KNOWN_PROVIDERS, connection_status
+    from bytebarn.engine.auth import AuthStore
+    from bytebarn.engine.providers.bedrock import BedrockProvider, credentials_present
+    from bytebarn.engine.providers.known import KNOWN_PROVIDERS, connection_status
 
     monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
     monkeypatch.delenv("AWS_PROFILE", raising=False)
@@ -689,7 +689,7 @@ def test_bedrock_api_key(tmp_path, monkeypatch):
 async def test_list_bedrock_models_via_api_key():
     import httpx
 
-    from crew.engine.providers import bedrock
+    from bytebarn.engine.providers import bedrock
 
     summaries = {"modelSummaries": [
         {"modelId": "anthropic.claude-sonnet-4-5",
@@ -717,8 +717,8 @@ async def test_list_bedrock_models_via_api_key():
 
 
 def test_openai_messages_assistant_tool_call_content_is_string():
-    from crew.engine.providers.base import Msg
-    from crew.engine.providers.openai_compat import _to_openai_messages
+    from bytebarn.engine.providers.base import Msg
+    from bytebarn.engine.providers.openai_compat import _to_openai_messages
 
     msgs = [
         Msg("user", [{"type": "text", "text": "list files"}]),
@@ -741,8 +741,8 @@ def test_openai_messages_assistant_tool_call_content_is_string():
 
 
 def test_openai_messages_assistant_text_joins_correctly():
-    from crew.engine.providers.base import Msg
-    from crew.engine.providers.openai_compat import _to_openai_messages
+    from bytebarn.engine.providers.base import Msg
+    from bytebarn.engine.providers.openai_compat import _to_openai_messages
 
     msgs = [
         Msg("user", [{"type": "text", "text": "hi"}]),
@@ -759,7 +759,7 @@ def test_openai_messages_assistant_text_joins_correctly():
 def test_bedrock_usable_ids_include_inference_profiles():
     """Current-gen Claude on Bedrock is INFERENCE_PROFILE-only — the live
     list must surface the us.… profile ids, not just legacy ON_DEMAND."""
-    from crew.engine.providers.bedrock import usable_bedrock_ids
+    from bytebarn.engine.providers.bedrock import usable_bedrock_ids
 
     models = [
         {"modelId": "anthropic.claude-3-5-haiku-20241022-v1:0",
@@ -794,11 +794,11 @@ def test_bedrock_usable_ids_include_inference_profiles():
 async def test_bedrock_converse_routes_non_claude_models():
     """Non-Claude Bedrock ids stream through the Converse API and map onto
     the provider-neutral event contract."""
-    from crew.engine.providers.base import (
+    from bytebarn.engine.providers.base import (
         Done, ModelRequest, Msg, TextDelta, ToolCallDelta, ToolCallEnd,
         ToolCallStart, ToolDef, Usage,
     )
-    from crew.engine.providers.bedrock import BedrockProvider
+    from bytebarn.engine.providers.bedrock import BedrockProvider
 
     captured: dict = {}
 

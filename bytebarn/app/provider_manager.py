@@ -1,10 +1,10 @@
-"""Provider connections manager: connect Crew to LLM services.
+"""Provider connections manager: connect ByteBarn to LLM services.
 
-One place to see every service Crew knows how to talk to, connect it
+One place to see every service ByteBarn knows how to talk to, connect it
 (paste an API key, log in with OAuth, or just point at a local server),
 and verify the connection actually works.
 
-Keys typed here go to ~/.crew/auth.json (0600), never into project config.
+Keys typed here go to ~/.bytebarn/auth.json (0600), never into project config.
 """
 
 from __future__ import annotations
@@ -353,7 +353,7 @@ class ProviderManager(QDialog):
             return
         self.engine.providers.auth.set(spec.id, {"type": "api", "key": key})
         self.key_edit.clear()
-        self._after_change("key saved to ~/.crew/auth.json")
+        self._after_change("key saved to ~/.bytebarn/auth.json")
 
     def _save_bedrock_creds(self) -> None:
         api_key = self.aws_apikey_edit.text().strip()
@@ -374,7 +374,7 @@ class ProviderManager(QDialog):
         self.engine.providers.auth.set("bedrock", record)
         self.aws_apikey_edit.clear()
         self.aws_secret_edit.clear()
-        self._after_change("Bedrock credentials saved to ~/.crew/auth.json")
+        self._after_change("Bedrock credentials saved to ~/.bytebarn/auth.json")
 
     def _remove_key(self) -> None:
         spec = self._current
