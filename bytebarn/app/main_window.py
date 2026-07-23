@@ -1488,7 +1488,11 @@ class MainWindow(QMainWindow):
         patch_config_file(self.engine.global_dir / "config.json", {"session_mode": mode})
 
     def _on_session_moved(self, session_id: str, project_id: str | None) -> None:
-        asyncio.ensure_future(self.engine.store.update_session_project(session_id, project_id))
+        async def run() -> None:
+            await self.engine.store.update_session_project(session_id, project_id)
+            await self._refresh_sessions()  # show the row under its new project
+
+        self._fire(run())
         asyncio.ensure_future(self._refresh_sessions())
 
     # ------------------------------------------------------------------ dialogs

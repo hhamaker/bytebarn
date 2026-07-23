@@ -1347,3 +1347,79 @@ def test_transcript_stamps_message_ids_for_edit(qapp):
     block = t._part_widgets["p1"]
     assert isinstance(block, TextBlock)
     assert block.property("message_id") == "m-42"
+
+
+def test_session_drop_on_project_emits_move(qapp):
+    """A drag-drop of a session row onto a project row must emit the move
+    signal from the tree's real dropEvent (regression: the handler lived on
+    the parent widget and never fired)."""
+    from types import SimpleNamespace
+
+    from PySide6.QtCore import QMimeData, QPointF, Qt
+    from PySide6.QtGui import QDropEvent
+
+    from bytebarn.app.session_list import SessionList
+
+    sl = SessionList()
+    sl.resize(300, 400)
+    proj = SimpleNamespace(id="p9", name="Target", path="/x")
+    default = SimpleNamespace(id="p0", name="Default", path="/y")
+    session = SimpleNamespace(id="s1", title="mover", agent="build", model="",
+                              updated_at=0.0, directory="",
+                              parent_session_id=None)
+    sl.populate([default, proj], {"p0": [session], "p9": []}, set(), "",
+                default_project_id="p0")
+    moved: list = []
+    sl.session_moved_to_project.connect(lambda s, p: moved.append((s, p)))
+
+    # find the rows
+    def find(kind, wanted_id):
+        def walk(item):
+            if item.data(0, Qt.UserRole) == wanted_id:
+                return item
+            for i in range(item.childCount()):
+                if (hit := walk(item.child(i))) is not None:
+                    return hit
+        for i in range(sl.tree.topLevelItemCount()):
+            if (hit := walk(sl.tree.topLevelItem(i))) is not None:
+                return hit
+
+    session_item = find("session", "s1")
+    project_item = find("project", "p9")
+    assert session_item is not None and project_item is not None
+    project_item.parent().setExpanded(True)
+    sl.tree.setCurrentItem(session_item)
+    target = sl.tree.visualItemRect(project_item).center()
+
+    event = QDropEvent(QPointF(target), Qt.MoveAction, QMimeData(),
+                       Qt.LeftButton, Qt.NoModifier)
+    sl.tree.dropEvent(event)
+    assert moved == [("s1", "p9")]
+
+
+async def test_move_session_to_project_persists_and_refreshes(qapp, tmp_path):
+    import json as _json
+
+    from bytebarn.app.main_window import MainWindow
+    from bytebarn.engine.facade import Engine
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    gdir = tmp_path / "global"
+    gdir.mkdir()
+    (gdir / "config.json").write_text(_json.dumps({"model": "fake/m"}))
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=gdir)
+    await engine.start()
+    try:
+        window = MainWindow(engine)
+        target = await engine.store.create_project("/elsewhere", "Target")
+        session = await engine.new_session()
+        window._on_session_moved(session.id, target.id)
+        for _ in range(100):
+            await asyncio.sleep(0.02)
+            refreshed = await engine.store.get_session(session.id)
+            if refreshed.project_id == target.id:
+                break
+        assert (await engine.store.get_session(session.id)).project_id == target.id
+    finally:
+        await engine.stop()

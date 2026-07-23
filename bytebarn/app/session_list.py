@@ -62,6 +62,35 @@ def bucket_label(ts: float, now: float | None = None) -> str:
 _BUCKET_ORDER = ["Today", "Yesterday", "This week", "This month", "Older"]
 
 
+class _SessionTree(QTreeWidget):
+    """Tree whose drops land in our code, not Qt's InternalMove.
+
+    QTreeWidget consumes drops itself, so a dropEvent on the parent widget
+    never fires — the move signal must be emitted from the tree subclass."""
+
+    def __init__(self, owner: "SessionList"):
+        super().__init__()
+        self._owner = owner
+
+    def dropEvent(self, event) -> None:
+        src = self.currentItem()
+        session_id = self._owner._session_id(src)
+        if session_id is None:
+            event.ignore()
+            return
+        project = self.itemAt(event.position().toPoint())
+        while project is not None and project.data(0, _KIND_ROLE) != "project":
+            project = project.parent()
+        if project is None:
+            event.ignore()
+            return
+        self._owner.session_moved_to_project.emit(
+            session_id, project.data(0, _ID_ROLE))
+        # deliberately no super(): the store is the source of truth and the
+        # repopulate after the move renders the row under its new project
+        event.accept()
+
+
 class SessionList(QWidget):
     session_selected = Signal(str)
     new_session = Signal(str | None)   # optional target project id
@@ -109,7 +138,7 @@ class SessionList(QWidget):
         self.search.setPlaceholderText("search…")
         self.search.textChanged.connect(self._filter)
 
-        self.tree = QTreeWidget()
+        self.tree = _SessionTree(self)
         self.tree.setHeaderHidden(True)
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)  # shift/ctrl multi-select
         self.tree.currentItemChanged.connect(self._on_current_changed)
@@ -442,18 +471,3 @@ class SessionList(QWidget):
         for i in range(self.tree.topLevelItemCount()):
             apply(self.tree.topLevelItem(i))
 
-    def dropEvent(self, event):
-        src = self.tree.currentItem()
-        if self._session_id(src) is None:
-            return
-        dst = self.tree.itemAt(event.position().toPoint())
-        if dst is None:
-            return
-        project = dst
-        while project is not None and project.data(0, _KIND_ROLE) != "project":
-            project = project.parent()
-        if project is None:
-            return
-        self.session_moved_to_project.emit(
-            src.data(0, _ID_ROLE), project.data(0, _ID_ROLE))
-        event.accept()
