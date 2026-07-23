@@ -20,7 +20,6 @@ from .engine.facade import Engine
 
 
 async def _consume_events(engine: Engine) -> None:
-    seen_text: dict[str, int] = {}
     async for event in engine.bus.subscribe():
         if isinstance(event, PartUpdated):
             if event.part_type == "text" and event.delta:

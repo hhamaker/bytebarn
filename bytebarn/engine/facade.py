@@ -20,7 +20,6 @@ from .events import (
     SessionUpdated,
     TaskFinished,
     TaskStarted,
-    TaskUpdated,
 )
 from .permissions import ASK_MODE, PermissionPolicy
 from .providers.registry import ProviderRegistry

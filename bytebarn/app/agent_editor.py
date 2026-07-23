@@ -184,7 +184,6 @@ class AgentEditor(QDialog):
             return
         keep = self.model_combo.currentText().strip()
         merged = list(dict.fromkeys(([keep] if keep and keep not in live else []) + live))
-        prev = self._selected_model()
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
         self.model_combo.addItems(merged)

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import hashlib
 
-from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 
 SPRITE_W = 12

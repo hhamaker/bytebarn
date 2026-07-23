@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Drive the real Crew GUI offscreen to verify UI/engine changes end-to-end (no display needed) and capture screenshots.
+description: Drive the real ByteBarn GUI offscreen to verify UI/engine changes end-to-end (no display needed) and capture screenshots.
 ---
 
 # Verifying Crew changes

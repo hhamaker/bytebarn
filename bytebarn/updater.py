@@ -1,4 +1,4 @@
-"""Auto-updater tied to the GitHub repo (hhamaker/openDesktop).
+"""Auto-updater tied to the GitHub repo (hhamaker/bytebarn).
 
 Two install modes, two strategies:
 
@@ -20,7 +20,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-DEFAULT_REPO = "hhamaker/openDesktop"
+DEFAULT_REPO = "hhamaker/bytebarn"
 _RELEASES_URL = "https://api.github.com/repos/{repo}/releases/latest"
 
 
@@ -28,7 +28,7 @@ def current_version() -> str:
     try:
         from importlib.metadata import version
 
-        return version("crew")
+        return version("bytebarn")
     except Exception:
         return "0.0.0"
 

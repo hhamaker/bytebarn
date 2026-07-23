@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import html
-import json
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -319,13 +318,6 @@ class MainWindow(QMainWindow):
         self.prompt_bar.action_requested.connect(self._action)
 
         self._refresh_pickers()
-
-    def closeEvent(self, event):
-        # ensure the asyncio loop receives a quit signal when the window closes
-        from PySide6.QtWidgets import QApplication
-
-        QApplication.instance().quit()
-        super().closeEvent(event)
 
     def _build_menus(self) -> None:
         """Native menu bar (on macOS this fills the "ByteBarn" application menu)."""

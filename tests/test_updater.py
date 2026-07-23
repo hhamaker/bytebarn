@@ -1,6 +1,5 @@
 """Auto-updater: version compare, git-checkout flow, release check."""
 
-import asyncio
 import subprocess
 
 import pytest

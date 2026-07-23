@@ -1,6 +1,6 @@
 """Agent definitions and discovery (spec §4.3, §6.1).
 
-Built-ins are defined here with prompts in assets/prompts/. User/project
+Built-ins are defined here with prompts in bytebarn/assets/prompts/. User/project
 agent/*.md files merge over built-ins of the same name; config
 ``agent.<name>`` overrides merge on top of that.
 """

@@ -34,7 +34,7 @@ async def test_project_folders(store, tmp_path):
 
 async def test_rename_and_delete_project(store, tmp_path):
     p = await store.add_project("catalog:Test", name="Old")
-    sess = await store.create_session(p.id, title="s1")
+    await store.create_session(p.id, title="s1")
     await store.add_project_folder(p.id, tmp_path)
 
     await store.rename_project(p.id, "New")

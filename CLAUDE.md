@@ -82,7 +82,7 @@ a key. Never rewrite config files wholesale.
 
 ### Agents
 
-`agents.py` builtins (prompts live in `assets/prompts/agent_*.txt`) ←
+`agents.py` builtins (prompts live in `bytebarn/assets/prompts/agent_*.txt`) ←
 overridden by `agent/*.md` files (global then project `.bytebarn/agent/`) ←
 `config.agent.<name>` overrides on top. Hot-reloaded by a watchfiles task in
 main_window. The GUI agent editor writes config overrides for builtins but

@@ -1,7 +1,6 @@
 """Project memory: OKF bundle written by the memory tool, injected into runs."""
 
 import json
-from pathlib import Path
 
 import pytest
 

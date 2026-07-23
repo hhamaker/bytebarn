@@ -25,6 +25,15 @@ QT_QPA_PLATFORM=offscreen .venv/bin/pytest tests/engine/test_store.py -k cascade
 
 pytest uses `asyncio_mode = "auto"` — write async test functions directly; no `@pytest.mark.asyncio` decorator needed.
 
+## Linting
+
+```bash
+.venv/bin/ruff check .
+```
+
+CI enforces `ruff check` (pyflakes + pycodestyle errors). No formatter is
+enforced — match the style of the surrounding code.
+
 ## Submitting PRs
 
 1. Fork the repo and create a feature branch from `main`.

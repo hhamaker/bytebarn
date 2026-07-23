@@ -499,7 +499,6 @@ def test_session_list_project_rename_delete_signals(qapp, monkeypatch):
     sl.rename_project.connect(renamed.append)
     sl.delete_project.connect(deleted.append)
     sl.populate([_proj("p1", "Alpha")], {"p1": []}, set(), "")
-    top = sl.tree.topLevelItem(0)
     # context menu would emit; test the signals directly
     sl.rename_project.emit("p1")
     sl.delete_project.emit("p1")
@@ -901,7 +900,7 @@ async def test_workspace_goal_queue_ui(qapp, tmp_path):
     engine.providers.register("fake", FakeProvider([text_turn("ok")]))
     await engine.start()
     try:
-        goal = await engine.queue_goal("ship the feature")
+        await engine.queue_goal("ship the feature")
         ws = ProjectWorkspace(engine)
         await ws.load(engine.project.id)
         assert ws.queue_list.count() == 1

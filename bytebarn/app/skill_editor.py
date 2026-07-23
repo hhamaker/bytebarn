@@ -8,7 +8,6 @@ from pathlib import Path
 import httpx
 from PySide6.QtWidgets import (
     QDialog,
-    QFileDialog,
     QHBoxLayout,
     QInputDialog,
     QListWidget,

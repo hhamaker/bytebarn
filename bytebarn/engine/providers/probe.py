@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import httpx
 
 from ..auth import AuthStore
@@ -113,8 +115,6 @@ async def probe_provider(name: str, config: Config, auth: AuthStore) -> tuple[bo
         return True, "connected — endpoint reachable (no model listing)"
     return False, f"HTTP {response.status_code}: {response.text[:120]}"
 
-
-import re
 
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I

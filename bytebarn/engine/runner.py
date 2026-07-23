@@ -36,7 +36,7 @@ from .providers.base import (
     stream_with_retry,
 )
 from .providers.catalog import cost_of
-from .store import Session, Store, Todo
+from .store import Session, Todo
 from .tools.base import Tool, ToolContext, ToolResult, truncate_output
 from .tools.registry import WRITE_TOOLS, build_tools
 
@@ -255,7 +255,6 @@ class Runner:
     # ------------------------------------------------------------------
     async def run(self, session: Session, handle: RunHandle) -> None:
         engine = self.engine
-        store: Store = engine.store
         status = "done"
         engine.checkpoints.begin(session.id)
         try:

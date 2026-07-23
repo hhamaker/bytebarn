@@ -446,7 +446,7 @@ async def test_full_auto_switch_releases_pending_permission(engine):
 
     from bytebarn.engine.events import PermissionAsked
     from bytebarn.engine.permissions import FULL_AUTO
-    from bytebarn.engine.providers.fake import FakeProvider, text_turn, tool_turn
+    from bytebarn.engine.providers.fake import text_turn, tool_turn
 
     # config in the fixture allows bash, so force ask via agent override
     engine.config.permission["bash"] = "ask"
@@ -540,7 +540,7 @@ async def test_non_string_stream_fragments_do_not_crash(engine):
 
 
 async def test_init_command_routes_to_build_with_template(engine):
-    from bytebarn.engine.providers.fake import FakeProvider, text_turn
+    from bytebarn.engine.providers.fake import text_turn
 
     _install(engine, [text_turn("AGENTS.md written")])
     session = await engine.new_session(agent="chat")
@@ -558,7 +558,7 @@ async def test_init_command_routes_to_build_with_template(engine):
 
 
 async def test_session_directory_overrides_tool_cwd(engine, tmp_path):
-    from bytebarn.engine.providers.fake import FakeProvider, text_turn, tool_turn
+    from bytebarn.engine.providers.fake import text_turn, tool_turn
 
     workdir = tmp_path / "elsewhere"
     workdir.mkdir()

@@ -1,11 +1,33 @@
-# ByteBarn
+# ByteBarn 🛖
 
-A local desktop app that runs AI coding agents against your own codebases.
-Open a project, type a prompt or a `/goal`, and watch a crew of pixel-art
-critters do the work. Built from the spec in `python-desktop-rebuild.md`.
+A local desktop harness for AI coding agents. Open a project, type a prompt
+or a `/goal`, and a barn crew of pixel-art farm animals gets to work on your
+codebase.
+
+![The barn crew, ready for a goal](docs/media/welcome-dark.png)
 
 Everything runs locally: no cloud backend, no accounts, no telemetry. The
-only network traffic is to the LLM providers you configure.
+only network traffic is to the LLM providers you configure (16 supported,
+including Ollama and LM Studio for fully-offline use).
+
+![A session: chat, tool calls, live diffing](docs/media/session-dark.png)
+
+## What's in the barn
+
+- **Chat + agents** — markdown/code transcript, streaming, collapsible tool
+  and thinking cards, edit-and-re-run any prompt, regenerate, per-message
+  copy, in-conversation search (⌘F), full-text search across all chats,
+  transcript export, image paste with real vision support, PDF previews.
+- **Goals** — hand the orchestrator a goal; it plans todos, casts subagents,
+  and the crew stage animates them working in parallel. Queue goals and walk
+  away; routines re-run a prompt on a schedule.
+- **Harness tools** — web search + research agent, MCP servers (12 one-click
+  recipes + custom), skills, per-project persistent memory, preview panel
+  for HTML/dev servers, inline file editor, side chat (⌘;) for throwaway
+  questions.
+- **Control** — Safe / Ask / Full-auto permission modes with per-tool glob
+  rules, run review with per-file revert, cost tracking, automatic model
+  fallback, extended-thinking control per agent.
 
 ## Quick start
 
@@ -18,7 +40,7 @@ python3.12 -m venv .venv
 
 Connect providers in-app (**⚡ providers**) — or export `ANTHROPIC_API_KEY`
 etc. before launching. Each session picks its own working directory via the
-**📁** button in the header (a path argument still works: `... crew.main
+**📁** button in the header (a path argument still works: `... bytebarn.main
 /path/to/project`).
 
 No-GUI engine harness:
@@ -108,7 +130,7 @@ connected providers.
 
 ### Model fallback
 
-If a model keeps failing mid-run (outage, quota), Crew retries once, then
+If a model keeps failing mid-run (outage, quota), ByteBarn retries once, then
 switches to a comparable connected model — closest cost tier, different
 provider preferred — announces the switch in the transcript, and keeps
 going. Tune or disable it:
@@ -161,7 +183,7 @@ bytebarn/engine/   asyncio, zero Qt — session store (SQLite WAL), provider
                adapters (anthropic, openai-compatible), tool suite, agent
                registry, runner loop, compaction, event bus
 bytebarn/app/      PySide6 widgets — pure projection of engine events + DB
-assets/        agent/tool prompts (prompt engineering lives here)
+bytebarn/assets/  agent/tool prompts (prompt engineering lives here)
 ```
 
 Engine and UI meet only through the async event stream (`bytebarn/engine/events.py`)
@@ -171,14 +193,19 @@ poisoned.
 ## Packaging (macOS)
 
 ```bash
-./scripts/build_macos_app.sh --install   # builds dist/Crew.app, copies to /Applications
+./scripts/build_macos_app.sh --install   # builds dist/ByteBarn.app, copies to /Applications
 ```
 
 Uses PyInstaller; the app icon is rendered from the in-app sprite art.
 Launching from the Dock opens straight into your last-used folder — each
 session picks its own working directory from there.
 
-## Known gaps (v1)
+## Platform support
 
-None currently tracked — see `docs/idea-backlog.md` for the improvement
-idea pool.
+Developed and tested on macOS. Linux and Windows should work (pure
+Python + Qt; CI runs the suite on Linux) but get less day-to-day testing —
+issue reports welcome.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

@@ -1,0 +1,35 @@
+name: Bug report
+description: Something broke
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a project
+        2. …
+  - type: input
+    id: platform
+    attributes:
+      label: OS and Python version
+      placeholder: macOS 15.2 / Python 3.12.7
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Provider/model in use (if relevant)
+      placeholder: anthropic/claude-sonnet-5
+  - type: textarea
+    id: logs
+    attributes:
+      label: Terminal output / traceback
+      render: text
