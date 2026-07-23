@@ -63,32 +63,61 @@ _BUCKET_ORDER = ["Today", "Yesterday", "This week", "This month", "Older"]
 
 
 class _SessionTree(QTreeWidget):
-    """Tree whose drops land in our code, not Qt's InternalMove.
+    """Tree with hand-rolled session→project dragging.
 
-    QTreeWidget consumes drops itself, so a dropEvent on the parent widget
-    never fires — the move signal must be emitted from the tree subclass."""
+    Qt's native view DnD (QDrag.exec) runs a platform event loop that is
+    opaque, untestable offscreen, and was silently swallowing these drops.
+    Plain mouse events are deterministic: press on a session, move past the
+    drag threshold, release over a project row → emit the move signal."""
 
     def __init__(self, owner: "SessionList"):
         super().__init__()
         self._owner = owner
+        self._press_pos: QPoint | None = None
+        self._drag_session: str | None = None
 
-    def dropEvent(self, event) -> None:
-        src = self.currentItem()
-        session_id = self._owner._session_id(src)
-        if session_id is None:
-            event.ignore()
-            return
-        project = self.itemAt(event.position().toPoint())
-        while project is not None and project.data(0, _KIND_ROLE) != "project":
-            project = project.parent()
-        if project is None:
-            event.ignore()
-            return
-        self._owner.session_moved_to_project.emit(
-            session_id, project.data(0, _ID_ROLE))
-        # deliberately no super(): the store is the source of truth and the
-        # repopulate after the move renders the row under its new project
-        event.accept()
+    def _project_at(self, pos: QPoint):
+        item = self.itemAt(pos)
+        while item is not None and item.data(0, _KIND_ROLE) != "project":
+            item = item.parent()
+        return item
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            item = self.itemAt(event.position().toPoint())
+            if self._owner._session_id(item) is not None:
+                self._press_pos = event.position().toPoint()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._press_pos is not None and event.buttons() & Qt.LeftButton:
+            pos = event.position().toPoint()
+            if self._drag_session is None:
+                from PySide6.QtWidgets import QApplication
+
+                if ((pos - self._press_pos).manhattanLength()
+                        >= QApplication.startDragDistance()):
+                    self._drag_session = self._owner._session_id(
+                        self.itemAt(self._press_pos))
+            if self._drag_session is not None:
+                over = self._project_at(pos)
+                self.setCursor(Qt.DragMoveCursor if over is not None
+                               else Qt.ForbiddenCursor)
+                return  # swallow: no rubber-band selection while dragging
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        dragged, self._drag_session = self._drag_session, None
+        self._press_pos = None
+        self.unsetCursor()
+        if dragged is not None:
+            project = self._project_at(event.position().toPoint())
+            if project is not None:
+                self._owner.session_moved_to_project.emit(
+                    dragged, project.data(0, _ID_ROLE))
+                event.accept()
+                return
+        super().mouseReleaseEvent(event)
 
 
 class SessionList(QWidget):
@@ -146,10 +175,7 @@ class SessionList(QWidget):
         self.tree.itemDoubleClicked.connect(self._on_double_click)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._context_menu)
-        self.tree.setDragEnabled(True)
-        self.tree.setAcceptDrops(True)
-        self.tree.setDropIndicatorShown(True)
-        self.tree.setDragDropMode(QTreeWidget.InternalMove)
+        # dragging is hand-rolled in _SessionTree — native view DnD stays off
         self.tree.setRootIsDecorated(False)
         self.tree.setIndentation(12)
         self.tree.setMouseTracking(True)  # hover states for the painted rows
@@ -178,7 +204,13 @@ class SessionList(QWidget):
         """Claude-style sidebar: sessions belonging to a user project nest
         under that project's row; only the default (working-directory)
         project's sessions appear in the time-bucketed Recents list."""
-        expanded = self._expanded_ids()
+        expanded, known = self._expansion_state()
+
+        def keep_open(node_id: str) -> bool:
+            # collapse only rows the user explicitly collapsed before; rows
+            # that just appeared default to open so new content is visible
+            return node_id not in known or node_id in expanded
+
         self.tree.blockSignals(True)
         self.tree.clear()
 
@@ -211,9 +243,8 @@ class SessionList(QWidget):
                     if session.id == current:
                         current_item = child
                         has_current = True
-                item.setExpanded(has_current or project.id in expanded)
-            proj_header.setExpanded(
-                not expanded or _PROJECTS_HEADER_ID in expanded)
+                item.setExpanded(has_current or keep_open(project.id))
+            proj_header.setExpanded(keep_open(_PROJECTS_HEADER_ID))
 
         # Recents: the default project's sessions, newest first, under
         # time-bucket headers. Subagent children are hidden everywhere.
@@ -241,20 +272,49 @@ class SessionList(QWidget):
         self.tree.blockSignals(False)
         self._filter(self.search.text())
 
-    def _expanded_ids(self) -> set[str]:
-        """Ids of expanded projects (plus the Projects header sentinel)."""
-        out: set[str] = set()
+    def _expansion_state(self) -> tuple[set[str], set[str]]:
+        """(expanded ids, all known ids) for projects + headers in the tree.
+
+        Both sets are needed: a row absent from *known* is new and should
+        default to expanded — treating "never seen" as "collapsed" made
+        rows appear to vanish (e.g. a session moved into a collapsed
+        project)."""
+        expanded: set[str] = set()
+        known: set[str] = set()
 
         def walk(item: QTreeWidgetItem) -> None:
             kind = item.data(0, _KIND_ROLE)
-            if kind in ("project", "header") and item.isExpanded():
-                out.add(item.data(0, _ID_ROLE))
+            if kind in ("project", "header"):
+                known.add(item.data(0, _ID_ROLE))
+                if item.isExpanded():
+                    expanded.add(item.data(0, _ID_ROLE))
             for i in range(item.childCount()):
                 walk(item.child(i))
 
         for i in range(self.tree.topLevelItemCount()):
             walk(self.tree.topLevelItem(i))
-        return out
+        return expanded, known
+
+    def reveal_session(self, session_id: str) -> None:
+        """Expand ancestors of a session row and scroll it into view."""
+        def walk(item: QTreeWidgetItem) -> QTreeWidgetItem | None:
+            if item.data(0, _KIND_ROLE) == "session" \
+                    and item.data(0, _ID_ROLE) == session_id:
+                return item
+            for i in range(item.childCount()):
+                if (hit := walk(item.child(i))) is not None:
+                    return hit
+            return None
+
+        for i in range(self.tree.topLevelItemCount()):
+            hit = walk(self.tree.topLevelItem(i))
+            if hit is not None:
+                parent = hit.parent()
+                while parent is not None:
+                    parent.setExpanded(True)
+                    parent = parent.parent()
+                self.tree.scrollToItem(hit)
+                return
 
     @staticmethod
     def _header_item(label: str) -> QTreeWidgetItem:

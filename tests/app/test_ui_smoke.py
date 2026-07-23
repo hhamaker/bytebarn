@@ -1350,18 +1350,21 @@ def test_transcript_stamps_message_ids_for_edit(qapp):
 
 
 def test_session_drop_on_project_emits_move(qapp):
-    """A drag-drop of a session row onto a project row must emit the move
-    signal from the tree's real dropEvent (regression: the handler lived on
-    the parent widget and never fired)."""
+    """Dragging a session row onto a project row emits the move signal.
+
+    Uses the real mouse pipeline (press/move/release via QTest) — the drag
+    is hand-rolled in _SessionTree precisely so this is testable; Qt's
+    native QDrag loop was swallowing drops and cannot run headless."""
     from types import SimpleNamespace
 
-    from PySide6.QtCore import QMimeData, QPointF, Qt
-    from PySide6.QtGui import QDropEvent
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
 
     from bytebarn.app.session_list import SessionList
 
     sl = SessionList()
-    sl.resize(300, 400)
+    sl.resize(300, 500)
+    sl.show()
     proj = SimpleNamespace(id="p9", name="Target", path="/x")
     default = SimpleNamespace(id="p0", name="Default", path="/y")
     session = SimpleNamespace(id="s1", title="mover", agent="build", model="",
@@ -1372,8 +1375,7 @@ def test_session_drop_on_project_emits_move(qapp):
     moved: list = []
     sl.session_moved_to_project.connect(lambda s, p: moved.append((s, p)))
 
-    # find the rows
-    def find(kind, wanted_id):
+    def find(wanted_id):
         def walk(item):
             if item.data(0, Qt.UserRole) == wanted_id:
                 return item
@@ -1384,17 +1386,30 @@ def test_session_drop_on_project_emits_move(qapp):
             if (hit := walk(sl.tree.topLevelItem(i))) is not None:
                 return hit
 
-    session_item = find("session", "s1")
-    project_item = find("project", "p9")
+    session_item = find("s1")
+    project_item = find("p9")
     assert session_item is not None and project_item is not None
     project_item.parent().setExpanded(True)
-    sl.tree.setCurrentItem(session_item)
-    target = sl.tree.visualItemRect(project_item).center()
+    src = sl.tree.visualItemRect(session_item).center()
+    dst = sl.tree.visualItemRect(project_item).center()
+    vp = sl.tree.viewport()
 
-    event = QDropEvent(QPointF(target), Qt.MoveAction, QMimeData(),
-                       Qt.LeftButton, Qt.NoModifier)
-    sl.tree.dropEvent(event)
+    QTest.mousePress(vp, Qt.LeftButton, Qt.NoModifier, src)
+    # step past the drag threshold, then over the project row
+    mid = QPoint(src.x(), (src.y() + dst.y()) // 2)
+    for point in (mid, dst):
+        QTest.mouseMove(vp, point)
+    QTest.mouseRelease(vp, Qt.LeftButton, Qt.NoModifier, dst)
     assert moved == [("s1", "p9")]
+
+    # release over empty space must NOT emit
+    moved.clear()
+    empty = QPoint(150, 460)
+    QTest.mousePress(vp, Qt.LeftButton, Qt.NoModifier, src)
+    QTest.mouseMove(vp, mid)
+    QTest.mouseMove(vp, empty)
+    QTest.mouseRelease(vp, Qt.LeftButton, Qt.NoModifier, empty)
+    assert moved == []
 
 
 async def test_move_session_to_project_persists_and_refreshes(qapp, tmp_path):
@@ -1423,3 +1438,39 @@ async def test_move_session_to_project_persists_and_refreshes(qapp, tmp_path):
         assert (await engine.store.get_session(session.id)).project_id == target.id
     finally:
         await engine.stop()
+
+
+def test_new_project_rows_default_expanded_and_reveal(qapp):
+    """Rows that newly appear must default to expanded — collapsing unknown
+    rows made moved sessions invisible. reveal_session force-opens ancestors."""
+    from types import SimpleNamespace
+
+    from bytebarn.app.session_list import SessionList
+
+    default = SimpleNamespace(id="p0", name="Default", path="/y")
+    proj = SimpleNamespace(id="p9", name="Target", path="/x")
+    s_home = SimpleNamespace(id="s1", title="mover", agent="build", model="",
+                             updated_at=0.0, directory="", parent_session_id=None)
+
+    sl = SessionList()
+    # first render: session lives in the default project, Target is empty
+    sl.populate([default, proj], {"p0": [s_home], "p9": []}, set(), "",
+                default_project_id="p0")
+    header = sl.tree.topLevelItem(0)
+    assert "Projects" in header.text(0)
+    assert header.isExpanded()                 # new header: open
+    project_row = header.child(0)
+    assert project_row.isExpanded()            # new project row: open
+
+    # user collapses the project, then the session moves into it
+    project_row.setExpanded(False)
+    sl.populate([default, proj], {"p0": [], "p9": [s_home]}, set(), "",
+                default_project_id="p0")
+    header = sl.tree.topLevelItem(0)
+    project_row = header.child(0)
+    assert not project_row.isExpanded()        # explicit collapse is respected
+    assert project_row.childCount() == 1       # row is there, just hidden
+
+    sl.reveal_session("s1")
+    assert project_row.isExpanded()            # reveal forces it open
+    assert header.isExpanded()

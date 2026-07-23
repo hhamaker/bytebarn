@@ -18,10 +18,10 @@ $PY -m PyInstaller \
   --noconfirm --clean --windowed \
   --name ByteBarn \
   --icon build/ByteBarn.icns \
-  --add-data "assets:assets" \
+  --add-data "bytebarn/assets:assets" \
   --hidden-import encodings.idna \
   --collect-submodules idna \
-  --osx-bundle-identifier dev.crew.app \
+  --osx-bundle-identifier dev.bytebarn.app \
   scripts/app_entry.py
 
 echo

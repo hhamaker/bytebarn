@@ -956,6 +956,7 @@ class MainWindow(QMainWindow):
             proj = next(p for p in projects if p.name == choice)
             await self.engine.store.update_session_project(session_id, proj.id)
             await self._refresh_sessions()
+            self.session_list.reveal_session(session_id)
         self._fire(run())
 
     async def _after_session_removed(self, session_id: str) -> None:
@@ -1490,7 +1491,9 @@ class MainWindow(QMainWindow):
     def _on_session_moved(self, session_id: str, project_id: str | None) -> None:
         async def run() -> None:
             await self.engine.store.update_session_project(session_id, project_id)
-            await self._refresh_sessions()  # show the row under its new project
+            await self._refresh_sessions()
+            # the destination project may be collapsed — surface the row
+            self.session_list.reveal_session(session_id)
 
         self._fire(run())
         asyncio.ensure_future(self._refresh_sessions())
