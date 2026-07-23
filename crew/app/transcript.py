@@ -17,25 +17,24 @@ from PySide6.QtWidgets import (
 
 from .markdown import escape, render_markdown
 
-_STATUS_ICON = {"pending": "…", "running": "⟳", "done": "✓", "error": "✗"}
+_STATUS_ICON = {"pending": "○", "running": "◐", "done": "●", "error": "●"}
 _STATUS_COLOR = {"pending": "#888", "running": "#e5c07b", "done": "#98c379", "error": "#e06c75"}
 _MARKDOWN_SETTLE_MS = 100  # re-render markdown after stream pauses
 
 
 class _Card(QFrame):
-    """Collapsible card with a header button and a body widget."""
+    """Collapsible chip: a quiet one-line header, body unfolds below."""
 
     def __init__(self, collapsed: bool = True):
         super().__init__()
-        self.setFrameShape(QFrame.StyledPanel)
-        self.set_accent("#3a3f4b")
+        self.setObjectName("partCard")
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setContentsMargins(8, 4, 8, 4)
         layout.setSpacing(2)
         self.header = QPushButton()
         self.header.setFlat(True)
         self.header.setCursor(Qt.PointingHandCursor)
-        self.header.setStyleSheet("QPushButton { border: none; text-align: left; padding: 2px; }")
+        self.set_header_color(None)
         self.body = QLabel()
         self.body.setTextFormat(Qt.RichText)
         self.body.setWordWrap(True)
@@ -45,10 +44,13 @@ class _Card(QFrame):
         layout.addWidget(self.header)
         layout.addWidget(self.body)
 
-    def set_accent(self, color: str) -> None:
-        self.setStyleSheet(
-            "QFrame { border: 1px solid #3a3f4b; border-radius: 4px;"
-            f" border-left: 3px solid {color}; }}"
+    def set_header_color(self, color: str | None) -> None:
+        from . import theme
+
+        color = color or theme.tokens()["muted"]
+        self.header.setStyleSheet(
+            "QPushButton { border: none; background: transparent; text-align: left;"
+            f" padding: 2px; color: {color}; font-size: 12px; }}"
         )
 
 
@@ -59,8 +61,45 @@ class ToolCard(_Card):
         super().__init__(collapsed=True)
         self._subagent_id = ""
         self.update_data(data)
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._context_menu)
+
+    def _file_path(self) -> str:
+        inp = (self._data or {}).get("input", {}) or {}
+        path = str(inp.get("path", "") or "")
+        from pathlib import Path as _Path
+
+        return path if path and _Path(path).is_file() else ""
+
+    def _context_menu(self, pos) -> None:
+        from PySide6.QtWidgets import QApplication, QMenu
+
+        transcript = self._transcript()
+        path = self._file_path()
+        menu = QMenu(self)
+        copy_out = menu.addAction("Copy output")
+        open_file = menu.addAction(f"Open {path.rsplit('/', 1)[-1]} in editor…") if path else None
+        preview = None
+        if path and path.lower().endswith((".html", ".htm", ".svg", ".pdf", ".md")):
+            preview = menu.addAction("Preview")
+        chosen = menu.exec(self.mapToGlobal(pos))
+        if chosen is None:
+            return
+        if chosen is copy_out:
+            QApplication.clipboard().setText((self._data or {}).get("output", "") or "")
+        elif open_file is not None and chosen is open_file and transcript:
+            transcript.open_file_requested.emit(path)
+        elif preview is not None and chosen is preview and transcript:
+            transcript.preview_file_requested.emit(path)
+
+    def _transcript(self):
+        parent = self.parent()
+        while parent is not None and not isinstance(parent, Transcript):
+            parent = parent.parent()
+        return parent
 
     def update_data(self, data: dict[str, Any]) -> None:
+        self._data = data
         status = data.get("status", "pending")
         icon = _STATUS_ICON.get(status, "?")
         color = _STATUS_COLOR.get(status, "#888")
@@ -70,24 +109,24 @@ class ToolCard(_Card):
         if tool == "task" and inp.get("agent"):
             title = f"{inp['agent']} — {title}"
         self._subagent_id = data.get("subagent_session_id", "") or self._subagent_id
-        header = f"{icon} {tool}  {title[:90]}"
+        from . import theme
+
+        t = theme.tokens()
+        header = f"{icon} {tool} · {title[:90]}"
         if self._subagent_id:
             header += "  ↗ open"
         self.header.setText(header)
         self.header.setToolTip("Open subagent session" if self._subagent_id else "")
-        self.header.setStyleSheet(
-            f"QPushButton {{ border: none; text-align: left; padding: 2px; color: {color}; }}"
-        )
-        self.set_accent(color)
+        self.set_header_color(color if status in ("running", "error") else None)
         input_html = self._pretty_input(tool, inp)[:2000]
         output = data.get("output", "") or ""
         truncated = len(output) >= 4000
         output_html = escape(output[:4000]) if output else "<i>(no output yet)</i>"
         if truncated:
             output_html += "\n… (truncated)"
-        out_style = "color:#e06c75" if status == "error" else ""
+        out_style = "color:#e06c75" if status == "error" else f"color:{t['text']}"
         self.body.setText(
-            f"<div style='color:#aaa'><b>input:</b> {input_html}</div>"
+            f"<div style='color:{t['muted']}'><b>input:</b> {input_html}</div>"
             f"<div style='white-space:pre-wrap; font-family:monospace; font-size:12px; {out_style}'>{output_html}</div>"
         )
         if status == "error":
@@ -120,12 +159,14 @@ class ToolCard(_Card):
 class ReasoningCard(_Card):
     def __init__(self, text: str):
         super().__init__(collapsed=True)
-        self.header.setText("· thinking")
-        self.header.setStyleSheet("QPushButton { border:none; text-align:left; color:#777; font-style:italic; }")
+        self.header.setText("✦ thinking")
         self.update_text(text)
 
     def update_text(self, text: str) -> None:
-        self.body.setText(f"<i style='color:#999'>{escape(text)}</i>")
+        from . import theme
+
+        self.body.setText(
+            f"<i style='color:{theme.tokens()['muted']}'>{escape(text)}</i>")
 
 
 class CompactionCard(_Card):
@@ -147,19 +188,61 @@ class TextBlock(QLabel):
         self._raw = text
         self._md_timer: QTimer | None = None
         if user:
+            self.setObjectName("userBubble")
             self._apply_user_style()
         else:
             self.setStyleSheet("QLabel { padding: 4px; }")
         self.update_text(text, queued, streaming=False)
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._context_menu)
+
+    def _context_menu(self, pos) -> None:
+        from PySide6.QtWidgets import QApplication, QMenu
+
+        menu = QMenu(self)
+        copy = menu.addAction("Copy text")
+        copy_code = None
+        preview_html = None
+        if not self._user and "```" in self._raw:
+            copy_code = menu.addAction("Copy code blocks")
+            if "```html" in self._raw or "<html" in self._raw.lower():
+                preview_html = menu.addAction("Preview HTML")
+        edit = menu.addAction("Edit && re-run…") if self._user else None
+        regen = menu.addAction("Regenerate response") if not self._user else None
+        chosen = menu.exec(self.mapToGlobal(pos))
+        if chosen is None:
+            return
+        transcript = self._transcript()
+        if chosen is copy:
+            QApplication.clipboard().setText(self._raw)
+        elif copy_code is not None and chosen is copy_code:
+            import re
+
+            blocks = re.findall(r"```[^\n]*\n(.*?)```", self._raw, re.S)
+            QApplication.clipboard().setText("\n\n".join(b.rstrip() for b in blocks))
+        elif preview_html is not None and chosen is preview_html and transcript:
+            import re
+
+            html_blocks = re.findall(r"```html[^\n]*\n(.*?)```", self._raw, re.S)
+            source = html_blocks[0] if html_blocks else self._raw
+            transcript.preview_html_requested.emit(source)
+        elif edit is not None and chosen is edit and transcript:
+            transcript.edit_requested.emit(self.property("message_id") or "", self._raw)
+        elif regen is not None and chosen is regen and transcript:
+            transcript.regenerate_requested.emit()
+
+    def _transcript(self):
+        parent = self.parent()
+        while parent is not None and not isinstance(parent, Transcript):
+            parent = parent.parent()
+        return parent
 
     def _apply_user_style(self) -> None:
-        style = "QLabel { background-color: #2c313c; color: #e6e6e6; border-radius: 6px; padding: 8px; }"
-        if self._queued:
-            style = (
-                "QLabel { background-color: #2c313c; color: #e6e6e6; border-radius: 6px; "
-                "padding: 8px; border: 1px dashed #e5c07b; }"
-            )
-        self.setStyleSheet(style)
+        # styled by the theme QSS via #userBubble; the property drives the
+        # [queued="true"] selector
+        self.setProperty("queued", "true" if self._queued else "false")
+        self.style().unpolish(self)
+        self.style().polish(self)
 
     def set_queued(self, queued: bool) -> None:
         if not self._user or self._queued == queued:
@@ -176,6 +259,14 @@ class TextBlock(QLabel):
                 self._apply_user_style()
             prefix = "<span style='color:#e5c07b'>[queued]</span> " if self._queued else ""
             self.setText(prefix + escape(text).replace("\n", "<br>"))
+            # a word-wrapping QLabel collapses to its minimum width inside an
+            # HBox stretch, so pin the bubble to its natural text width
+            from PySide6.QtGui import QFontMetrics
+
+            fm = QFontMetrics(self.font())
+            widest = max((fm.horizontalAdvance(line)
+                          for line in text.splitlines() or [""]), default=0)
+            self.setMinimumWidth(min(widest + 36, self.maximumWidth()))
             return
         if streaming:
             # Fast path during token stream — full markdown is expensive (pygments).
@@ -250,6 +341,12 @@ class _Welcome(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         w, h = self.width(), self.height()
+        # the night sky sits in the transcript column like a rounded card
+        from PySide6.QtGui import QPainterPath
+
+        clip = QPainterPath()
+        clip.addRoundedRect(0, 0, w, h, 16, 16)
+        painter.setClipPath(clip)
         light = theme.current_mode() == "light"
         modern = theme.is_modern()
         accent = QColor(theme.MODERN_ACCENT if modern else theme.ACCENT)
@@ -359,8 +456,10 @@ class _Thinking(QWidget):
         h.setContentsMargins(0, 0, 0, 0)
         icon = QLabel()
         icon.setPixmap(critter_pixmap(agent, color, scale=2))
+        from . import theme
+
         self._text = QLabel()
-        self._text.setStyleSheet("color:#8f96a3; font-style:italic;")
+        self._text.setStyleSheet(f"color:{theme.tokens()['muted']}; font-style:italic;")
         h.addWidget(icon)
         h.addWidget(self._text)
         h.addStretch(1)
@@ -380,20 +479,78 @@ class _Thinking(QWidget):
         self._text.setText(f"{self._agent} is thinking{dots}")
 
 
+def _pdf_thumbnail(path) -> QWidget | None:
+    """First-page render + page count for a PDF attachment (QtPdf)."""
+    try:
+        from PySide6.QtCore import QSize
+        from PySide6.QtGui import QPixmap
+        from PySide6.QtPdf import QPdfDocument
+
+        doc = QPdfDocument()
+        doc.load(str(path))
+        if doc.pageCount() < 1:
+            return None
+        size = doc.pagePointSize(0)
+        scale = 300 / max(size.width(), 1)
+        image = doc.render(0, QSize(int(size.width() * scale),
+                                    int(size.height() * scale)))
+        if image.isNull():
+            return None
+        from PySide6.QtWidgets import QVBoxLayout
+
+        box = QWidget()
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        page = QLabel()
+        page.setObjectName("fileThumb")
+        page.setPixmap(QPixmap.fromImage(image))
+        page.setToolTip(str(path))
+        caption = QLabel(f"📄 {path.name} · {doc.pageCount()} pages")
+        from . import theme
+
+        caption.setStyleSheet(f"color: {theme.tokens()['muted']}; font-size: 11px;")
+        layout.addWidget(page)
+        layout.addWidget(caption)
+        return box
+    except Exception:
+        return None
+
+
 class Transcript(QScrollArea):
     open_session = Signal(str)
+    edit_requested = Signal(str, str)   # message_id ('' if unknown), raw text
+    regenerate_requested = Signal()
+    open_file_requested = Signal(str)     # path -> inline editor
+    preview_file_requested = Signal(str)  # path -> preview panel
+    preview_html_requested = Signal(str)  # html source -> preview panel
+
+    _MAX_COLUMN_WIDTH = 820  # readable measure, like Claude/ChatGPT
 
     def __init__(self):
         super().__init__()
         self.setWidgetResizable(True)
+        # message column is width-capped and centered in the scroll area
         self._container = QWidget()
+        self._container.setMaximumWidth(self._MAX_COLUMN_WIDTH)
         self._layout = QVBoxLayout(self._container)
         self._layout.setAlignment(Qt.AlignTop)
-        self._layout.setSpacing(8)
-        self.setWidget(self._container)
+        self._layout.setSpacing(12)
+        self._layout.setContentsMargins(24, 16, 24, 16)
+        outer = QWidget()
+        from PySide6.QtWidgets import QHBoxLayout
+
+        outer_layout = QHBoxLayout(outer)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.addStretch(1)
+        outer_layout.addWidget(self._container, 100)
+        outer_layout.addStretch(1)
+        self.setWidget(outer)
         self._part_widgets: dict[str, QWidget] = {}
         self._welcome: QWidget | None = None
         self._thinking: QWidget | None = None
+        self._matches: list[QWidget] = []
+        self._match_index = -1
         self._autoscroll = True
         self.verticalScrollBar().valueChanged.connect(self._on_scroll)
         self.verticalScrollBar().rangeChanged.connect(self._on_range)
@@ -402,6 +559,8 @@ class Transcript(QScrollArea):
     # -- loading ----------------------------------------------------------
 
     def clear_all(self) -> None:
+        self._matches = []
+        self._match_index = -1
         self._part_widgets.clear()
         self._welcome = None
         self._thinking = None
@@ -418,6 +577,7 @@ class Transcript(QScrollArea):
                 if not hasattr(part, "data"):
                     continue
                 part.data["_created_at"] = message.created_at
+                part.data["_message_id"] = getattr(message, "id", None)
                 self._add_part(message.role, part.id, part.type, part.data, streaming=False)
         if not self._part_widgets:
             self._welcome = _Welcome()
@@ -444,6 +604,7 @@ class Transcript(QScrollArea):
                 if not hasattr(part, "data"):
                     continue
                 part.data["_created_at"] = message.created_at
+                part.data["_message_id"] = getattr(message, "id", None)
                 if self._add_part(message.role, part.id, part.type, part.data,
                                   streaming=False, position=position):
                     position += 1
@@ -526,6 +687,7 @@ class Transcript(QScrollArea):
         if role != "user":
             self.dismiss_thinking()
         widget: QWidget | None = None
+        row: QWidget | None = None  # what actually lands in the layout
         if part_type == "text":
             widget = TextBlock(
                 data.get("text", ""),
@@ -534,6 +696,17 @@ class Transcript(QScrollArea):
             )
             if streaming and role != "user":
                 widget.update_text(data.get("text", ""), streaming=True)
+            if role == "user":
+                # compact bubble pushed to the right, like every modern chat
+                from PySide6.QtWidgets import QHBoxLayout
+
+                widget.setMaximumWidth(560)
+                widget.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Minimum)
+                row = QWidget()
+                h = QHBoxLayout(row)
+                h.setContentsMargins(0, 0, 0, 0)
+                h.addStretch(1)
+                h.addWidget(widget)
         elif part_type == "reasoning":
             widget = ReasoningCard(data.get("text", ""))
         elif part_type in ("tool", "task"):
@@ -547,16 +720,18 @@ class Transcript(QScrollArea):
         if widget is None:
             return None
         self._part_widgets[part_id] = widget
+        row = row or widget
         # stash the message timestamp so we can do lazy loading
-        # (the widget is either a direct part widget or a container)
+        # (the row is either the part widget itself or its alignment wrapper)
         try:
-            widget.setProperty("_created_at", data.get("_created_at"))
+            row.setProperty("_created_at", data.get("_created_at"))
+            widget.setProperty("message_id", data.get("_message_id"))
         except Exception:
             pass
         if position is not None:
-            self._layout.insertWidget(position, widget)
+            self._layout.insertWidget(position, row)
         else:
-            self._layout.addWidget(widget)
+            self._layout.addWidget(row)
         return widget
 
     _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
@@ -574,16 +749,81 @@ class Transcript(QScrollArea):
                 if pixmap.width() > 420:
                     pixmap = pixmap.scaledToWidth(420, Qt.SmoothTransformation)
                 label = QLabel()
+                label.setObjectName("fileThumb")
                 label.setPixmap(pixmap)
                 label.setToolTip(path)
-                label.setStyleSheet(
-                    "QLabel { border: 1px solid #3a3f4b; border-radius: 6px; padding: 4px; }")
                 return label
+        if p.suffix.lower() == ".pdf" and p.is_file():
+            thumb = _pdf_thumbnail(p)
+            if thumb is not None:
+                return thumb
         return TextBlock(f"📎 {path}", user=user)
 
     def _maybe_open(self, card: ToolCard) -> None:
         if card._subagent_id:
             self.open_session.emit(card._subagent_id)
+
+    # -- in-conversation search ---------------------------------------------
+
+    def search(self, query: str) -> int:
+        """Find matching blocks; returns the match count and jumps to the last."""
+        self.clear_search()
+        if not query:
+            return 0
+        q = query.lower()
+        for i in range(self._layout.count()):
+            row = self._layout.itemAt(i).widget()
+            if row is None:
+                continue
+            widget = row
+            if not isinstance(widget, (TextBlock, _Card)):
+                found = row.findChildren(TextBlock)
+                widget = found[0] if found else None
+            text = ""
+            if isinstance(widget, TextBlock):
+                text = widget._raw
+            elif isinstance(widget, _Card):
+                text = widget.header.text() + " " + widget.body.text()
+            if widget is not None and q in text.lower():
+                self._matches.append(widget)
+        if self._matches:
+            self._match_index = len(self._matches) - 1
+            self._focus_match()
+        return len(self._matches)
+
+    def search_step(self, delta: int) -> int:
+        """Move to the next/previous match; returns the 1-based position."""
+        if not self._matches:
+            return 0
+        self._unmark_match()
+        self._match_index = (self._match_index + delta) % len(self._matches)
+        self._focus_match()
+        return self._match_index + 1
+
+    def clear_search(self) -> None:
+        self._unmark_match()
+        self._matches = []
+        self._match_index = -1
+
+    def _focus_match(self) -> None:
+        from . import theme
+
+        widget = self._matches[self._match_index]
+        self._autoscroll = False
+        self.ensureWidgetVisible(widget, 50, 80)
+        widget.setProperty("_pre_search_style", widget.styleSheet())
+        accent = theme.tokens()["accent"]
+        # outline the hit without disturbing its layout
+        widget.setStyleSheet(
+            widget.styleSheet()
+            + f"\n{type(widget).__name__} {{ border: 1px solid {accent};"
+              " border-radius: 8px; }"
+        )
+
+    def _unmark_match(self) -> None:
+        if 0 <= self._match_index < len(self._matches):
+            widget = self._matches[self._match_index]
+            widget.setStyleSheet(widget.property("_pre_search_style") or "")
 
     # -- autoscroll ----------------------------------------------------------
 

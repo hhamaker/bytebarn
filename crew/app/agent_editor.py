@@ -76,6 +76,11 @@ class AgentEditor(QDialog):
         self.top_p.setRange(0.0, 1.0)
         self.top_p.setSingleStep(0.05)
         self.top_p.setSpecialValueText("(default)")
+        self.thinking = QComboBox()
+        self.thinking.addItems(["(default)", "off", "low", "medium", "high"])
+        self.thinking.setToolTip(
+            "Extended thinking budget — the model reasons before answering"
+            " (supported models only)")
         self.mode = QComboBox()
         self.mode.addItems(["primary", "subagent", "all"])
         self.steps = QSpinBox()
@@ -102,6 +107,7 @@ class AgentEditor(QDialog):
         form.addRow("prompt", self.prompt)
         form.addRow("temperature", self.temperature)
         form.addRow("top_p", self.top_p)
+        form.addRow("thinking", self.thinking)
         form.addRow("mode", self.mode)
         form.addRow("steps", self.steps)
         form.addRow("color", self.color_button)
@@ -257,6 +263,7 @@ class AgentEditor(QDialog):
         self.prompt.setPlainText(agent.prompt)
         self.temperature.setValue(agent.temperature if agent.temperature is not None else 0.0)
         self.top_p.setValue(agent.top_p if agent.top_p is not None else 0.0)
+        self.thinking.setCurrentText(agent.thinking or "(default)")
         self.mode.setCurrentText(agent.mode)
         self.steps.setValue(agent.steps)
         self._color = agent.color or ""
@@ -303,6 +310,9 @@ class AgentEditor(QDialog):
             updates[f"agent.{agent.name}.temperature"] = round(self.temperature.value(), 2)
         if self.top_p.value() > 0 and self.top_p.value() != (agent.top_p or 0):
             updates[f"agent.{agent.name}.top_p"] = round(self.top_p.value(), 2)
+        thinking = self.thinking.currentText()
+        if thinking != "(default)":
+            diff("thinking", thinking, agent.thinking or "")
         diff("mode", self.mode.currentText(), agent.mode)
         if self.steps.value() != agent.steps:
             updates[f"agent.{agent.name}.steps"] = self.steps.value()

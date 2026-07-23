@@ -1,0 +1,1 @@
+Search the web (DuckDuckGo) and return a numbered list of results: title, URL, snippet. Use to discover pages, then read them with webfetch. limit: max results (default 8).

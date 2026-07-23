@@ -46,6 +46,7 @@ class MCPServerSpec:
     args: tuple[str, ...] = ()
     bearer: bool = False          # http: needs an Authorization: Bearer token
     env_keys: tuple[tuple[str, str], ...] = ()  # (ENV_VAR, human label)
+    arg_keys: tuple[tuple[str, str], ...] = ()  # values appended as CLI args
     key_url: str = ""             # where humans create the credential
     note: str = ""
 
@@ -75,6 +76,65 @@ KNOWN_MCP_SERVERS: dict[str, MCPServerSpec] = {
             key_url="https://console.cloud.google.com/google/maps-apis/credentials",
             note="Places, directions, and geocoding (runs via npx).",
         ),
+        MCPServerSpec(
+            id="filesystem", label="Filesystem (extra folders)",
+            command="npx", args=("-y", "@modelcontextprotocol/server-filesystem"),
+            arg_keys=(("root", "Folder to expose"),),
+            note="Give agents read/write access to a folder outside the"
+                 " project (runs via npx). Enter the folder path.",
+        ),
+        MCPServerSpec(
+            id="puppeteer", label="Browser (Puppeteer)",
+            command="npx", args=("-y", "@modelcontextprotocol/server-puppeteer"),
+            note="Drive a headless Chrome: navigate, screenshot, click, fill"
+                 " forms (runs via npx). No credential needed.",
+        ),
+        MCPServerSpec(
+            id="slack", label="Slack",
+            command="npx", args=("-y", "@modelcontextprotocol/server-slack"),
+            env_keys=(("SLACK_BOT_TOKEN", "Bot token (xoxb-…)"),
+                      ("SLACK_TEAM_ID", "Team ID")),
+            key_url="https://api.slack.com/apps",
+            note="Read channels and post messages via a Slack bot (runs via npx).",
+        ),
+        MCPServerSpec(
+            id="notion", label="Notion",
+            url="https://mcp.notion.com/mcp", bearer=True,
+            key_url="https://www.notion.so/profile/integrations",
+            note="Notion's hosted MCP server: search, read, and write pages."
+                 " Paste an internal integration secret.",
+        ),
+        MCPServerSpec(
+            id="sentry", label="Sentry",
+            url="https://mcp.sentry.dev/mcp", bearer=True,
+            key_url="https://sentry.io/settings/account/api/auth-tokens/",
+            note="Query Sentry issues and events. Paste a user auth token.",
+        ),
+        MCPServerSpec(
+            id="postgres", label="PostgreSQL",
+            command="npx", args=("-y", "@modelcontextprotocol/server-postgres"),
+            env_keys=(("DATABASE_URL", "Connection URL (postgres://…)"),),
+            note="Read-only SQL against a Postgres database (runs via npx).",
+        ),
+        MCPServerSpec(
+            id="sqlite", label="SQLite",
+            command="npx", args=("-y", "mcp-server-sqlite-npx"),
+            env_keys=(("SQLITE_DB_PATH", "Database file path"),),
+            note="Query a local SQLite database file (runs via npx).",
+        ),
+        MCPServerSpec(
+            id="linear", label="Linear",
+            url="https://mcp.linear.app/mcp", bearer=True,
+            key_url="https://linear.app/settings/account/security",
+            note="Linear's hosted MCP server: issues, projects, comments."
+                 " Paste a personal API key.",
+        ),
+        MCPServerSpec(
+            id="context7", label="Context7 (library docs)",
+            url="https://mcp.context7.com/mcp",
+            note="Up-to-date documentation for thousands of libraries —"
+                 " great for coding agents. No credential needed.",
+        ),
     )
 }
 
@@ -91,6 +151,10 @@ def config_entry(spec: MCPServerSpec, values: dict[str, str]) -> dict[str, Any]:
             entry["headers"] = {"Authorization": f"Bearer {token}"}
         return entry
     entry = {"command": spec.command, "args": list(spec.args)}
+    for key, _ in spec.arg_keys:
+        value = values.get(key, "").strip()
+        if value:
+            entry["args"].append(value)
     env = {var: values.get(var, "").strip()
            for var, _ in spec.env_keys if values.get(var, "").strip()}
     if env:

@@ -30,6 +30,12 @@ def _to_anthropic_messages(messages: list[Msg]) -> list[dict[str, Any]]:
             if item["type"] == "text":
                 if item["text"]:
                     content.append({"type": "text", "text": item["text"]})
+            elif item["type"] == "image":
+                content.append({
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": item["media_type"],
+                               "data": item["data"]},
+                })
             elif item["type"] == "tool_call":
                 content.append(
                     {"type": "tool_use", "id": item["id"], "name": item["name"], "input": item["input"]}
@@ -80,6 +86,15 @@ class AnthropicProvider:
             kwargs["temperature"] = req.temperature
         if req.top_p is not None:
             kwargs["top_p"] = req.top_p
+        if req.thinking and req.thinking != "off":
+            from .base import THINKING_BUDGETS
+
+            budget = THINKING_BUDGETS.get(req.thinking, 8192)
+            # the API requires max_tokens > budget_tokens and no temperature
+            kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget}
+            kwargs["max_tokens"] = max(req.max_tokens, budget + 8192)
+            kwargs.pop("temperature", None)
+            kwargs.pop("top_p", None)
 
         try:
             stream = await self._client.messages.create(stream=True, **kwargs)

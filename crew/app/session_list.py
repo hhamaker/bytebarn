@@ -76,9 +76,22 @@ class SessionList(QWidget):
     open_project_settings = Signal(str)         # project id -> settings dialog
     move_session_to_project = Signal(str)   # session id -> pick a project
     session_moved_to_project = Signal(str, str)  # session_id, project_id (drag)
+    content_search_requested = Signal(str)  # debounced full-text query
 
     def __init__(self):
         super().__init__()
+        from PySide6.QtCore import QTimer
+
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(350)
+        self._last_query = ""
+
+        def _emit_search() -> None:
+            self._last_query = self.search.text()
+            self.content_search_requested.emit(self._last_query)
+
+        self._search_timer.timeout.connect(_emit_search)
         self.new_button = QPushButton("+ New session")
         self.new_button.clicked.connect(self.new_session)
 
@@ -387,7 +400,28 @@ class SessionList(QWidget):
 
     # -- filter / drag ------------------------------------------------------
 
+    def show_search_results(self, results: list, running: set,
+                            agent_colors: dict | None) -> None:
+        """Replace the tree with flat full-text matches (title + snippet)."""
+        from .delegates import META_ROLE
+
+        self.tree.blockSignals(True)
+        self.tree.clear()
+        header = self._header_item(
+            f"Search results  ({len(results)})" if results else "No matches")
+        self.tree.addTopLevelItem(header)
+        for session, snippet in results:
+            item = self._session_item(session, running, agent_colors)
+            if snippet:
+                item.setData(0, META_ROLE, f"…{snippet}…")
+                item.setToolTip(0, snippet)
+            header.addChild(item)
+        header.setExpanded(True)
+        self.tree.blockSignals(False)
+
     def _filter(self, text: str) -> None:
+        if text != self._last_query:
+            self._search_timer.start()  # debounce the content search
         text = text.lower()
 
         def match(item: QTreeWidgetItem) -> bool:

@@ -124,7 +124,74 @@ class ProjectWorkspace(QWidget):
         self.goal_list.itemClicked.connect(self._chat_clicked)
         layout.addWidget(hint)
         layout.addWidget(self.goal_list, 1)
+
+        # routines: recurring goals on a schedule (app must be running)
+        layout.addWidget(QLabel("<b>Routines</b> — run a goal on a schedule"
+                                " while Crew is open"))
+        routine_row = QHBoxLayout()
+        self.routine_input = QLineEdit()
+        self.routine_input.setPlaceholderText("Prompt to run repeatedly…")
+        self.routine_interval = QComboBox()
+        for label in ("every 30 min", "every hour", "every 3 hours",
+                      "every 6 hours", "daily"):
+            self.routine_interval.addItem(label)
+        add_routine = QPushButton("+ Routine")
+        add_routine.clicked.connect(self._add_routine)
+        routine_row.addWidget(self.routine_input, 1)
+        routine_row.addWidget(self.routine_interval)
+        routine_row.addWidget(add_routine)
+        layout.addLayout(routine_row)
+        self.routine_list = QListWidget()
+        self.routine_list.setMaximumHeight(110)
+        self.routine_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.routine_list.customContextMenuRequested.connect(self._routine_menu)
+        layout.addWidget(self.routine_list)
         return w
+
+    _INTERVALS = {"every 30 min": 1800, "every hour": 3600, "every 3 hours": 10800,
+                  "every 6 hours": 21600, "daily": 86400}
+
+    def _add_routine(self) -> None:
+        prompt = self.routine_input.text().strip()
+        if not prompt:
+            return
+        self.routine_input.clear()
+        interval = self._INTERVALS[self.routine_interval.currentText()]
+        project_id = self.project_id
+
+        async def run() -> None:
+            await self.engine.store.add_routine(project_id, prompt, interval)
+            await self.load(project_id)
+
+        asyncio.ensure_future(run())
+
+    def _routine_menu(self, pos) -> None:
+        item = self.routine_list.itemAt(pos)
+        if item is None:
+            return
+        routine_id = item.data(Qt.UserRole)
+        enabled = item.data(Qt.UserRole + 1)
+        menu = QMenu(self)
+        toggle = menu.addAction("Pause" if enabled else "Resume")
+        run_now = menu.addAction("Run now")
+        remove = menu.addAction("Delete routine")
+        chosen = menu.exec(self.routine_list.viewport().mapToGlobal(pos))
+        if chosen is None:
+            return
+
+        async def run() -> None:
+            if chosen is toggle:
+                await self.engine.store.update_routine(routine_id, enabled=0 if enabled else 1)
+            elif chosen is remove:
+                await self.engine.store.delete_routine(routine_id)
+            elif chosen is run_now:
+                routines = await self.engine.store.list_routines(self.project_id)
+                match = next((r for r in routines if r.id == routine_id), None)
+                if match:
+                    await self.engine.queue_goal(match.prompt, self.project_id)
+            await self.load(self.project_id)
+
+        asyncio.ensure_future(run())
 
     _STATUS_ICON = {"pending": "◻", "running": "●", "done": "✓",
                     "error": "✗", "cancelled": "–"}
@@ -256,6 +323,22 @@ class ProjectWorkspace(QWidget):
             if goal.status == "running":
                 item.setForeground(QColor(_RUNNING_COLOR))
             self.queue_list.addItem(item)
+
+        self.routine_list.clear()
+        import time as _time
+
+        for routine in await self.engine.store.list_routines(project_id):
+            state = "⏸ " if not routine.enabled else ""
+            due_min = max(0, int((routine.next_run - _time.time()) / 60))
+            label = next((k for k, v in self._INTERVALS.items()
+                          if v == routine.interval_s), f"{routine.interval_s}s")
+            item = QListWidgetItem(
+                f"{state}⟳ {routine.prompt[:60]} — {label}"
+                + ("" if not routine.enabled else f" · next in {due_min}m"))
+            item.setData(Qt.UserRole, routine.id)
+            item.setData(Qt.UserRole + 1, routine.enabled)
+            item.setToolTip(routine.prompt)
+            self.routine_list.addItem(item)
 
         self.chat_list.clear()
         self.goal_list.clear()

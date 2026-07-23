@@ -318,6 +318,8 @@ def _transcript_texts(t):
         w = t._layout.itemAt(i).widget()
         if isinstance(w, TextBlock):
             out.append(w._raw)
+        elif w is not None:  # user bubbles sit inside an alignment wrapper row
+            out.extend(b._raw for b in w.findChildren(TextBlock))
     return out
 
 
@@ -785,22 +787,26 @@ async def test_main_window_two_project_views(qapp, tmp_path):
 def test_theme_modes_and_modern_overhaul(qapp):
     from crew.app import theme
 
-    # classic dark unchanged and still the non-modern path
+    # dark is the flagship and still the non-modern path
     theme.apply_theme(qapp, "dark")
     assert theme.current_mode() == "dark" and not theme.is_modern()
-    assert "#21252b" in qapp.styleSheet()  # classic palette intact
+    dark_qss = qapp.styleSheet()
+    assert theme.ACCENT in dark_qss
+    assert "QFrame#composer" in dark_qss and "QLabel#userBubble" in dark_qss
 
-    # the overhaul: opt-in, amber accent, chunky buttons, send styling
+    # the Night Workshop variant: opt-in, amber accent, same geometry
     theme.apply_theme(qapp, "modern")
     assert theme.is_modern()
     qss = qapp.styleSheet()
     assert theme.MODERN_ACCENT in qss
     assert "QPushButton#send" in qss
-    assert "border-radius: 8px" in qss
 
-    # switching back restores classic exactly
+    # switching back restores the dark sheet exactly
     theme.apply_theme(qapp, "dark")
-    assert not theme.is_modern() and "#21252b" in qapp.styleSheet()
+    assert not theme.is_modern() and qapp.styleSheet() == dark_qss
+
+    # tokens() follows the active mode (widget paint code relies on it)
+    assert theme.tokens()["accent"] == theme.ACCENT
 
 
 def test_theme_crossfade_animates_only_in_modern(qapp):
@@ -1269,3 +1275,73 @@ async def test_switching_provider_clears_previous_model(qapp, tmp_path):
         for task in getattr(window, "_tasks", []):
             task.cancel()
         await engine.stop()
+
+
+def test_transcript_search_finds_and_steps(qapp):
+    from crew.app.transcript import Transcript
+
+    t = Transcript()
+    t.load_history(_history_page(["alpha beast", "gamma", "beta again"], 100))
+    assert t.search("bet") == 1          # only "beta again" contains 'bet'
+    assert t.search("a") >= 2
+    first = t.search_step(1)
+    second = t.search_step(1)
+    assert first != second or len(t._matches) == 1
+    t.clear_search()
+    assert t._matches == []
+    assert t.search("") == 0
+
+
+def test_prompt_bar_attachment_chips(qapp, tmp_path):
+    from crew.app.prompt_bar import PromptBar
+
+    bar = PromptBar(attachments_dir=tmp_path)
+    bar.add_attachments([str(tmp_path / "a.png"), str(tmp_path / "b.txt")])
+    bar.add_attachments([str(tmp_path / "a.png")])  # dedup
+    assert len(bar._attachments) == 2
+    assert bar._chips.count() == 3  # two chips + stretch
+    taken = bar.take_attachments()
+    assert [p.endswith(("a.png", "b.txt")) for p in taken] == [True, True]
+    assert bar._attachments == [] and bar._chips.count() == 1
+
+    # pasted image lands in the attachments dir as a png
+    from PySide6.QtGui import QImage
+
+    image = QImage(4, 4, QImage.Format_RGB32)
+    image.fill(0xFF0000)
+    bar._add_pasted_image(image)
+    assert len(bar._attachments) == 1
+    assert bar._attachments[0].endswith(".png")
+    from pathlib import Path as _P
+
+    assert _P(bar._attachments[0]).exists()
+
+
+def test_session_list_content_search_results(qapp):
+    from types import SimpleNamespace
+
+    from crew.app.session_list import SessionList
+
+    sl = SessionList()
+    session = SimpleNamespace(id="s1", title="found me", agent="build",
+                              model="", updated_at=0.0, directory="",
+                              parent_session_id=None)
+    sl.show_search_results([(session, "matching snippet")], set(), {})
+    header = sl.tree.topLevelItem(0)
+    assert "Search results" in header.text(0)
+    assert header.childCount() == 1
+    sl.show_search_results([], set(), {})
+    assert "No matches" in sl.tree.topLevelItem(0).text(0)
+
+
+def test_transcript_stamps_message_ids_for_edit(qapp):
+    from crew.app.transcript import TextBlock, Transcript
+    from types import SimpleNamespace
+
+    t = Transcript()
+    msg = SimpleNamespace(role="user", created_at=1.0, id="m-42")
+    part = SimpleNamespace(id="p1", type="text", data={"text": "hi"})
+    t.load_history([(msg, [part])])
+    block = t._part_widgets["p1"]
+    assert isinstance(block, TextBlock)
+    assert block.property("message_id") == "m-42"

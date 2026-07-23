@@ -91,6 +91,11 @@ class ModelRequest:
     temperature: float | None = None
     top_p: float | None = None
     max_tokens: int = 8192
+    thinking: str | None = None  # extended thinking: None/"off" | "low" | "medium" | "high"
+
+
+# provider-neutral thinking-effort → token budget
+THINKING_BUDGETS = {"low": 2048, "medium": 8192, "high": 16384}
 
 
 class Provider(Protocol):

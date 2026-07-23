@@ -23,7 +23,7 @@ def _highlight_code(code: str, lang: str, _attrs) -> str:
     # plain tokens otherwise inherit the theme text color, which is
     # near-black on light themes -> unreadable on the dark bg
     return (
-        '<pre style="background-color:#282828; padding:8px; border-radius:4px;">'
+        '<pre style="background-color:#1d2027; padding:10px; border-radius:8px;">'
         f'<font color="#f8f8f2"><code>{highlighted}</code></font></pre>'
     )
 

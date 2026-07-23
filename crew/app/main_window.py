@@ -90,7 +90,9 @@ class MainWindow(QMainWindow):
         self.transcript = Transcript()
         self.crew_stage = CrewStage()
         self.todo_strip = TodoStrip()
-        self.prompt_bar = PromptBar(commands=engine.commands, project_dir=engine.project_dir)
+        self.prompt_bar = PromptBar(commands=engine.commands, project_dir=engine.project_dir,
+                                    attachments_dir=engine.global_dir / "attachments")
+        self._pending_edit: str | None = None  # message id being edited
 
         # session header: [←] [critter] title  agent · model
         self.back_button = QPushButton("←")
@@ -102,14 +104,16 @@ class MainWindow(QMainWindow):
         self.header_icon = QLabel("")
         self.header_title = QLabel("")
         self.header_meta = QLabel("")
-        self.header_meta.setStyleSheet("color: #8f96a3;")
+        from . import theme as _theme
+
+        self.header_meta.setStyleSheet(f"color: {_theme.tokens()['muted']};")
         self.dir_button = QPushButton("")
         self.dir_button.setFlat(True)
         self.dir_button.setToolTip("Working directory for this session — click to change")
         self.dir_button.clicked.connect(self._pick_directory)
         header = QWidget()
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(8, 4, 8, 0)
+        header_layout.setContentsMargins(16, 8, 16, 4)
         header_layout.setSpacing(8)
         header_layout.addWidget(self.back_button)
         header_layout.addWidget(self.header_icon)
@@ -129,12 +133,58 @@ class MainWindow(QMainWindow):
         self.stage_split.splitterMoved.connect(self._stage_resized)
         self.crew_stage.shown.connect(self._restore_stage_height)
 
+        # in-conversation search bar (⌘F), hidden until toggled
+        from PySide6.QtWidgets import QLineEdit
+
+        self.search_bar = QWidget()
+        search_layout = QHBoxLayout(self.search_bar)
+        search_layout.setContentsMargins(16, 0, 16, 4)
+        search_layout.setSpacing(4)
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Find in conversation…")
+        self.search_edit.textChanged.connect(self._search_changed)
+        self.search_edit.returnPressed.connect(lambda: self._search_nav(1))
+        self.search_count = QLabel("")
+        prev_btn = QPushButton("↑")
+        prev_btn.setFlat(True)
+        prev_btn.setFixedWidth(28)
+        prev_btn.clicked.connect(lambda: self._search_nav(-1))
+        next_btn = QPushButton("↓")
+        next_btn.setFlat(True)
+        next_btn.setFixedWidth(28)
+        next_btn.clicked.connect(lambda: self._search_nav(1))
+        close_btn = QPushButton("✕")
+        close_btn.setFlat(True)
+        close_btn.setFixedWidth(28)
+        close_btn.clicked.connect(self._toggle_search)
+        search_layout.addWidget(self.search_edit, 1)
+        search_layout.addWidget(self.search_count)
+        search_layout.addWidget(prev_btn)
+        search_layout.addWidget(next_btn)
+        search_layout.addWidget(close_btn)
+        self.search_bar.setVisible(False)
+
+        # preview panel (artifacts / dev server) sits beside the transcript
+        from .preview import PreviewPanel
+
+        self.preview = PreviewPanel()
+        self.preview.setVisible(False)
+        self.preview.closed.connect(lambda: self.content_split.setSizes([1, 0]))
+        self.content_split = QSplitter(Qt.Horizontal)
+        self.content_split.addWidget(self.stage_split)
+        self.content_split.addWidget(self.preview)
+        self.content_split.setStretchFactor(0, 1)
+        self.content_split.setStretchFactor(1, 1)
+        self.content_split.setCollapsible(0, False)
+        self.content_split.setHandleWidth(2)
+
         right = QWidget()
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(2)
         right_layout.addWidget(header)
-        right_layout.addWidget(self.stage_split, 1)
+        right_layout.addWidget(self.search_bar)
+        right_layout.addWidget(self.content_split, 1)
         right_layout.addWidget(self.todo_strip)
         right_layout.addWidget(self.prompt_bar)
 
@@ -152,8 +202,7 @@ class MainWindow(QMainWindow):
         splitter.setCollapsible(0, False)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setHandleWidth(6)
-        splitter.setStyleSheet("QSplitter::handle { background: #555; }")
+        splitter.setHandleWidth(2)
         self.setCentralWidget(splitter)
 
         # status bar
@@ -251,11 +300,19 @@ class MainWindow(QMainWindow):
         self.session_list.move_session_to_project.connect(self._move_session_to_project)
         self.session_list.session_moved_to_project.connect(self._on_session_moved)
         self.transcript.open_session.connect(self._open_child)
+        self.transcript.open_file_requested.connect(self._open_file_viewer)
+        self.transcript.preview_file_requested.connect(self._preview_file)
+        self.transcript.preview_html_requested.connect(self._preview_html)
+        self.transcript.edit_requested.connect(self._begin_edit)
+        self.transcript.regenerate_requested.connect(
+            lambda: self._fire(self._regenerate()))
+        self.session_list.content_search_requested.connect(
+            lambda q: self._fire(self._content_search(q)))
         self.crew_stage.open_session.connect(self._open_child)
         self.crew_stage.stop_requested.connect(
             lambda sid: self._fire(self._abort(sid)))
         self.prompt_bar.submitted.connect(self._submit)
-        self.prompt_bar.aborted.connect(lambda: self._fire(self._abort()))
+        self.prompt_bar.aborted.connect(self._on_prompt_abort)
         self.prompt_bar.agent_changed.connect(self._agent_changed)
         self.prompt_bar.provider_changed.connect(self._provider_changed)
         self.prompt_bar.model_changed.connect(self._model_changed)
@@ -320,7 +377,27 @@ class MainWindow(QMainWindow):
         compact_action.triggered.connect(self._compact_clicked)
         review_action = QAction("Review Last Run…", self)
         review_action.triggered.connect(self._open_run_review)
-        session_menu_extras = [review_action]
+        regen_action = QAction("Regenerate Last Response", self)
+        regen_action.setShortcut(QKeySequence("Ctrl+R"))
+        regen_action.triggered.connect(lambda: self._fire(self._regenerate()))
+        find_action = QAction("Find in Conversation", self)
+        find_action.setShortcut(QKeySequence.Find)
+        find_action.triggered.connect(self._toggle_search)
+        export_action = QAction("Export Transcript…", self)
+        export_action.setShortcut(QKeySequence("Ctrl+E"))
+        export_action.triggered.connect(self._export_transcript)
+        side_chat_action = QAction("Side Chat…", self)
+        side_chat_action.setShortcut(QKeySequence("Ctrl+;"))
+        side_chat_action.triggered.connect(self._open_side_chat)
+        switch_action = QAction("Next Session", self)
+        switch_action.setShortcut(QKeySequence("Ctrl+Tab"))
+        switch_action.triggered.connect(lambda: self._cycle_session(1))
+        switch_back = QAction("Previous Session", self)
+        switch_back.setShortcut(QKeySequence("Ctrl+Shift+Tab"))
+        switch_back.triggered.connect(lambda: self._cycle_session(-1))
+        session_menu_extras = [regen_action, find_action, export_action,
+                               side_chat_action, review_action, switch_action,
+                               switch_back]
         delete_action = QAction("Delete Session…", self)
         delete_action.triggered.connect(
             lambda: self.current_session_id
@@ -343,6 +420,9 @@ class MainWindow(QMainWindow):
         skills_action.triggered.connect(self._open_skill_editor)
         mcp_action = QAction("MCP Servers…", self)
         mcp_action.triggered.connect(self._open_mcp)
+        preview_action = QAction("Preview Panel", self)
+        preview_action.setShortcut(QKeySequence("Ctrl+Shift+V"))
+        preview_action.triggered.connect(self._toggle_preview)
         settings_action = QAction("Settings…", self)
         settings_action.setShortcut(QKeySequence.Preferences)
         settings_action.setMenuRole(QAction.PreferencesRole)  # macOS app menu
@@ -351,6 +431,7 @@ class MainWindow(QMainWindow):
         tools_menu.addAction(agents_action)
         tools_menu.addAction(skills_action)
         tools_menu.addAction(mcp_action)
+        tools_menu.addAction(preview_action)
         tools_menu.addSeparator()
         tools_menu.addAction(settings_action)
 
@@ -467,12 +548,16 @@ class MainWindow(QMainWindow):
 
         QMessageBox.information(self, "Keyboard Shortcuts", (
             "<b>Prompt</b><br>"
-            "Enter — send · Shift+Enter — newline · Esc — stop run<br>"
-            "/ — command palette · @ — attach file<br><br>"
+            "Enter — send · Shift+Enter — newline · Esc — stop run / cancel edit<br>"
+            "/ — command palette · @ — attach file · paste or drop files to attach<br><br>"
+            "<b>Conversation</b><br>"
+            "⌘F — find in conversation · ⌘R — regenerate · ⌘E — export transcript<br>"
+            "⌘; — side chat · right-click a message — copy / edit &amp; re-run<br><br>"
             "<b>Sessions</b><br>"
-            "⌘N — new · ⌘W — close · ↑/↓ in sidebar — switch<br><br>"
+            "⌘N — new · ⌘W — close · ⌃Tab / ⌃⇧Tab — next/previous ·"
+            " ↑/↓ in sidebar — switch<br><br>"
             "<b>Tools</b><br>"
-            "⌘⇧P — providers · ⌘⇧A — agents · ⌘, — settings"
+            "⌘⇧P — providers · ⌘⇧A — agents · ⌘⇧V — preview panel · ⌘, — settings"
         ))
 
     def _show_about(self) -> None:
@@ -501,6 +586,7 @@ class MainWindow(QMainWindow):
         self._tasks = [
             asyncio.ensure_future(self._event_loop()),
             asyncio.ensure_future(self._watch_files()),
+            asyncio.ensure_future(self.engine.run_routines()),
         ]
         # modals (welcome wizard, first-launch directory picker) must run from
         # the Qt loop, not nested inside this asyncio task, or qasync warns
@@ -990,9 +1076,23 @@ class MainWindow(QMainWindow):
         if not self.current_session_id:
             return
         session_id = self.current_session_id
+        if self._pending_edit is not None:
+            message_id, self._pending_edit = self._pending_edit, None
+
+            async def _do_edit() -> None:
+                await self.engine.edit_and_rerun(session_id, message_id, text)
+                await self._load_session(session_id)
+                self.prompt_bar.set_running(True)
+                self._running.add(session_id)
+            self._fire(_do_edit())
+            return
+        files = self.prompt_bar.take_attachments()
         queued = self.engine.is_running(session_id)
         self.prompt_bar.set_running(True)
         self.transcript.add_user_text(f"local-{id(text)}", self._display_text(text), queued=queued)
+        for i, path in enumerate(files):
+            self.transcript.on_part_updated(
+                f"local-file-{id(text)}-{i}", "file", {"path": path}, role="user")
         agent_label = self.prompt_bar.agent_combo.currentText() or "agent"
         agent = _AGENT_INTERNAL.get(agent_label, agent_label)
         if not queued:
@@ -1010,6 +1110,7 @@ class MainWindow(QMainWindow):
                     session_id, text,
                     agent=agent or None,
                     model=self.prompt_bar.current_model() or None,
+                    files=files or None,
                 )
             except Exception:
                 # Don't leave the Stop button stuck if submit never started a run.
@@ -1035,6 +1136,155 @@ class MainWindow(QMainWindow):
             self.prompt_bar.set_running(False)
             self.transcript.dismiss_thinking()
             self._set_activity("")
+
+    def _on_prompt_abort(self) -> None:
+        """Esc in the prompt bar: cancel an in-progress edit, else stop the run."""
+        if self._pending_edit is not None:
+            self._pending_edit = None
+            self.prompt_bar.editor.clear()
+            self.statusBar().showMessage("Edit cancelled", 2000)
+            return
+        self._fire(self._abort())
+
+    # ------------------------------------------------------------------ conversation actions
+
+    def _begin_edit(self, message_id: str, raw_text: str) -> None:
+        """Context-menu "Edit & re-run": prefill the prompt bar as a fork."""
+        if not self.current_session_id:
+            return
+        if not message_id:
+            self.statusBar().showMessage(
+                "Can't edit this message yet — reopen the session first", 3000)
+            return
+        self._pending_edit = message_id
+        self.prompt_bar.editor.setPlainText(raw_text)
+        cursor = self.prompt_bar.editor.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        self.prompt_bar.editor.setTextCursor(cursor)
+        self.prompt_bar.editor.setFocus()
+        self.statusBar().showMessage(
+            "Editing an earlier message — Enter re-runs from there, Esc cancels", 5000)
+
+    async def _regenerate(self) -> None:
+        sid = self.current_session_id
+        if not sid or self.engine.is_running(sid):
+            return
+        if await self.engine.regenerate(sid):
+            await self._load_session(sid)
+            self._running.add(sid)
+            self.prompt_bar.set_running(True)
+            session = await self.engine.store.get_session(sid)
+            agent = session.agent if session else "agent"
+            try:
+                self.transcript.show_thinking(
+                    _AGENT_DISPLAY.get(agent, agent), self.engine.agents.color_of(agent))
+            except Exception:
+                pass
+
+    def _toggle_search(self) -> None:
+        show = not self.search_bar.isVisible()
+        self.search_bar.setVisible(show)
+        if show:
+            self.search_edit.setFocus()
+            self.search_edit.selectAll()
+        else:
+            self.search_edit.clear()
+            self.transcript.clear_search()
+
+    def _search_changed(self, query: str) -> None:
+        count = self.transcript.search(query)
+        self.search_count.setText(
+            "" if not query else (f"{count} match{'es' if count != 1 else ''}"))
+
+    def _search_nav(self, delta: int) -> None:
+        position = self.transcript.search_step(delta)
+        if position:
+            total = len(self.transcript._matches)
+            self.search_count.setText(f"{position}/{total}")
+
+    def _export_transcript(self) -> None:
+        if not self.current_session_id:
+            return
+        sid = self.current_session_id
+
+        async def run() -> None:
+            markdown = await self.engine.export_markdown(sid)
+            session = await self.engine.store.get_session(sid)
+            stem = (session.title or "session").strip().replace("/", "-") or "session"
+            suggested = str(Path.home() / f"{stem}.md")
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Export transcript", suggested, "Markdown (*.md)")
+            if path:
+                Path(path).write_text(markdown)
+                self.statusBar().showMessage(f"Exported to {path}", 4000)
+
+        self._fire(run())
+
+    def _cycle_session(self, delta: int) -> None:
+        """Ctrl+Tab: jump between this project's recent sessions."""
+        if not self.engine.project:
+            return
+
+        async def run() -> None:
+            sessions = await self.engine.store.list_sessions(self.engine.project.id)
+            ordered = sorted((s for s in sessions if not s.parent_session_id),
+                             key=lambda s: s.updated_at, reverse=True)
+            if len(ordered) < 2:
+                return
+            ids = [s.id for s in ordered]
+            try:
+                at = ids.index(self.current_session_id)
+            except ValueError:
+                at = 0
+            self._session_stack.clear()
+            await self._load_session(ids[(at + delta) % len(ids)])
+            await self._refresh_sessions()
+
+        self._fire(run())
+
+    def _toggle_preview(self) -> None:
+        show = not self.preview.isVisible()
+        self.preview.setVisible(show)
+        if show:
+            self.content_split.setSizes([3, 2])
+            self.preview.address.setFocus()
+
+    def _show_preview(self) -> None:
+        if not self.preview.isVisible():
+            self.preview.setVisible(True)
+            self.content_split.setSizes([3, 2])
+
+    def _preview_file(self, path: str) -> None:
+        self._show_preview()
+        self.preview.show_file(path)
+
+    def _preview_html(self, html: str) -> None:
+        self._show_preview()
+        self.preview.show_html(html)
+
+    def _open_file_viewer(self, path: str) -> None:
+        from .file_viewer import FileViewerDialog
+
+        FileViewerDialog(path, self).exec()
+
+    def _open_side_chat(self) -> None:
+        from .side_chat import SideChatDialog
+
+        dialog = SideChatDialog(
+            self.engine, self.prompt_bar.current_model() or self._default_model(),
+            self.current_session_id, self)
+        dialog.show()  # modeless — keep working in the main window
+
+    async def _content_search(self, query: str) -> None:
+        """Sidebar search: match transcript content, not just titles."""
+        if not query.strip():
+            await self._refresh_sessions()
+            return
+        results = await self.engine.store.search_sessions(query.strip())
+        running = {s.id for s, _ in results if self.engine.is_running(s.id)}
+        agent_colors = {a.name: a.color or "#98c379"
+                        for a in self.engine.agents.agents.values()}
+        self.session_list.show_search_results(results, running, agent_colors)
 
     def _action(self, action: str) -> None:
         if action == "compact" and self.current_session_id:

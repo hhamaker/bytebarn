@@ -50,7 +50,16 @@ def _to_openai_messages(system: str, messages: list[Msg]) -> list[dict[str, Any]
                         {"role": "tool", "tool_call_id": item["call_id"], "content": item["output"]}
                     )
             text = "\n".join(i["text"] for i in msg.content if i["type"] == "text" and i["text"])
-            if text:
+            images = [i for i in msg.content if i["type"] == "image"]
+            if images:
+                blocks: list[dict[str, Any]] = []
+                if text:
+                    blocks.append({"type": "text", "text": text})
+                for image in images:
+                    uri = f"data:{image['media_type']};base64,{image['data']}"
+                    blocks.append({"type": "image_url", "image_url": {"url": uri}})
+                out.append({"role": "user", "content": blocks})
+            elif text:
                 out.append({"role": "user", "content": text})
     return out
 
@@ -93,6 +102,10 @@ class OpenAICompatProvider:
             kwargs["temperature"] = req.temperature
         if req.top_p is not None:
             kwargs["top_p"] = req.top_p
+        if req.thinking and req.thinking != "off":
+            # OpenAI-style reasoning knob; services that don't know the
+            # parameter reject it, so it is only sent when the user opted in
+            kwargs["reasoning_effort"] = req.thinking
 
         try:
             stream = await self._client.chat.completions.create(**kwargs)

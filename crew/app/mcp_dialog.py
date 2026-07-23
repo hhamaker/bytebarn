@@ -163,6 +163,8 @@ class MCPDialog(QDialog):
             add_field("token", "Access token", secret=True)
         for var, label in spec.env_keys:
             add_field(var, label, secret="KEY" in var or "TOKEN" in var)
+        for key, label in spec.arg_keys:
+            add_field(key, label)
 
     def _add(self) -> None:
         values = {k: e.text() for k, e in self._fields.items()}

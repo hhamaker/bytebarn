@@ -143,6 +143,29 @@ def _asset_section(asset: Any) -> str:
             "</project-knowledge>")
 
 
+_IMAGE_MEDIA = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                ".gif": "image/gif", ".webp": "image/webp"}
+_IMAGE_CAP = 4 * 1024 * 1024  # bigger inline images blow the request size
+
+
+def _file_content(path: str) -> dict[str, Any]:
+    """A user "file" part as provider content: inline images, name others."""
+    import base64
+    from pathlib import Path as _Path
+
+    p = _Path(path)
+    media = _IMAGE_MEDIA.get(p.suffix.lower())
+    if media:
+        try:
+            raw = p.read_bytes()
+            if len(raw) <= _IMAGE_CAP:
+                return {"type": "image", "media_type": media,
+                        "data": base64.b64encode(raw).decode()}
+        except OSError:
+            pass
+    return {"type": "text", "text": f"[attached file: {path}]"}
+
+
 def history_to_messages(history: list[tuple[Any, list[Any]]]) -> list[Msg]:
     """Convert stored messages/parts to provider-neutral Msgs.
 
@@ -169,7 +192,7 @@ def history_to_messages(history: list[tuple[Any, list[Any]]]) -> list[Msg]:
                 if part.type == "text":
                     content.append({"type": "text", "text": part.data.get("text", "")})
                 elif part.type == "file":
-                    content.append({"type": "text", "text": f"[attached file: {part.data.get('path')}]"})
+                    content.append(_file_content(part.data.get("path", "")))
             if content:
                 msgs.append(Msg("user", content))
             continue
@@ -296,6 +319,7 @@ class Runner:
                 tools=[t.tool_def() for t in tools],
                 temperature=agent.temperature,
                 top_p=agent.top_p,
+                thinking=agent.thinking,
                 max_tokens=min(info.max_output, 32_000),
             )
             message = await store.add_message(

@@ -26,9 +26,10 @@ _DEFAULTS: dict[str, str] = {
     "edit": ASK,
     "write": ASK,
     "webfetch": ASK,
+    "websearch": ASK,
 }
 
-SAFE = "safe"        # deny bash/edit/write/webfetch
+SAFE = "safe"        # deny bash/edit/write/webfetch/websearch
 ASK_MODE = "ask"     # config-resolved, ask by default
 FULL_AUTO = "full"   # allow everything
 

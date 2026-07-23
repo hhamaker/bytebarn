@@ -229,9 +229,10 @@ class Engine:
     # -- prompts -------------------------------------------------------------
 
     async def submit_prompt(
-        self, session_id: str, text: str, agent: str | None = None, model: str | None = None
+        self, session_id: str, text: str, agent: str | None = None,
+        model: str | None = None, files: list[str] | None = None,
     ) -> None:
-        """Persist the user prompt and start (or queue) a run."""
+        """Persist the user prompt (plus attachments) and start or queue a run."""
         session = await self.store.get_session(session_id)
         if session is None:
             raise KeyError(f"no session {session_id}")
@@ -249,12 +250,14 @@ class Engine:
             session = await self.store.get_session(session_id)
 
         if self.is_running(session_id):
-            self._runs[session_id].queued.append(rendered)
+            self._runs[session_id].queued.append((rendered, list(files or ())))
             self.bus.emit(QueueUpdated(session_id=session_id, depth=len(self._runs[session_id].queued)))
             return
 
         message = await self.store.add_message(session_id, "user")
         await self.store.add_part(message.id, "text", {"text": rendered})
+        for path in files or ():
+            await self.store.add_part(message.id, "file", {"path": path})
         self.bus.emit(SessionUpdated(session_id=session_id))
         self._start_run(session)
 
@@ -262,6 +265,65 @@ class Engine:
             from .compaction import generate_title
 
             asyncio.ensure_future(self._swallow(generate_title(self, session, rendered)))
+
+    async def regenerate(self, session_id: str) -> bool:
+        """Drop everything after the last user message and run it again."""
+        if self.is_running(session_id):
+            return False
+        messages = await self.store.list_messages(session_id)
+        last_user = next((m for m in reversed(messages) if m.role == "user"), None)
+        if last_user is None:
+            return False
+        # delete the assistant turn(s) after the prompt, keep the prompt itself
+        idx = messages.index(last_user)
+        if idx + 1 < len(messages):
+            await self.store.delete_messages_from(session_id, messages[idx + 1].id)
+        session = await self.store.get_session(session_id)
+        self.bus.emit(SessionUpdated(session_id=session_id))
+        self._start_run(session)
+        return True
+
+    async def edit_and_rerun(self, session_id: str, message_id: str, new_text: str) -> None:
+        """Fork the session at a user message: truncate from it, resubmit."""
+        if self.is_running(session_id):
+            await self.abort(session_id)
+        await self.store.delete_messages_from(session_id, message_id)
+        self.bus.emit(SessionUpdated(session_id=session_id))
+        await self.submit_prompt(session_id, new_text)
+
+    async def export_markdown(self, session_id: str) -> str:
+        """Whole transcript as portable markdown."""
+        session = await self.store.get_session(session_id)
+        if session is None:
+            raise KeyError(f"no session {session_id}")
+        lines = [f"# {session.title or 'Untitled session'}", ""]
+        if session.model:
+            lines += [f"*agent: {session.agent} · model: {session.model}*", ""]
+        for message, parts in await self.store.session_parts(session_id):
+            for part in parts:
+                data = part.data
+                if part.type == "text":
+                    who = "**You:**" if message.role == "user" else "**Assistant:**"
+                    lines += [who, "", data.get("text", ""), ""]
+                elif part.type == "reasoning":
+                    text = data.get("text", "").strip()
+                    if text:
+                        lines += ["<details><summary>thinking</summary>", "",
+                                  text, "", "</details>", ""]
+                elif part.type in ("tool", "task"):
+                    tool = data.get("tool", "")
+                    title = data.get("title", "") or ""
+                    status = data.get("status", "")
+                    lines += [f"`{tool}` {title} *({status})*", ""]
+                    output = (data.get("output") or "").strip()
+                    if output:
+                        lines += ["```", output[:4000], "```", ""]
+                elif part.type == "compaction":
+                    lines += ["*context compacted — summary:*", "",
+                              data.get("text", ""), ""]
+                elif part.type == "file":
+                    lines += [f"📎 `{data.get('path', '')}`", ""]
+        return "\n".join(lines).rstrip() + "\n"
 
     def _apply_command(self, text: str) -> tuple[str, str | None, str | None]:
         """Expand a leading /command; returns (prompt, agent, model)."""
@@ -289,11 +351,14 @@ class Engine:
                 self.bus.emit(GoalQueueUpdated(project_id=goal.project_id))
                 await self._advance_goal_queue(goal.project_id)
             return
-        text = handle.queued.pop(0)
+        queued = handle.queued.pop(0)
+        text, files = queued if isinstance(queued, tuple) else (queued, [])
         self.bus.emit(QueueUpdated(session_id=session_id, depth=len(handle.queued)))
         session = await self.store.get_session(session_id)
         message = await self.store.add_message(session_id, "user")
         await self.store.add_part(message.id, "text", {"text": text})
+        for path in files:
+            await self.store.add_part(message.id, "file", {"path": path})
         self.bus.emit(SessionUpdated(session_id=session_id))
         self._start_run(session)
 
@@ -311,6 +376,29 @@ class Engine:
             await self.abort(child.id)
 
     # -- goal queue (walk-away workflows) --------------------------------------
+
+    async def run_routines(self, poll_s: float = 30.0) -> None:
+        """Scheduler loop: queue each due routine's prompt as a goal.
+
+        Run as a background task for the app's lifetime; catching up after
+        sleep queues at most one run per routine (next_run advances past now).
+        """
+        import time as _time
+
+        while True:
+            try:
+                now = _time.time()
+                for routine in await self.store.due_routines(now):
+                    next_run = routine.next_run + routine.interval_s
+                    if next_run <= now:  # missed cycles (machine asleep) — skip them
+                        next_run = now + routine.interval_s
+                    await self.store.update_routine(routine.id, next_run=next_run)
+                    await self.queue_goal(routine.prompt, routine.project_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass  # scheduler must survive transient store/provider errors
+            await asyncio.sleep(poll_s)
 
     async def queue_goal(self, prompt: str, project_id: str | None = None):
         """Queue a goal; runs immediately if nothing is running, else waits."""

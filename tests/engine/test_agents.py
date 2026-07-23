@@ -5,9 +5,15 @@ from crew.engine.config import Config
 
 def test_builtin_agents_present_and_restricted():
     agents = builtin_agents()
-    assert set(agents) == {"build", "chat", "plan", "orchestrator", "general", "explore"}
+    assert set(agents) == {"build", "chat", "plan", "orchestrator", "general",
+                           "explore", "research"}
     # chat is conversation-only: every tool disabled
     assert agents["chat"].tools == {}
+    # research is web-only: can search and read pages, never write files
+    research = agents["research"]
+    assert research.tools.get("websearch") and research.tools.get("webfetch")
+    assert not research.tools.get("edit") and not research.tools.get("write")
+    assert not research.tools.get("bash")
     orch = agents["orchestrator"]
     assert orch.mode == "primary"
     assert orch.tools and not orch.tools.get("edit") and not orch.tools.get("write")

@@ -74,6 +74,11 @@ def main() -> None:
         cur_lib = os.environ.get("DYLD_LIBRARY_PATH", "")
         os.environ["DYLD_LIBRARY_PATH"] = str(venv_qt) + (":" + cur_lib if cur_lib else "")
 
+    # the preview panel creates a QWebEngineView lazily; WebEngine requires
+    # shared GL contexts to be enabled before the QApplication exists
+    from PySide6.QtCore import Qt as _Qt
+
+    QApplication.setAttribute(_Qt.AA_ShareOpenGLContexts)
     app = QApplication(sys.argv)
     app.setApplicationName("Crew")
     app.setWindowIcon(app_icon())

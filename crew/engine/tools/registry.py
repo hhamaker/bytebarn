@@ -11,13 +11,15 @@ from .read import ReadTool
 from .task import TaskTool
 from .todowrite import TodoWriteTool
 from .webfetch import WebFetchTool
+from .websearch import WebSearchTool
 from .write import WriteTool
 
 ALL_TOOLS: dict[str, type[Tool]] = {
     t.name: t
     for t in (
         BashTool, ReadTool, WriteTool, EditTool, GlobTool, GrepTool,
-        WebFetchTool, TodoWriteTool, QuestionTool, TaskTool, MemoryTool,
+        WebFetchTool, WebSearchTool, TodoWriteTool, QuestionTool, TaskTool,
+        MemoryTool,
     )
 }
 

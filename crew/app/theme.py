@@ -1,8 +1,16 @@
 """App-wide theming (spec §7.4): dark, light, or follow-system.
 
-The transcript, crew stage, and cards were designed on the dark palette, so
-dark is the flagship look; light keeps Qt's native palette with the same
-accent styling.
+All three looks are generated from one QSS template fed by a token dict, so
+the geometry (radii, spacing, hairline borders, the composer, transcript
+bubbles) is identical everywhere and only the palette changes:
+
+- "dark"   — cool graphite with the brand blue accent (default).
+- "modern" — the Night Workshop: warm charcoal + lantern amber, the look the
+             critters were drawn for.
+- "light"  — the same system on paper-white surfaces.
+
+Widget files style themselves through objectNames (#composer, #userBubble,
+#partCard, …) so per-widget setStyleSheet calls stay out of the app code.
 """
 
 from __future__ import annotations
@@ -11,166 +19,200 @@ from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
 ACCENT = "#61afef"
-
-_DARK = {
-    QPalette.Window: "#21252b",
-    QPalette.WindowText: "#c8ccd4",
-    QPalette.Base: "#1d2026",
-    QPalette.AlternateBase: "#2c313c",
-    QPalette.Text: "#c8ccd4",
-    QPalette.Button: "#2c313c",
-    QPalette.ButtonText: "#c8ccd4",
-    QPalette.Highlight: ACCENT,
-    QPalette.HighlightedText: "#1d2026",
-    QPalette.ToolTipBase: "#2c313c",
-    QPalette.ToolTipText: "#c8ccd4",
-    QPalette.PlaceholderText: "#6b717d",
-    QPalette.Link: ACCENT,
-}
-
-_DARK_QSS = f"""
-QMainWindow, QDialog {{ background: #21252b; }}
-QPlainTextEdit, QLineEdit, QTreeWidget, QListWidget {{
-    background: #1d2026; border: 1px solid #3a3f4b; border-radius: 6px;
-    selection-background-color: {ACCENT}; padding: 3px;
-}}
-QPlainTextEdit:focus, QLineEdit:focus {{ border-color: {ACCENT}; }}
-QComboBox {{
-    background: #2c313c; border: 1px solid #3a3f4b; border-radius: 6px; padding: 3px 8px;
-}}
-QComboBox QAbstractItemView {{ background: #2c313c; border: 1px solid #3a3f4b; }}
-QPushButton {{
-    background: #2c313c; border: 1px solid #3a3f4b; border-radius: 6px; padding: 4px 12px;
-}}
-QPushButton:hover {{ border-color: {ACCENT}; }}
-QPushButton:pressed {{ background: #353b48; }}
-QPushButton:flat {{ background: transparent; border: none; }}
-QPushButton:flat:hover {{ color: {ACCENT}; }}
-QScrollBar:vertical {{ background: transparent; width: 10px; }}
-QScrollBar::handle:vertical {{ background: #3a3f4b; border-radius: 5px; min-height: 24px; }}
-QScrollBar::handle:vertical:hover {{ background: #4b5263; }}
-QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
-QStatusBar {{ background: #1d2026; }}
-QSplitter::handle {{ background: #21252b; width: 3px; }}
-QToolTip {{ background: #2c313c; color: #c8ccd4; border: 1px solid #3a3f4b; }}
-QGroupBox {{ border: 1px solid #3a3f4b; border-radius: 6px; margin-top: 8px; padding-top: 6px; }}
-QGroupBox::title {{ subcontrol-origin: margin; left: 8px; color: #8f96a3; }}
-"""
-
-_LIGHT_QSS = f"""
-QPushButton:flat:hover {{ color: {ACCENT}; }}
-"""
-
-# -- "Night Workshop" — the opt-in overhaul look ----------------------------
-#
-# Crew's identity is its pixel-art critters working late on your codebase, so
-# the overhaul leans into that instead of a generic flat dark theme: a warm
-# charcoal room, amber lantern light for the accent, and chunky 2px-bordered
-# controls with a pixel-button press (content shifts down a pixel). The green
-# "running" color stays — it belongs to the sprites.
-
 MODERN_ACCENT = "#e5a458"       # lantern amber
-_M_BG = "#16181d"               # room
-_M_PANEL = "#1b1f26"            # panels / inputs
-_M_RAISED = "#252b36"           # buttons / elevated
-_M_BORDER = "#333a47"
-_M_TEXT = "#d6dae2"
-_M_MUTED = "#7d8590"
 
-_MODERN = {
-    QPalette.Window: _M_BG,
-    QPalette.WindowText: _M_TEXT,
-    QPalette.Base: _M_PANEL,
-    QPalette.AlternateBase: _M_RAISED,
-    QPalette.Text: _M_TEXT,
-    QPalette.Button: _M_RAISED,
-    QPalette.ButtonText: _M_TEXT,
-    QPalette.Highlight: MODERN_ACCENT,
-    QPalette.HighlightedText: "#1a130a",
-    QPalette.ToolTipBase: _M_RAISED,
-    QPalette.ToolTipText: _M_TEXT,
-    QPalette.PlaceholderText: "#6a707c",
-    QPalette.Link: MODERN_ACCENT,
+# -- token sets --------------------------------------------------------------
+
+_DARK_TOKENS = {
+    "bg": "#16181d",            # window canvas
+    "surface": "#1b1e24",       # inputs, sidebar panels, composer
+    "raised": "#232733",        # buttons, menus, hover surfaces
+    "hover": "#20242d",
+    "border": "#2a2f3a",        # 1px hairlines everywhere
+    "text": "#dfe3ea",
+    "muted": "#8b93a1",
+    "accent": ACCENT,
+    "accent_hover": "#7cbcf5",
+    "accent_ink": "#10151c",    # text on accent fills
+    "accent_soft": "#24303f",   # selected rows, accent-tinted surfaces
+    "bubble": "#242936",        # user message container
+    "code_bg": "#1d2027",
 }
 
-_MODERN_QSS = f"""
-QMainWindow, QDialog {{ background: {_M_BG}; }}
+_MODERN_TOKENS = {
+    "bg": "#171519",            # warm charcoal room
+    "surface": "#1d1a1f",
+    "raised": "#272229",
+    "hover": "#232025",
+    "border": "#322d33",
+    "text": "#e2ddd6",
+    "muted": "#948d85",
+    "accent": MODERN_ACCENT,
+    "accent_hover": "#f0b56b",
+    "accent_ink": "#201709",
+    "accent_soft": "#332a1e",
+    "bubble": "#28242a",
+    "code_bg": "#201d22",
+}
 
+_LIGHT_TOKENS = {
+    "bg": "#f7f7f8",
+    "surface": "#ffffff",
+    "raised": "#ececf0",
+    "hover": "#eff0f3",
+    "border": "#dcdde3",
+    "text": "#2a2f38",
+    "muted": "#6e7481",
+    "accent": "#3d7fc4",
+    "accent_hover": "#5b96d6",
+    "accent_ink": "#ffffff",
+    "accent_soft": "#e3edf8",
+    "bubble": "#eceef2",
+    "code_bg": "#f1f2f5",
+}
+
+_TOKENS = {"dark": _DARK_TOKENS, "modern": _MODERN_TOKENS, "light": _LIGHT_TOKENS}
+
+
+def tokens() -> dict[str, str]:
+    """Palette tokens for the theme currently applied (widget paint code)."""
+    return _TOKENS[_current_mode]
+
+
+def _palette(t: dict[str, str]) -> QPalette:
+    palette = QPalette()
+    roles = {
+        QPalette.Window: t["bg"],
+        QPalette.WindowText: t["text"],
+        QPalette.Base: t["surface"],
+        QPalette.AlternateBase: t["raised"],
+        QPalette.Text: t["text"],
+        QPalette.Button: t["raised"],
+        QPalette.ButtonText: t["text"],
+        QPalette.Highlight: t["accent"],
+        QPalette.HighlightedText: t["accent_ink"],
+        QPalette.ToolTipBase: t["raised"],
+        QPalette.ToolTipText: t["text"],
+        QPalette.PlaceholderText: t["muted"],
+        QPalette.Link: t["accent"],
+    }
+    for role, color in roles.items():
+        palette.setColor(role, QColor(color))
+    return palette
+
+
+def _qss(t: dict[str, str]) -> str:
+    mono = "font-family: ui-monospace, Menlo, monospace;"
+    return f"""
+QMainWindow, QDialog {{ background: {t['bg']}; }}
+
+/* -- inputs & lists ---------------------------------------------------- */
 QPlainTextEdit, QLineEdit, QTreeWidget, QListWidget {{
-    background: {_M_PANEL}; border: 2px solid {_M_BORDER}; border-radius: 8px;
-    selection-background-color: {MODERN_ACCENT}; selection-color: #1a130a;
-    padding: 4px;
+    background: {t['surface']}; border: 1px solid {t['border']};
+    border-radius: 10px; padding: 4px;
+    selection-background-color: {t['accent']}; selection-color: {t['accent_ink']};
 }}
-QPlainTextEdit:focus, QLineEdit:focus {{ border-color: {MODERN_ACCENT}; }}
-
-QTreeWidget::item, QListWidget::item {{
-    padding: 3px 4px; border-radius: 6px;
-}}
-QTreeWidget::item:hover, QListWidget::item:hover {{ background: #232833; }}
+QPlainTextEdit:focus, QLineEdit:focus {{ border-color: {t['accent']}; }}
+QTreeWidget::item, QListWidget::item {{ padding: 4px 6px; border-radius: 8px; }}
+QTreeWidget::item:hover, QListWidget::item:hover {{ background: {t['hover']}; }}
 QTreeWidget::item:selected, QListWidget::item:selected {{
-    background: #3a3325; color: {MODERN_ACCENT};
+    background: {t['accent_soft']}; color: {t['text']};
 }}
 
-QComboBox {{
-    background: {_M_RAISED}; border: 2px solid {_M_BORDER}; border-radius: 8px;
-    padding: 3px 10px;
-}}
-QComboBox:hover {{ border-color: #4a5261; }}
-QComboBox QAbstractItemView {{
-    background: {_M_RAISED}; border: 2px solid {_M_BORDER}; border-radius: 8px;
-    selection-background-color: #3a3325; selection-color: {MODERN_ACCENT};
-}}
-
+/* -- buttons ------------------------------------------------------------ */
 QPushButton {{
-    background: {_M_RAISED}; border: 2px solid {_M_BORDER}; border-radius: 8px;
-    padding: 5px 14px; font-weight: 600;
+    background: {t['raised']}; border: 1px solid {t['border']};
+    border-radius: 9px; padding: 5px 14px;
 }}
-QPushButton:hover {{ border-color: {MODERN_ACCENT}; color: {MODERN_ACCENT}; }}
-QPushButton:pressed {{
-    background: #1f242d; padding-top: 6px; padding-bottom: 4px;  /* pixel press */
-}}
-QPushButton:flat {{ background: transparent; border: none; font-weight: 500; }}
-QPushButton:flat:hover {{ color: {MODERN_ACCENT}; }}
+QPushButton:hover {{ border-color: {t['accent']}; }}
+QPushButton:pressed {{ background: {t['hover']}; }}
+QPushButton:flat {{ background: transparent; border: none; color: {t['muted']}; }}
+QPushButton:flat:hover {{ color: {t['accent']}; background: transparent; }}
 QPushButton#send {{
-    background: {MODERN_ACCENT}; border: 2px solid #c98c44; color: #1a130a;
+    background: {t['accent']}; border: none; color: {t['accent_ink']};
+    border-radius: 9px; padding: 6px 18px; font-weight: 600;
 }}
-QPushButton#send:hover {{ background: #f0b56b; color: #1a130a; }}
-QPushButton#send:pressed {{ background: #c98c44; }}
+QPushButton#send:hover {{ background: {t['accent_hover']}; }}
+QPushButton#send:pressed {{ background: {t['accent']}; }}
+QPushButton#pill {{
+    background: {t['surface']}; border: 1px solid {t['border']};
+    border-radius: 11px; padding: 2px 10px; color: {t['muted']};
+    {mono} font-size: 11px;
+}}
+QPushButton#pill:hover {{ border-color: {t['accent']}; color: {t['accent']}; }}
 
+/* -- combos ------------------------------------------------------------- */
+QComboBox {{
+    background: {t['raised']}; border: 1px solid {t['border']};
+    border-radius: 9px; padding: 3px 10px;
+}}
+QComboBox:hover {{ border-color: {t['accent']}; }}
+QComboBox QAbstractItemView {{
+    background: {t['raised']}; border: 1px solid {t['border']}; border-radius: 8px;
+    selection-background-color: {t['accent_soft']}; selection-color: {t['text']};
+}}
+
+/* -- the composer (prompt bar) ------------------------------------------ */
+QFrame#composer {{
+    background: {t['surface']}; border: 1px solid {t['border']};
+    border-radius: 14px;
+}}
+QFrame#composer QPlainTextEdit {{
+    background: transparent; border: none; border-radius: 0; padding: 2px;
+}}
+QFrame#composer QComboBox {{
+    background: transparent; border: none; color: {t['muted']};
+    padding: 2px 8px; border-radius: 7px;
+}}
+QFrame#composer QComboBox:hover {{ background: {t['hover']}; color: {t['text']}; }}
+
+/* -- transcript ---------------------------------------------------------- */
+QLabel#userBubble {{
+    background: {t['bubble']}; color: {t['text']};
+    border-radius: 12px; padding: 10px 14px;
+}}
+QLabel#userBubble[queued="true"] {{ border: 1px dashed {t['accent']}; }}
+QFrame#partCard {{
+    background: transparent; border: 1px solid {t['border']}; border-radius: 10px;
+}}
+QFrame#partCard:hover {{ background: {t['hover']}; }}
+QFrame#partCard QLabel {{ padding: 2px 6px 6px 6px; }}
+QLabel#fileThumb {{
+    border: 1px solid {t['border']}; border-radius: 10px; padding: 4px;
+}}
+
+/* -- tabs ---------------------------------------------------------------- */
 QTabWidget::pane {{ border: none; margin-top: 4px; }}
 QTabBar::tab {{
-    background: transparent; color: {_M_MUTED}; padding: 6px 12px;
-    border: none; border-bottom: 2px solid transparent;
-    font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+    background: transparent; color: {t['muted']}; padding: 6px 12px;
+    border: none; border-bottom: 2px solid transparent; font-size: 12px;
 }}
-QTabBar::tab:hover {{ color: {_M_TEXT}; }}
-QTabBar::tab:selected {{ color: {MODERN_ACCENT}; border-bottom: 2px solid {MODERN_ACCENT}; }}
+QTabBar::tab:hover {{ color: {t['text']}; }}
+QTabBar::tab:selected {{ color: {t['text']}; border-bottom: 2px solid {t['accent']}; }}
 
+/* -- chrome -------------------------------------------------------------- */
+QScrollArea {{ border: none; background: transparent; }}
 QScrollBar:vertical {{ background: transparent; width: 8px; }}
-QScrollBar::handle:vertical {{ background: {_M_BORDER}; border-radius: 4px; min-height: 24px; }}
-QScrollBar::handle:vertical:hover {{ background: {MODERN_ACCENT}; }}
-QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
+QScrollBar::handle:vertical {{ background: {t['border']}; border-radius: 4px; min-height: 24px; }}
+QScrollBar::handle:vertical:hover {{ background: {t['muted']}; }}
 QScrollBar:horizontal {{ background: transparent; height: 8px; }}
-QScrollBar::handle:horizontal {{ background: {_M_BORDER}; border-radius: 4px; min-width: 24px; }}
-
-QStatusBar {{ background: {_M_PANEL}; color: {_M_MUTED};
-    font-family: ui-monospace, Menlo, monospace; font-size: 11px; }}
-QSplitter::handle {{ background: {_M_BG}; width: 4px; }}
-QToolTip {{ background: {_M_RAISED}; color: {_M_TEXT};
-    border: 2px solid {_M_BORDER}; border-radius: 6px; padding: 4px; }}
-QGroupBox {{ border: 2px solid {_M_BORDER}; border-radius: 8px;
-    margin-top: 8px; padding-top: 6px; }}
-QGroupBox::title {{ subcontrol-origin: margin; left: 8px; color: {_M_MUTED};
-    font-family: ui-monospace, Menlo, monospace; font-size: 11px; }}
-QMenu {{ background: {_M_RAISED}; border: 2px solid {_M_BORDER}; border-radius: 8px; padding: 4px; }}
-QMenu::item {{ padding: 5px 18px; border-radius: 6px; }}
-QMenu::item:selected {{ background: #3a3325; color: {MODERN_ACCENT}; }}
-QPushButton#pill {{
-    background: #1f242d; border: 1px solid {_M_BORDER}; border-radius: 10px;
-    padding: 2px 10px; font-family: ui-monospace, Menlo, monospace;
-    font-size: 11px; font-weight: 500;
+QScrollBar::handle:horizontal {{ background: {t['border']}; border-radius: 4px; min-width: 24px; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}
+QStatusBar {{ background: {t['bg']}; color: {t['muted']}; {mono} font-size: 11px; }}
+QStatusBar QLabel {{ color: {t['muted']}; }}
+QSplitter::handle {{ background: {t['bg']}; }}
+QToolTip {{
+    background: {t['raised']}; color: {t['text']};
+    border: 1px solid {t['border']}; border-radius: 6px; padding: 4px;
 }}
-QPushButton#pill:hover {{ border-color: {MODERN_ACCENT}; }}
+QGroupBox {{ border: 1px solid {t['border']}; border-radius: 10px;
+    margin-top: 8px; padding-top: 6px; }}
+QGroupBox::title {{ subcontrol-origin: margin; left: 8px; color: {t['muted']};
+    {mono} font-size: 11px; }}
+QMenu {{ background: {t['raised']}; border: 1px solid {t['border']};
+    border-radius: 10px; padding: 4px; }}
+QMenu::item {{ padding: 5px 18px; border-radius: 7px; }}
+QMenu::item:selected {{ background: {t['accent_soft']}; color: {t['text']}; }}
 """
 
 
@@ -228,18 +270,6 @@ def apply_theme(app: QApplication, mode: str = "follow system") -> None:
     global _current_mode
     resolved = resolve_mode(mode, app)
     _current_mode = resolved
-    if resolved == "dark":
-        palette = QPalette()
-        for role, color in _DARK.items():
-            palette.setColor(role, QColor(color))
-        app.setPalette(palette)
-        app.setStyleSheet(_DARK_QSS)
-    elif resolved == "modern":
-        palette = QPalette()
-        for role, color in _MODERN.items():
-            palette.setColor(role, QColor(color))
-        app.setPalette(palette)
-        app.setStyleSheet(_MODERN_QSS)
-    else:
-        app.setPalette(app.style().standardPalette())
-        app.setStyleSheet(_LIGHT_QSS)
+    t = _TOKENS[resolved]
+    app.setPalette(_palette(t))
+    app.setStyleSheet(_qss(t))

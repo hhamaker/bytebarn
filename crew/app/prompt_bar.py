@@ -21,6 +21,28 @@ from PySide6.QtWidgets import (
 _MAX_LINES = 4
 
 
+class _Editor(QPlainTextEdit):
+    """Prompt editor that accepts pasted images and dropped files."""
+
+    image_added = Signal(object)     # QImage
+    files_added = Signal(list)       # list[str]
+
+    def canInsertFromMimeData(self, source) -> bool:
+        return (source.hasImage() or source.hasUrls()
+                or super().canInsertFromMimeData(source))
+
+    def insertFromMimeData(self, source) -> None:
+        if source.hasImage():
+            self.image_added.emit(source.imageData())
+            return
+        if source.hasUrls():
+            paths = [u.toLocalFile() for u in source.urls() if u.isLocalFile()]
+            if paths:
+                self.files_added.emit(paths)
+                return
+        super().insertFromMimeData(source)
+
+
 class _Popup(QListWidget):
     """Floating completion list for / commands and @ files."""
 
@@ -73,16 +95,21 @@ class PromptBar(QWidget):
     model_changed = Signal(str)      # full "provider/model-id"
     action_requested = Signal(str)   # built-in command actions (compact/new/...)
 
-    def __init__(self, commands=None, project_dir: Path | None = None):
+    def __init__(self, commands=None, project_dir: Path | None = None,
+                 attachments_dir: Path | None = None):
         super().__init__()
         self._commands = commands    # CommandRegistry | None
         self._project_dir = project_dir
+        self._attachments_dir = attachments_dir
+        self._attachments: list[str] = []
         self._running = False
 
-        self.editor = QPlainTextEdit()
-        self.editor.setPlaceholderText("Prompt…  (/ commands, @ files, Enter to send)")
+        self.editor = _Editor()
+        self.editor.setPlaceholderText("Message the crew — / for commands, @ for files")
         self.editor.installEventFilter(self)
         self.editor.textChanged.connect(self._on_text_changed)
+        self.editor.image_added.connect(self._add_pasted_image)
+        self.editor.files_added.connect(self.add_attachments)
         self.agent_combo = QComboBox()
         self.agent_combo.setMinimumWidth(85)
         self.agent_combo.setToolTip("Agent for this session — /agents to edit them")
@@ -107,18 +134,35 @@ class PromptBar(QWidget):
         self.queue_label.setStyleSheet("color:#e5c07b; padding:0 6px;")
         self.queue_label.hide()
 
+        # ChatGPT-style composer: one rounded surface holding the editor on
+        # top and the quiet picker row + send below it
+        from PySide6.QtWidgets import QFrame
+
+        composer = QFrame()
+        composer.setObjectName("composer")
         controls = QHBoxLayout()
+        controls.setContentsMargins(0, 0, 0, 0)
+        controls.setSpacing(4)
         controls.addWidget(self.agent_combo)
         controls.addWidget(self.provider_combo)
         controls.addWidget(self.model_combo)
         controls.addWidget(self.queue_label)
         controls.addStretch(1)
         controls.addWidget(self.send_button)
+        self._chips = QHBoxLayout()
+        self._chips.setContentsMargins(0, 0, 0, 0)
+        self._chips.setSpacing(4)
+        self._chips.addStretch(1)
+        composer_layout = QVBoxLayout(composer)
+        composer_layout.setContentsMargins(10, 8, 10, 8)
+        composer_layout.setSpacing(6)
+        composer_layout.addLayout(self._chips)
+        composer_layout.addWidget(self.editor)
+        composer_layout.addLayout(controls)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 4, 8, 8)
-        layout.addWidget(self.editor)
-        layout.addLayout(controls)
+        layout.setContentsMargins(16, 4, 16, 12)
+        layout.addWidget(composer)
 
         self._popup = _Popup(self)
         self._popup.picked.connect(self._apply_completion)
@@ -225,6 +269,48 @@ class PromptBar(QWidget):
         cursor.movePosition(cursor.MoveOperation.End)
         self.editor.setTextCursor(cursor)
 
+    # -- attachments ----------------------------------------------------------
+
+    def add_attachments(self, paths: list[str]) -> None:
+        for path in paths:
+            if path and path not in self._attachments:
+                self._attachments.append(path)
+        self._render_chips()
+
+    def _add_pasted_image(self, image) -> None:
+        """Save a clipboard image to the attachments dir and attach it."""
+        import time
+
+        directory = self._attachments_dir or (
+            (self._project_dir or Path.home()) / ".crew" / "attachments")
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"pasted-{int(time.time() * 1000)}.png"
+        if image is not None and image.save(str(path), "PNG"):
+            self.add_attachments([str(path)])
+
+    def take_attachments(self) -> list[str]:
+        """Consume the staged attachments (called on submit)."""
+        out, self._attachments = self._attachments, []
+        self._render_chips()
+        return out
+
+    def _render_chips(self) -> None:
+        while self._chips.count() > 1:  # keep the trailing stretch
+            item = self._chips.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        for path in self._attachments:
+            chip = QPushButton(f"📎 {Path(path).name}  ✕")
+            chip.setObjectName("pill")
+            chip.setFlat(True)
+            chip.setToolTip(f"{path} — click to remove")
+            chip.clicked.connect(lambda *_, p=path: self._remove_attachment(p))
+            self._chips.insertWidget(self._chips.count() - 1, chip)
+
+    def _remove_attachment(self, path: str) -> None:
+        self._attachments = [p for p in self._attachments if p != path]
+        self._render_chips()
+
     # -- send / abort ---------------------------------------------------------
 
     def set_running(self, running: bool) -> None:
@@ -244,6 +330,8 @@ class PromptBar(QWidget):
             self.aborted.emit()
             return
         text = self.editor.toPlainText().strip()
+        if not text and self._attachments:
+            text = "See the attached file(s)."
         if not text:
             return
         if text.startswith("/") and self._commands:

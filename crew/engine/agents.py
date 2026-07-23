@@ -29,6 +29,7 @@ class AgentDef(BaseModel):
     model: str | None = None
     temperature: float | None = None
     top_p: float | None = None
+    thinking: str | None = None  # extended thinking: off/low/medium/high
     steps: int = 100
     color: str | None = None
     hidden: bool = False
@@ -95,6 +96,13 @@ def builtin_agents() -> dict[str, AgentDef]:
             name="general", mode="subagent", builtin=True,
             description="Generalist worker for any task: research, code changes, running commands. Use when no specialist fits. Give it a precise, self-contained prompt.",
             prompt=_prompt("general"), color="#98c379",
+        ),
+        "research": AgentDef(
+            name="research", mode="all", builtin=True,
+            description="Web researcher: searches the web, reads sources, and writes a cited report. Use for questions the codebase can't answer.",
+            prompt=_prompt("research"), color="#e06c75",
+            tools={"websearch": True, "webfetch": True, "read": True,
+                   "todowrite": True, "memory": True, "question": True},
         ),
         "explore": AgentDef(
             name="explore", mode="subagent", builtin=True,

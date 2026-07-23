@@ -78,6 +78,15 @@ CREATE TABLE IF NOT EXISTS todo (
     status TEXT NOT NULL CHECK (status IN ('pending','in_progress','completed')),
     PRIMARY KEY (session_id, idx)
 );
+CREATE TABLE IF NOT EXISTS routine (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES project(id),
+    prompt TEXT NOT NULL,
+    interval_s INTEGER NOT NULL,
+    next_run REAL NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at REAL NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_session_project ON session(project_id);
 CREATE INDEX IF NOT EXISTS idx_project_folder ON project_folder(project_id);
 CREATE INDEX IF NOT EXISTS idx_session_parent ON session(parent_session_id);
@@ -151,6 +160,17 @@ class Part:
 class Todo:
     content: str
     status: str = "pending"
+
+
+@dataclass
+class Routine:
+    id: str
+    project_id: str
+    prompt: str
+    interval_s: int
+    next_run: float
+    enabled: bool
+    created_at: float
 
 
 @dataclass
@@ -542,6 +562,68 @@ class Store:
         """Convenience wrapper: returns the most recent page_size messages."""
         return await self.session_parts(session_id, limit=page_size)
 
+    async def delete_messages_from(self, session_id: str, message_id: str) -> None:
+        """Delete a message and everything after it (edit-and-rerun fork).
+
+        "After" follows the transcript order (created_at, id) used everywhere
+        else, so ties on created_at cut consistently.
+        """
+        row = await self._fetchone(
+            "SELECT created_at, id FROM message WHERE id=? AND session_id=?",
+            (message_id, session_id),
+        )
+        if row is None:
+            return
+        doomed = (
+            "SELECT id FROM message WHERE session_id=? AND"
+            " (created_at > ? OR (created_at = ? AND id >= ?))"
+        )
+        args = (session_id, row["created_at"], row["created_at"], row["id"])
+        await self.db.execute(f"DELETE FROM part WHERE message_id IN ({doomed})", args)
+        await self.db.execute(f"DELETE FROM message WHERE id IN ({doomed})", args)
+        await self.db.commit()
+
+    async def search_sessions(
+        self, query: str, project_id: str | None = None, limit: int = 30
+    ) -> list[tuple[Session, str]]:
+        """Top-level sessions whose title or transcript matches ``query``.
+
+        Returns (session, snippet) pairs, newest first. The snippet is the
+        matching text part excerpt ('' for title-only matches).
+        """
+        like = f"%{query}%"
+        proj = " AND s.project_id=?" if project_id else ""
+        proj_args: tuple = (project_id,) if project_id else ()
+        # transcript matches: latest matching text/reasoning part per session
+        rows = await self._fetchall(
+            "SELECT s.*, p.json AS pjson, MAX(m.created_at) AS match_at"
+            " FROM part p JOIN message m ON m.id = p.message_id"
+            " JOIN session s ON s.id = m.session_id"
+            " WHERE p.type IN ('text', 'reasoning') AND p.json LIKE ?"
+            f" AND s.parent_session_id IS NULL AND s.archived = 0{proj}"
+            " GROUP BY s.id ORDER BY match_at DESC LIMIT ?",
+            (like, *proj_args, limit),
+        )
+        out: list[tuple[Session, str]] = []
+        seen: set[str] = set()
+        for r in rows:
+            text = str(json.loads(r["pjson"]).get("text", ""))
+            at = text.lower().find(query.lower())
+            snippet = text[max(0, at - 40): at + len(query) + 60].strip() if at >= 0 else ""
+            out.append((self._session(r), snippet))
+            seen.add(r["id"])
+        # title matches fill remaining slots
+        rows = await self._fetchall(
+            "SELECT s.* FROM session s WHERE s.title LIKE ?"
+            f" AND s.parent_session_id IS NULL AND s.archived = 0{proj}"
+            " ORDER BY s.updated_at DESC LIMIT ?",
+            (like, *proj_args, limit),
+        )
+        for r in rows:
+            if r["id"] not in seen and len(out) < limit:
+                out.append((self._session(r), ""))
+        return out
+
     # -- goal queue (walk-away workflows) ------------------------------------
 
     async def add_goal(self, project_id: str, prompt: str) -> GoalItem:
@@ -592,6 +674,42 @@ class Store:
                         r["session_id"], r["created_at"])
 
     # -- usage ---------------------------------------------------------------
+
+    # -- routines (recurring goals) ------------------------------------------
+
+    async def add_routine(self, project_id: str, prompt: str, interval_s: int) -> Routine:
+        rid = _id()
+        now = time.time()
+        routine = Routine(rid, project_id, prompt, interval_s, now + interval_s, True, now)
+        await self._execute(
+            "INSERT INTO routine (id, project_id, prompt, interval_s, next_run,"
+            " enabled, created_at) VALUES (?,?,?,?,?,1,?)",
+            (rid, project_id, prompt, interval_s, routine.next_run, now),
+        )
+        return routine
+
+    async def list_routines(self, project_id: str | None = None) -> list[Routine]:
+        where, args = ("WHERE project_id=?", (project_id,)) if project_id else ("", ())
+        rows = await self._fetchall(
+            f"SELECT * FROM routine {where} ORDER BY created_at", args)
+        return [Routine(r["id"], r["project_id"], r["prompt"], r["interval_s"],
+                        r["next_run"], bool(r["enabled"]), r["created_at"])
+                for r in rows]
+
+    async def due_routines(self, now: float) -> list[Routine]:
+        rows = await self._fetchall(
+            "SELECT * FROM routine WHERE enabled=1 AND next_run <= ?", (now,))
+        return [Routine(r["id"], r["project_id"], r["prompt"], r["interval_s"],
+                        r["next_run"], bool(r["enabled"]), r["created_at"])
+                for r in rows]
+
+    async def update_routine(self, routine_id: str, **fields: Any) -> None:
+        cols = ", ".join(f"{k}=?" for k in fields)
+        await self._execute(
+            f"UPDATE routine SET {cols} WHERE id=?", (*fields.values(), routine_id))
+
+    async def delete_routine(self, routine_id: str) -> None:
+        await self._execute("DELETE FROM routine WHERE id=?", (routine_id,))
 
     async def last_usage(self, session_id: str) -> tuple[int, str]:
         """(tokens_in, model_id) of the session's most recent metered turn."""
