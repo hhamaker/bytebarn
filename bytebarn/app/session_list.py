@@ -201,9 +201,10 @@ class SessionList(QWidget):
         agent_colors: dict[str, str] | None = None,
         default_project_id: str = "",
     ) -> None:
-        """Claude-style sidebar: sessions belonging to a user project nest
-        under that project's row; only the default (working-directory)
-        project's sessions appear in the time-bucketed Recents list."""
+        """Claude-style sidebar: every project is a row with its sessions
+        nested; Recents is a time-bucketed view of all sessions. A session
+        always appears under its project no matter which folder the app is
+        open on (the old default-project carve-out made rows vanish)."""
         expanded, known = self._expansion_state()
 
         def keep_open(node_id: str) -> bool:
@@ -224,8 +225,12 @@ class SessionList(QWidget):
 
         current_item: QTreeWidgetItem | None = None
 
-        # Projects section: each user project owns its sessions, nested.
-        user_projects = [p for p in projects if p.id != default_project_id]
+        # Projects section: each project owns its sessions, nested. The
+        # working-directory project sorts first but is not special-cased —
+        # hiding it made "move to project" look broken whenever the app was
+        # opened on that project's folder.
+        user_projects = sorted(
+            projects, key=lambda p: p.id != default_project_id)
         if user_projects:
             proj_header = self._header_item(f"Projects  ({len(user_projects)})")
             proj_header.setData(0, _ID_ROLE, _PROJECTS_HEADER_ID)
@@ -246,13 +251,14 @@ class SessionList(QWidget):
                 item.setExpanded(has_current or keep_open(project.id))
             proj_header.setExpanded(keep_open(_PROJECTS_HEADER_ID))
 
-        # Recents: the default project's sessions, newest first, under
-        # time-bucket headers. Subagent children are hidden everywhere.
-        recents = sorted(top_level(default_project_id),
-                         key=lambda s: s.updated_at, reverse=True)
+        # Recents: every top-level session, newest first, under time-bucket
+        # headers. Subagent children are hidden everywhere.
+        recents = sorted(
+            ((s, pid) for pid in sessions_by_project for s in top_level(pid)),
+            key=lambda pair: pair[0].updated_at, reverse=True)
         now = time.time()
         buckets: dict[str, QTreeWidgetItem] = {}
-        for session in recents:
+        for session, pid in recents:
             label = bucket_label(session.updated_at, now)
             bucket = buckets.get(label)
             if bucket is None:
@@ -262,7 +268,7 @@ class SessionList(QWidget):
                 bucket.setExpanded(True)
             item = self._session_item(
                 session, running, agent_colors,
-                project_names.get(default_project_id, ""))
+                project_names.get(pid, ""))
             bucket.addChild(item)
             if session.id == current:
                 current_item = item
