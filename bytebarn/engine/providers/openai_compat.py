@@ -17,6 +17,7 @@ from .base import (
     ModelRequest,
     Msg,
     RetryableProviderError,
+    retry_after_from,
     TextDelta,
     ToolCallDelta,
     ToolCallEnd,
@@ -111,11 +112,11 @@ class OpenAICompatProvider:
             stream = await self._client.chat.completions.create(**kwargs)
         except openai.APIStatusError as exc:
             if exc.status_code == 429 or exc.status_code >= 500:
-                raise RetryableProviderError(str(exc)) from exc
+                raise RetryableProviderError(str(exc), retry_after_from(exc)) from exc
             yield ErrorEv(str(exc))
             return
         except openai.APIConnectionError as exc:
-            raise RetryableProviderError(str(exc)) from exc
+            raise RetryableProviderError(str(exc), retry_after_from(exc)) from exc
 
         tokens_in = 0
         tokens_out = 0
@@ -149,7 +150,7 @@ class OpenAICompatProvider:
                         "tool_use" if choice.finish_reason == "tool_calls" else choice.finish_reason
                     )
         except openai.APIConnectionError as exc:
-            raise RetryableProviderError(str(exc)) from exc
+            raise RetryableProviderError(str(exc), retry_after_from(exc)) from exc
         for call_id in open_calls.values():
             yield ToolCallEnd(call_id)
         yield Usage(tokens_in, tokens_out)

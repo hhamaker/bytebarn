@@ -19,6 +19,9 @@ dependencies = [
     "boto3>=1.34",
 ]
 
+[project.scripts]
+bytebarn = "bytebarn.main:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",

@@ -14,6 +14,7 @@ from .base import (
     Msg,
     ReasoningDelta,
     RetryableProviderError,
+    retry_after_from,
     TextDelta,
     ToolCallDelta,
     ToolCallEnd,
@@ -100,11 +101,11 @@ class AnthropicProvider:
             stream = await self._client.messages.create(stream=True, **kwargs)
         except anthropic.APIStatusError as exc:
             if exc.status_code == 429 or exc.status_code >= 500:
-                raise RetryableProviderError(str(exc)) from exc
+                raise RetryableProviderError(str(exc), retry_after_from(exc)) from exc
             yield ErrorEv(str(exc))
             return
         except anthropic.APIConnectionError as exc:
-            raise RetryableProviderError(str(exc)) from exc
+            raise RetryableProviderError(str(exc), retry_after_from(exc)) from exc
 
         block_types: dict[int, str] = {}
         block_call_ids: dict[int, str] = {}
@@ -141,6 +142,6 @@ class AnthropicProvider:
                         stop_reason = event.delta.stop_reason
                     tokens_out = event.usage.output_tokens or tokens_out
         except anthropic.APIConnectionError as exc:
-            raise RetryableProviderError(str(exc)) from exc
+            raise RetryableProviderError(str(exc), retry_after_from(exc)) from exc
         yield Usage(tokens_in, tokens_out)
         yield Done(stop_reason)

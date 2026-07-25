@@ -219,6 +219,16 @@ def history_to_messages(history: list[tuple[Any, list[Any]]]) -> list[Msg]:
             msgs.append(Msg("assistant", content))
         if results:
             msgs.append(Msg("user", results))
+    # a trailing assistant message (partial text from a mid-stream failure)
+    # reads as "prefill" to the API, which newer Claude models reject —
+    # close the conversation with a user turn so retries stay valid
+    if msgs and msgs[-1].role == "assistant":
+        msgs.append(Msg("user", [{
+            "type": "text",
+            "text": "[Your previous reply was cut off mid-stream. Continue"
+                    " from where it stopped — or restart the reply cleanly"
+                    " if that reads better.]",
+        }]))
     return msgs
 
 
@@ -234,6 +244,9 @@ def _hard_failure(error: str) -> tuple[bool, bool]:
         "insufficient balance", "insufficient_quota", "exceeded your current quota",
         "credit", "billing", "payment required", "402",
         "invalid api key", "invalid_api_key", "invalid x-api-key", "401",
+        # Claude subscription window exhausted (overage disabled): every
+        # further request fails until the window resets — switch providers
+        "out of extra usage",
     ))
     model_dead = any(s in e for s in (
         "model_not_found", "does not exist", "model not found", "404",
@@ -303,7 +316,13 @@ class Runner:
         fb_conf = (engine.config.model_extra or {}).get("model_fallback") or {}
         fb_enabled = bool(fb_conf.get("enabled", True))
         fb_after = max(1, int(fb_conf.get("after", 2)))
+        rl_wait_base = float(fb_conf.get("rate_limit_wait", 20.0))
+        # output-token reservation: subscription rate limiting reserves the
+        # full max_tokens up front, so a greedy 32k ask gets rejected when
+        # the usage window is half full — 16k is plenty for coding turns
+        max_out = int((engine.config.model_extra or {}).get("max_tokens", 16_000))
         failures = 0
+        rate_limit_waits = 0
         models_tried = [model]
         dead_providers: set[str] = set()
 
@@ -319,7 +338,7 @@ class Runner:
                 temperature=agent.temperature,
                 top_p=agent.top_p,
                 thinking=agent.thinking,
-                max_tokens=min(info.max_output, 32_000),
+                max_tokens=min(info.max_output, max_out),
             )
             message = await store.add_message(
                 session.id, "assistant", model=model_id, provider=provider.name
@@ -327,6 +346,27 @@ class Runner:
             outcome = await self._stream_turn(session, message.id, provider, req, model_id, info)
             if outcome["error"]:
                 await store.update_message(message.id, error=outcome["error"])
+                lowered_err = outcome["error"].lower()
+                # rate limits are transient by definition (often a per-minute
+                # account window shared with other Claude apps) — wait them
+                # out patiently instead of burning fallback strikes
+                if ("rate_limit" in lowered_err or "429" in outcome["error"]) \
+                        and rate_limit_waits < 3:
+                    rate_limit_waits += 1
+                    wait_s = min(rl_wait_base * rate_limit_waits, 90.0)
+                    await self._notice(
+                        session, message.id,
+                        f"⏳ {model} is rate-limited — waiting {wait_s:.0f}s and"
+                        f" retrying ({rate_limit_waits}/3). This is the account's"
+                        " per-minute limit, shared with any other Claude apps"
+                        " running right now.",
+                    )
+                    try:  # abort-aware wait: Esc still stops the run instantly
+                        await asyncio.wait_for(handle.abort.wait(), timeout=wait_s)
+                        raise asyncio.CancelledError
+                    except asyncio.TimeoutError:
+                        pass
+                    continue
                 failures += 1
                 skip_retry, provider_dead = _hard_failure(outcome["error"])
                 if provider_dead:
@@ -380,6 +420,7 @@ class Runner:
                 self.engine.bus.emit(SessionUpdated(session_id=session.id))
                 return
             failures = 0
+            rate_limit_waits = 0
             if not outcome["tool_calls"]:
                 if not outcome.get("had_text"):
                     # a 200 with no content renders as nothing — say so

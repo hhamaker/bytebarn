@@ -285,3 +285,66 @@ async def test_thinking_maps_to_anthropic_budget():
     assert captured["thinking"] == {"type": "enabled", "budget_tokens": 8192}
     assert captured["max_tokens"] > 8192
     assert "temperature" not in captured  # API forbids it with thinking
+
+
+async def test_retry_honors_server_retry_after():
+    from types import SimpleNamespace
+
+    from bytebarn.engine.providers.base import (
+        ModelRequest, RetryableProviderError, retry_after_from, stream_with_retry,
+    )
+
+    # header extraction: valid, missing, absurd
+    exc = SimpleNamespace(response=SimpleNamespace(headers={"retry-after": "17"}))
+    assert retry_after_from(exc) == 17.0
+    assert retry_after_from(SimpleNamespace()) is None
+    too_long = SimpleNamespace(response=SimpleNamespace(headers={"retry-after": "9999"}))
+    assert retry_after_from(too_long) is None
+
+    # the loop waits at least the hinted window before retrying
+    class Flaky:
+        name = "flaky"
+        calls = 0
+
+        async def stream(self, req):
+            Flaky.calls += 1
+            if Flaky.calls == 1:
+                raise RetryableProviderError("429", retry_after=0.2)
+            from bytebarn.engine.providers.base import Done, TextDelta
+            yield TextDelta("ok")
+            yield Done("end_turn")
+
+    delays = []
+    req = ModelRequest(model_id="m", system="s", messages=[])
+    events = [e async for e in stream_with_retry(
+        Flaky(), req, on_retry=lambda a, d: delays.append(d), base_delay=0.01)]
+    assert any(type(e).__name__ == "TextDelta" for e in events)
+    assert delays and delays[0] >= 0.2  # hint outranks the tiny base backoff
+
+
+def test_history_never_ends_with_assistant_prefill():
+    """A partial assistant turn (mid-stream failure) must not leave the
+    outgoing conversation ending on an assistant message — newer Claude
+    models reject that as unsupported prefill (400)."""
+    from types import SimpleNamespace
+
+    from bytebarn.engine.runner import history_to_messages
+
+    history = [
+        (SimpleNamespace(role="user"),
+         [SimpleNamespace(type="text", data={"text": "fix the bug"})]),
+        (SimpleNamespace(role="assistant"),
+         [SimpleNamespace(type="text", data={"text": "Looking at the co"})]),  # cut off
+    ]
+    msgs = history_to_messages(history)
+    assert msgs[-1].role == "user"
+    assert "cut off" in msgs[-1].content[0]["text"]
+
+    # tool-result turns already end with user — no nudge appended
+    history[1][1].append(SimpleNamespace(
+        id="p-tool", type="tool",
+        data={"tool": "bash", "call_id": "c1",
+              "input": {}, "output": "done", "status": "done"}))
+    msgs = history_to_messages(history)
+    assert msgs[-1].role == "user"
+    assert msgs[-1].content[0]["type"] == "tool_result"

@@ -572,3 +572,64 @@ async def test_session_directory_overrides_tool_cwd(engine, tmp_path):
     history = await engine.store.session_parts(session.id)
     tool_parts = [p for _, parts in history for p in parts if p.type == "tool"]
     assert tool_parts and "marker.txt" in tool_parts[0].data["output"]
+
+
+async def test_rate_limit_waits_instead_of_fallback(engine):
+    """429s wait out the window on the SAME model — no fallback strikes,
+    calm ⏳ message, and success once the limit clears."""
+    from bytebarn.engine.providers.base import ErrorEv
+    from bytebarn.engine.providers.fake import text_turn
+
+    engine.config.model_extra["model_fallback"] = {"rate_limit_wait": 0.02}
+
+    calls = {"n": 0}
+
+    class RateLimitedTwice:
+        name = "fake"
+
+        async def stream(self, req):
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                yield ErrorEv("Error code: 429 - rate_limit_error")
+                return
+            for event in text_turn("made it through the window"):
+                yield event
+
+    engine.providers.register("fake", RateLimitedTwice())
+    engine.fallback_model = lambda model, exclude: (_ for _ in ()).throw(
+        AssertionError("fallback must not be consulted for rate limits"))
+
+    session = await engine.new_session()
+    await _run_and_wait(engine, session, "hi")
+
+    history = await _collect(engine, session.id)
+    texts = [p.data.get("text", "")
+             for m, parts in history if m.role == "assistant" for p in parts if p.type == "text"]
+    waits = [t for t in texts if t.startswith("⏳")]
+    assert len(waits) == 2 and "rate-limited" in waits[0]
+    assert not any("switching to comparable" in t for t in texts)
+    assert not any("failed (1/2)" in t for t in texts)
+    assert any("made it through the window" in t for t in texts)
+    # session model untouched (a fallback switch would have rewritten it)
+    refreshed = await engine.store.get_session(session.id)
+    assert refreshed.model == ""
+
+
+def test_out_of_extra_usage_is_hard_failure():
+    from bytebarn.engine.runner import _hard_failure
+
+    skip_retry, provider_dead = _hard_failure(
+        "Error code: 400 - You're out of extra usage. Add more at claude.ai")
+    assert skip_retry and provider_dead
+
+
+async def test_max_tokens_configurable_and_capped(engine):
+    from bytebarn.engine.providers.fake import FakeProvider, text_turn
+
+    engine.config.model_extra["max_tokens"] = 1234
+    provider = FakeProvider(lambda req: text_turn("ok"))
+    engine.providers.register("fake", provider)
+
+    session = await engine.new_session()
+    await _run_and_wait(engine, session, "hi")
+    assert provider.requests[-1].max_tokens == 1234

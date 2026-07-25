@@ -1,14 +1,19 @@
 # ByteBarn 🛖
 
+[![CI](https://github.com/hhamaker/bytebarn/actions/workflows/ci.yml/badge.svg)](https://github.com/hhamaker/bytebarn/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/bytebarn)](https://pypi.org/project/bytebarn/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 A local desktop harness for AI coding agents. Open a project, type a prompt
 or a `/goal`, and a barn crew of pixel-art farm animals gets to work on your
 codebase.
 
 ![The barn crew, ready for a goal](docs/media/welcome-dark.png)
 
-Everything runs locally: no cloud backend, no accounts, no telemetry. The
-only network traffic is to the LLM providers you configure (16 supported,
-including Ollama and LM Studio for fully-offline use).
+The app itself is fully local — no cloud backend, no accounts, no
+telemetry. Connect it to any of 16 LLM providers (Anthropic, OpenAI, Groq,
+Bedrock, OpenRouter, and more), or skip the cloud entirely and run models
+on your own machine via Ollama or LM Studio.
 
 ![A session: chat, tool calls, live diffing](docs/media/session-dark.png)
 
@@ -31,29 +36,58 @@ including Ollama and LM Studio for fully-offline use).
 
 ## Quick start
 
+One line (macOS / Linux):
+
 ```bash
+curl -fsSL https://raw.githubusercontent.com/hhamaker/bytebarn/main/scripts/install.sh | sh
+bytebarn
+```
+
+The script finds Python 3.12+, installs into an isolated venv at
+`~/.bytebarn/venv`, and puts `bytebarn` on your PATH. Re-run it to upgrade;
+it's [40 lines, read it here](scripts/install.sh).
+
+Prefer your own tooling? `pip install bytebarn` does the same thing. macOS
+users can also grab `ByteBarn.app` from the
+[latest release](https://github.com/hhamaker/bytebarn/releases) — drag to
+Applications, open, done.
+
+On first launch, connect a provider (**⚡ providers** in the status bar —
+paste an API key or log in via web) and start typing. Ollama and LM Studio
+work with no key at all.
+
+<details>
+<summary>Running from source / contributing</summary>
+
+```bash
+git clone https://github.com/hhamaker/bytebarn && cd bytebarn
 python3.12 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
+.venv/bin/bytebarn                          # or: -m bytebarn.main /path/to/project
 
-.venv/bin/python -m bytebarn.main          # opens on your last-used folder
-```
-
-Connect providers in-app (**⚡ providers**) — or export `ANTHROPIC_API_KEY`
-etc. before launching. Each session picks its own working directory via the
-**📁** button in the header (a path argument still works: `... bytebarn.main
-/path/to/project`).
-
-No-GUI engine harness:
-
-```bash
+# no-GUI engine harness
 .venv/bin/python -m bytebarn.cli "explain this repo" --project /path/to/project
-```
 
-Tests (no network, no API keys needed):
-
-```bash
+# tests — no network, no API keys needed
 QT_QPA_PLATFORM=offscreen .venv/bin/pytest
 ```
+
+</details>
+
+## Requirements
+
+- **Python 3.12+** (the install script checks and tells you how to get it).
+- **~600 MB disk** — Qt (PySide6 + WebEngine) is the bulk of it.
+- **macOS 12+** — the platform ByteBarn is built and tested on. The
+  prebuilt `ByteBarn.app` is Apple Silicon only; Intel Macs should install
+  via pip. Linux and Windows are **experimental**: the test suite passes on
+  Linux in CI, but the GUI gets no regular testing there (Linux needs the
+  usual Qt runtime libs — on minimal Debian/Ubuntu:
+  `apt install libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0`).
+- **A model to talk to**: an API key for any supported provider, or a local
+  server (Ollama / LM Studio). Agents drive everything through tool calls,
+  so local models must support function calling — Qwen, Llama 3.1+, and
+  similar work well; tiny chat-only models will disappoint.
 
 ## The signature flow
 
@@ -63,13 +97,16 @@ Type `/goal add a --verbose flag to the CLI and test it` in the prompt bar:
 2. It casts a crew from the available subagents (`general`, `explore`, plus
    any you drop into `.bytebarn/agent/*.md`) and delegates tasks — in parallel
    when independent.
-3. The **crew stage** appears: one pixel-art critter per subagent, roped to
-   the crowned orchestrator, with a live headline (working/done/failed/queued
-   counts + elapsed time + the todo in progress) and a per-critter status
-   line (live tool activity, ✓ done, ✗ failed badges). Known agent types get
-   signature looks (explore is a bunny, testers wear goggles, reviewers wear
-   glasses, planners wear hats…); custom agents get a stable species +
-   accessory from their name. Click a critter to open its session.
+3. The **crew stage** appears: one pixel-art farm animal per subagent,
+   roped to the crowned cow (the orchestrator), with a live headline
+   (working/done/failed/queued counts + elapsed time + the todo in progress)
+   and a per-animal status line (live tool activity, ✓ done, ✗ failed
+   badges). Known agent types get signature looks (explore is a sheep,
+   testers are pigs in goggles, reviewers wear glasses, planners wear
+   hats…); custom agents get a stable species + accessory from their name.
+   Prefer woodland critters, anime characters, all dogs, or all cats? Swap
+   the whole crew's style in Settings. Click any animal to open its
+   session.
 4. The orchestrator verifies results and reports a per-agent summary.
 
 ## Configuration
@@ -84,7 +121,7 @@ tolerated; in-app edits patch files key-by-key, preserving your comments.
     "anthropic": { "api_key_env": "ANTHROPIC_API_KEY" },
     "lmstudio":  { "base_url": "http://localhost:1234/v1", "api": "openai" }
   },
-  "model": "anthropic/claude-sonnet-4-5",
+  "model": "anthropic/claude-sonnet-5",
   "small_model": "anthropic/claude-haiku-4-5",   // titles, summaries, compaction
   "agent": { "build": { "temperature": 0.2 } },   // agent editor writes here
   "permission": {
@@ -123,8 +160,8 @@ Pick a provider, paste a key or **🌐 log in via web**, hit *Test connection*:
 
 Web login flavors: xAI and Copilot show a short code to confirm in the
 browser (auto-copied to your clipboard; the dialog closes itself on
-approval). Anthropic opens claude.ai's consent page, which shows a code you
-paste back. Tokens refresh automatically. Keys go to `~/.bytebarn/auth.json`
+approval). Anthropic opens claude.ai's consent page (it may ask you to
+sign in again first), then shows a code you paste back. Tokens refresh automatically. Keys go to `~/.bytebarn/auth.json`
 (0600) — never project config. Model pickers only list models from
 connected providers.
 
@@ -156,11 +193,11 @@ You are the TESTER. ...
 ```
 
 The orchestrator sees every visible subagent's description in its task tool
-and picks accordingly. A file named after a built-in (`build`, `plan`,
-`orchestrator`, `general`, `explore`) merges over it.
+and picks accordingly. A file named after a built-in (`build`, `plan`, `orchestrator`,
+`general`, `explore`, `chat`, `research`) merges over it.
 
 Prefer a GUI? **🐾 agents** in the status bar opens the agent editor with a
-live critter preview per agent. Sessions are managed from the sidebar:
+live sprite preview per agent. Sessions are managed from the sidebar:
 right-click one to **close** (archive) or **delete** it, subagents and all.
 
 Custom commands: `.bytebarn/command/foo.md` with a `$ARGUMENTS` template →
@@ -202,9 +239,10 @@ session picks its own working directory from there.
 
 ## Platform support
 
-Developed and tested on macOS. Linux and Windows should work (pure
-Python + Qt; CI runs the suite on Linux) but get less day-to-day testing —
-issue reports welcome.
+macOS-first: developed, tested, and packaged for macOS. Linux and Windows
+are experimental — pure Python + Qt, and CI runs the full suite on Linux,
+but the GUI sees no regular use there yet. If you run it on either, an
+issue report (good or bad) genuinely helps.
 
 ## License
 

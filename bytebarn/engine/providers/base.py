@@ -105,7 +105,23 @@ class Provider(Protocol):
 
 
 class RetryableProviderError(Exception):
-    pass
+    def __init__(self, message: str, retry_after: float | None = None):
+        super().__init__(message)
+        # server-suggested wait (Retry-After) — the retry loop honors it
+        self.retry_after = retry_after
+
+
+def retry_after_from(exc) -> float | None:
+    """Pull a usable Retry-After (seconds) off an SDK exception, if any."""
+    try:
+        value = exc.response.headers.get("retry-after")
+        if value is not None:
+            seconds = float(value)
+            if 0 < seconds <= 300:
+                return seconds
+    except (AttributeError, TypeError, ValueError):
+        pass
+    return None
 
 
 # -- retry wrapper ----------------------------------------------------------
@@ -137,6 +153,9 @@ async def stream_with_retry(
                 yield ErrorEv(str(exc), retryable=True)
                 return
             delay = base_delay * (2 ** (attempt - 1)) * (0.5 + random.random())
+            hinted = getattr(exc, "retry_after", None)
+            if hinted:
+                delay = max(delay, hinted)  # don't retry into a known window
             if on_retry:
                 on_retry(attempt, delay)
             await asyncio.sleep(delay)
