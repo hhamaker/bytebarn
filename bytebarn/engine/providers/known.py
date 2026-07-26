@@ -40,10 +40,12 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
         ProviderSpec(
             id="anthropic", label="Anthropic (Claude)", api="anthropic",
             key_env="ANTHROPIC_API_KEY", key_url="https://console.anthropic.com/settings/keys",
-            oauth=True, oauth_kind="paste",
+            # NB: no web login. Claude Pro/Max OAuth tokens are gated to
+            # Anthropic's own Claude Code — the API rejects agent-shaped
+            # requests from third-party clients. Use a pay-as-you-go API key.
             models=("claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5",
                     "claude-fable-5"),
-            note="Log in with a Claude Pro/Max account, or paste an API key.",
+            note="Paste an API key from console.anthropic.com (pay-as-you-go).",
         ),
         ProviderSpec(
             id="openai", label="OpenAI",
@@ -90,6 +92,20 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
             key_env="DEEPSEEK_API_KEY", key_url="https://platform.deepseek.com/api_keys",
             models=("deepseek-v4-flash", "deepseek-v4-pro"),
             note="deepseek-chat/deepseek-reasoner aliases retire 2026-07-24.",
+        ),
+        ProviderSpec(
+            id="zai", label="Z.ai (GLM)", base_url="https://api.z.ai/api/paas/v4",
+            key_env="ZAI_API_KEY", key_url="https://z.ai/manage-apikey/apikey-list",
+            models=("glm-5.1", "glm-5-turbo", "glm-4.7", "glm-4.7-flash"),
+            note="Zhipu's GLM models (OpenAI-compatible). glm-4.7-flash is free.",
+        ),
+        ProviderSpec(
+            id="moonshot", label="Moonshot AI (Kimi)", base_url="https://api.moonshot.ai/v1",
+            key_env="MOONSHOT_API_KEY", key_url="https://platform.moonshot.ai/console/api-keys",
+            models=("kimi-k2-thinking", "kimi-k2-turbo-preview",
+                    "kimi-k2-0905-preview", "kimi-latest", "moonshot-v1-128k"),
+            note="Kimi K2 (OpenAI-compatible). kimi-k2-thinking is the reasoning "
+                 "model. Use api.moonshot.cn base_url for the China endpoint.",
         ),
         ProviderSpec(
             id="together", label="Together AI", base_url="https://api.together.xyz/v1",

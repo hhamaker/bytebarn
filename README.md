@@ -11,8 +11,8 @@ codebase.
 ![The barn crew, ready for a goal](docs/media/welcome-dark.png)
 
 The app itself is fully local — no cloud backend, no accounts, no
-telemetry. Connect it to any of 16 LLM providers (Anthropic, OpenAI, Groq,
-Bedrock, OpenRouter, and more), or skip the cloud entirely and run models
+telemetry. Connect it to any of 17 LLM providers (Anthropic, OpenAI, Groq,
+Bedrock, OpenRouter, Z.ai, and more), or skip the cloud entirely and run models
 on your own machine via Ollama or LM Studio.
 
 ![A session: chat, tool calls, live diffing](docs/media/session-dark.png)
@@ -141,7 +141,7 @@ Pick a provider, paste a key or **🌐 log in via web**, hit *Test connection*:
 
 | Provider | Auth | Notes |
 |---|---|---|
-| Anthropic (Claude) | API key or web login | sign in with a Claude Pro/Max account |
+| Anthropic (Claude) | API key / `ANTHROPIC_API_KEY` | pay-as-you-go key from console.anthropic.com |
 | OpenAI | API key / `OPENAI_API_KEY` | |
 | xAI (Grok) | API key or web login | browser code confirmation |
 | Groq | API key / `GROQ_API_KEY` | |
@@ -149,6 +149,7 @@ Pick a provider, paste a key or **🌐 log in via web**, hit *Test connection*:
 | Google (Gemini) | API key / `GEMINI_API_KEY` | |
 | Mistral | API key / `MISTRAL_API_KEY` | |
 | DeepSeek | API key / `DEEPSEEK_API_KEY` | |
+| Z.ai (GLM) | API key / `ZAI_API_KEY` | Zhipu GLM models; glm-4.7-flash is free |
 | Together AI | API key / `TOGETHER_API_KEY` | |
 | Cerebras | API key / `CEREBRAS_API_KEY` | |
 | AWS Bedrock | Access Key ID + Secret Access Key (or AWS chain) | region field / `AWS_REGION`; boto3 optional for live lists |
@@ -158,12 +159,14 @@ Pick a provider, paste a key or **🌐 log in via web**, hit *Test connection*:
 | LM Studio | none | local, `http://localhost:1234/v1` |
 | GitHub Copilot | web login | GitHub device code — needs a Copilot subscription |
 
-Web login flavors: xAI and Copilot show a short code to confirm in the
-browser (auto-copied to your clipboard; the dialog closes itself on
-approval). Anthropic opens claude.ai's consent page (it may ask you to
-sign in again first), then shows a code you paste back. Tokens refresh automatically. Keys go to `~/.bytebarn/auth.json`
-(0600) — never project config. Model pickers only list models from
-connected providers.
+Web login flavors: xAI and GitHub Copilot show a short code to confirm in
+the browser (auto-copied to your clipboard; the dialog closes itself on
+approval), and their tokens refresh automatically. Anthropic is API-key
+only — Claude Pro/Max subscription logins are locked to Anthropic's own
+Claude Code and won't drive a third-party app, so use a pay-as-you-go key
+from console.anthropic.com. Keys go to `~/.bytebarn/auth.json` (0600) —
+never project config. Model pickers only list models from connected
+providers.
 
 ### Model fallback
 

@@ -392,8 +392,13 @@ class Runner:
                         alt = candidate
                         break
                 if alt:
-                    why = "is out of credits or unavailable" if skip_retry \
-                        else f"failed {failures}×"
+                    if "out of extra usage" in outcome["error"].lower():
+                        why = ("hit your Claude plan's usage limit (it refills"
+                               " on the next usage window)")
+                    elif skip_retry:
+                        why = "is out of credits or unavailable"
+                    else:
+                        why = f"failed {failures}×"
                     await self._notice(
                         session, message.id,
                         f"⤷ {model} {why} — switching to comparable"

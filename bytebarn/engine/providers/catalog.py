@@ -76,6 +76,17 @@ CATALOG: dict[str, ModelInfo] = {
     "deepseek-v4-pro": ModelInfo(1_000_000, 131_072, True, 0.435, 0.87),
     "deepseek-chat": ModelInfo(64_000, 8192, True, 0.27, 1.1),
     "deepseek-reasoner": ModelInfo(64_000, 65_536, True, 0.55, 2.19),
+    # Z.ai (GLM) — 200k context, strong tool use; prices approximate
+    "glm-5.1": ModelInfo(200_000, 65_536, True, 0.6, 2.2),
+    "glm-5-turbo": ModelInfo(200_000, 65_536, True, 0.2, 0.6),
+    "glm-4.7": ModelInfo(200_000, 65_536, True, 0.4, 1.6),
+    "glm-4.7-flash": ModelInfo(128_000, 32_768, True, 0.0, 0.0),  # free tier
+    # Moonshot AI (Kimi K2; 256k context on K2, prices approximate)
+    "kimi-k2-thinking": ModelInfo(262_144, 16_384, True, 0.6, 2.5),
+    "kimi-k2-turbo-preview": ModelInfo(262_144, 16_384, True, 1.15, 8.0),
+    "kimi-k2-0905-preview": ModelInfo(262_144, 16_384, True, 0.6, 2.5),
+    "kimi-latest": ModelInfo(131_072, 16_384, True, 0.6, 2.5),
+    "moonshot-v1-128k": ModelInfo(131_072, 16_384, True, 2.0, 5.0),
     # Together
     "meta-llama/Llama-3.3-70B-Instruct-Turbo": ModelInfo(131_072, 8192, True, 0.88, 0.88),
     "Qwen/Qwen2.5-Coder-32B-Instruct": ModelInfo(32_768, 8192, True, 0.8, 0.8),

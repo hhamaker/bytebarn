@@ -117,6 +117,28 @@ def test_registry_falls_back_to_known_provider(tmp_path):
     assert model_id == "llama-3.3-70b-versatile"
 
 
+def test_registry_resolves_moonshot_kimi(tmp_path, monkeypatch):
+    from bytebarn.engine.providers.known import KNOWN_PROVIDERS
+    from bytebarn.engine.providers.openai_compat import OpenAICompatProvider
+
+    monkeypatch.delenv("MOONSHOT_API_KEY", raising=False)
+    spec = KNOWN_PROVIDERS["moonshot"]
+    assert spec.api == "openai"
+    assert spec.base_url == "https://api.moonshot.ai/v1"
+    assert "kimi-k2-thinking" in spec.models
+
+    cfg = Config(provider={})
+    reg = ProviderRegistry(cfg, global_dir=tmp_path)
+    reg.auth.set("moonshot", {"type": "api", "key": "sk-moon"})
+    provider, model_id, info = reg.resolve("moonshot/kimi-k2-thinking")
+    assert isinstance(provider, OpenAICompatProvider)
+    assert provider.name == "moonshot"
+    assert model_id == "kimi-k2-thinking"
+    assert str(provider._client.base_url).startswith("https://api.moonshot.ai/v1")
+    assert provider._client.api_key == "sk-moon"
+    assert info.context_window == 262_144  # catalog entry present
+
+
 def test_registry_uses_auth_store_api_key(tmp_path, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     cfg = Config()  # anthropic in DEFAULT_CONFIG with api_key_env only
@@ -348,7 +370,10 @@ def test_known_providers_and_available_models(tmp_path, monkeypatch):
     assert connection_status(KNOWN_PROVIDERS["ollama"], cfg, auth) == "local"
     assert KNOWN_PROVIDERS["github-copilot"].oauth_kind == "device"
     assert KNOWN_PROVIDERS["xai"].oauth_kind == "device"
-    assert KNOWN_PROVIDERS["anthropic"].oauth_kind == "paste"
+    # Anthropic offers NO web login: Pro/Max OAuth tokens are gated to
+    # Anthropic's own Claude Code and reject third-party agent traffic
+    assert not KNOWN_PROVIDERS["anthropic"].oauth
+    assert KNOWN_PROVIDERS["github-copilot"].oauth and KNOWN_PROVIDERS["xai"].oauth
 
     auth.set("groq", {"type": "api", "key": "gsk-x"})
     assert connection_status(KNOWN_PROVIDERS["groq"], cfg, auth) == "connected-key"
