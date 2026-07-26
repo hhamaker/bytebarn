@@ -30,6 +30,7 @@ _ID_ROLE = Qt.UserRole          # session id or project id
 _KIND_ROLE = Qt.UserRole + 1    # "session" | "project" | "header"
 
 _PROJECTS_HEADER_ID = "__projects__"
+_TIMELINE_HEADER_ID = "__timeline__"
 
 
 def relative_time(ts: float) -> str:
@@ -201,10 +202,14 @@ class SessionList(QWidget):
         agent_colors: dict[str, str] | None = None,
         default_project_id: str = "",
     ) -> None:
-        """Claude-style sidebar: every project is a row with its sessions
-        nested; Recents is a time-bucketed view of all sessions. A session
-        always appears under its project no matter which folder the app is
-        open on (the old default-project carve-out made rows vanish)."""
+        """Claude-style sidebar: two independently collapsible sections. The
+        Projects section lists each project as a row with its sessions nested;
+        the Timeline section is a time-bucketed view of all sessions. Both
+        section headers hide/expand as a whole (chevron on the header row).
+        Individual projects start collapsed so the page doesn't dump every
+        session on open. A session always appears under its project no matter
+        which folder the app is open on (the old default-project carve-out made
+        rows vanish)."""
         expanded, known = self._expansion_state()
 
         def keep_open(node_id: str) -> bool:
@@ -248,30 +253,38 @@ class SessionList(QWidget):
                     if session.id == current:
                         current_item = child
                         has_current = True
-                item.setExpanded(has_current or keep_open(project.id))
+                # projects no longer auto-expand; only the one holding the
+                # current session, or one the user explicitly opened before
+                item.setExpanded(has_current or project.id in expanded)
             proj_header.setExpanded(keep_open(_PROJECTS_HEADER_ID))
 
-        # Recents: every top-level session, newest first, under time-bucket
-        # headers. Subagent children are hidden everywhere.
+        # Timeline: every top-level session, newest first, under time-bucket
+        # headers, all wrapped in one collapsible Timeline header so the whole
+        # section hides/expands as a unit. Subagent children are hidden.
         recents = sorted(
             ((s, pid) for pid in sessions_by_project for s in top_level(pid)),
             key=lambda pair: pair[0].updated_at, reverse=True)
-        now = time.time()
-        buckets: dict[str, QTreeWidgetItem] = {}
-        for session, pid in recents:
-            label = bucket_label(session.updated_at, now)
-            bucket = buckets.get(label)
-            if bucket is None:
-                bucket = self._header_item(label)
-                buckets[label] = bucket
-                self.tree.addTopLevelItem(bucket)
-                bucket.setExpanded(True)
-            item = self._session_item(
-                session, running, agent_colors,
-                project_names.get(pid, ""))
-            bucket.addChild(item)
-            if session.id == current:
-                current_item = item
+        if recents:
+            timeline_header = self._header_item(f"Timeline  ({len(recents)})")
+            timeline_header.setData(0, _ID_ROLE, _TIMELINE_HEADER_ID)
+            self.tree.addTopLevelItem(timeline_header)
+            now = time.time()
+            buckets: dict[str, QTreeWidgetItem] = {}
+            for session, pid in recents:
+                label = bucket_label(session.updated_at, now)
+                bucket = buckets.get(label)
+                if bucket is None:
+                    bucket = self._header_item(label)
+                    buckets[label] = bucket
+                    timeline_header.addChild(bucket)
+                    bucket.setExpanded(True)
+                item = self._session_item(
+                    session, running, agent_colors,
+                    project_names.get(pid, ""))
+                bucket.addChild(item)
+                if session.id == current:
+                    current_item = item
+            timeline_header.setExpanded(keep_open(_TIMELINE_HEADER_ID))
         if current_item is not None:
             self.tree.setCurrentItem(current_item)
 
@@ -396,6 +409,12 @@ class SessionList(QWidget):
                 if (sid := self._session_id(it))]
 
     def _on_click(self, item: QTreeWidgetItem) -> None:
+        if item.data(0, _KIND_ROLE) == "header":
+            # section headers (Projects / Timeline / buckets) have no branch
+            # arrow at top level — clicking the row toggles the whole section
+            if item.childCount():
+                item.setExpanded(not item.isExpanded())
+            return
         sid = self._session_id(item)
         if sid:
             self.session_selected.emit(sid)

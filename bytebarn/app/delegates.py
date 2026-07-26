@@ -76,6 +76,9 @@ class SessionRowDelegate(QStyledItemDelegate):
         painter.setRenderHint(QPainter.Antialiasing)
         rect = option.rect.adjusted(self.PAD, 0, -self.PAD, 0)
         label = (index.data(TITLE_ROLE) or index.data(Qt.DisplayRole) or "").upper()
+        # collapsible section headers get a chevron; leaf/empty headers don't
+        if option.state & QStyle.State_Children:
+            label = ("▾ " if option.state & QStyle.State_Open else "▸ ") + label
         painter.setFont(_mono(9.0, bold=True))
         painter.setPen(_muted(option))
         metrics = QFontMetrics(painter.font())

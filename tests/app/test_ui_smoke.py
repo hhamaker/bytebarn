@@ -377,7 +377,8 @@ def test_session_list_keyboard_navigation_selects(qapp):
     a.updated_at, b.updated_at, c.updated_at = now, now - 60, now - 120
     sl.populate([_proj()], {"p1": [a, b, c]}, set(), "a")
     assert picked == []  # populate blocks signals
-    bucket = sl.tree.topLevelItem(1)  # [0] is the Projects header
+    # [0] is the Projects header, [1] is the Timeline header; buckets nest under
+    bucket = sl.tree.topLevelItem(1).child(0)
     assert bucket.childCount() == 3
     sl.tree.setCurrentItem(bucket.child(1))
     assert picked == ["b"]
@@ -394,7 +395,7 @@ def test_session_list_sessions_stay_within_projects(qapp):
     projs = [_proj("p1", "Alpha"), _proj("p2", "Beta")]
     sl.populate(projs, {"p1": [_sess("a")], "p2": [_sess("b")]}, set(), "b",
                 default_project_id="p1")
-    # Projects section header + one "Today" bucket
+    # Projects section header + Timeline section header
     assert sl.tree.topLevelItemCount() == 2
     proj_header = sl.tree.topLevelItem(0)
     assert proj_header.data(0, Qt.UserRole + 1) == "header"
@@ -408,8 +409,11 @@ def test_session_list_sessions_stay_within_projects(qapp):
     assert [beta.child(i).data(0, Qt.UserRole)
             for i in range(beta.childCount())] == ["b"]
     assert beta.isExpanded()  # contains the current session
-    # Recents is a time view of everything
-    bucket = sl.tree.topLevelItem(1)
+    assert not alpha.isExpanded()  # other projects start collapsed
+    # Timeline is a time view of everything, under its own collapsible header
+    timeline = sl.tree.topLevelItem(1)
+    assert timeline.text(0).startswith("Timeline")
+    bucket = timeline.child(0)
     assert bucket.text(0) == "Today"
     ids = {bucket.child(i).data(0, Qt.UserRole) for i in range(bucket.childCount())}
     assert ids == {"a", "b"}
@@ -428,10 +432,14 @@ def test_session_list_buckets_by_recency(qapp):
     old = _sess("old")
     old.updated_at = _time.time() - 40 * 86400
     sl.populate([_proj()], {"p1": [_sess("new"), old]}, set(), "new")
-    labels = [sl.tree.topLevelItem(i).text(0)
-              for i in range(sl.tree.topLevelItemCount())]
-    assert labels[0].startswith("Projects")
-    assert labels[1:] == ["Today", "Older"]
+    top = [sl.tree.topLevelItem(i).text(0)
+           for i in range(sl.tree.topLevelItemCount())]
+    assert top[0].startswith("Projects")
+    assert top[1].startswith("Timeline")
+    timeline = sl.tree.topLevelItem(1)
+    bucket_labels = [timeline.child(i).text(0)
+                     for i in range(timeline.childCount())]
+    assert bucket_labels == ["Today", "Older"]
 
 
 def test_session_list_hides_subagent_children(qapp):
@@ -443,7 +451,7 @@ def test_session_list_hides_subagent_children(qapp):
     child = _sess("kid")
     child.parent_session_id = "a"
     sl.populate([_proj()], {"p1": [_sess("a"), child]}, set(), "a")
-    bucket = sl.tree.topLevelItem(1)  # [0] is the Projects header
+    bucket = sl.tree.topLevelItem(1).child(0)  # [0]=Projects, [1]=Timeline
     ids = {bucket.child(i).data(0, Qt.UserRole) for i in range(bucket.childCount())}
     assert ids == {"a"}
 
@@ -475,9 +483,56 @@ def test_session_list_double_click_opens_project(qapp):
     sl._on_double_click(beta)
     assert opened == ["p2"]
     # double-clicking a session does nothing
-    bucket = sl.tree.topLevelItem(1)
+    bucket = sl.tree.topLevelItem(1).child(0)  # [0]=Projects, [1]=Timeline
     sl._on_double_click(bucket.child(0))
     assert opened == ["p2"]
+
+
+def test_session_list_sections_collapse_independently(qapp):
+    from PySide6.QtCore import Qt
+
+    from bytebarn.app.session_list import (
+        SessionList, _PROJECTS_HEADER_ID, _TIMELINE_HEADER_ID,
+    )
+
+    sl = SessionList()
+    projs = [_proj("p1", "Alpha"), _proj("p2", "Beta")]
+    sl.populate(projs, {"p1": [_sess("a")], "p2": [_sess("b")]}, set(), "a",
+                default_project_id="p1")
+    proj_header = sl.tree.topLevelItem(0)
+    timeline = sl.tree.topLevelItem(1)
+    assert proj_header.data(0, Qt.UserRole) == _PROJECTS_HEADER_ID
+    assert timeline.data(0, Qt.UserRole) == _TIMELINE_HEADER_ID
+    # both sections default expanded; individual non-current projects collapsed
+    assert proj_header.isExpanded() and timeline.isExpanded()
+    assert not proj_header.child(1).isExpanded()  # Beta (no current session)
+
+    # clicking a section header toggles the whole section
+    sl._on_click(proj_header)
+    assert not proj_header.isExpanded()
+    sl._on_click(timeline)
+    assert not timeline.isExpanded()
+
+    # collapse state survives a repopulate (user intent is remembered)
+    sl.populate(projs, {"p1": [_sess("a")], "p2": [_sess("b")]}, set(), "a",
+                default_project_id="p1")
+    assert not sl.tree.topLevelItem(0).isExpanded()
+    assert not sl.tree.topLevelItem(1).isExpanded()
+
+
+def test_session_list_expanded_project_survives_repopulate(qapp):
+    from bytebarn.app.session_list import SessionList
+
+    sl = SessionList()
+    projs = [_proj("p1", "Alpha"), _proj("p2", "Beta")]
+    sl.populate(projs, {"p1": [_sess("a")], "p2": [_sess("b")]}, set(), "a",
+                default_project_id="p1")
+    beta = sl.tree.topLevelItem(0).child(1)
+    assert not beta.isExpanded()  # starts collapsed
+    beta.setExpanded(True)        # user opens it
+    sl.populate(projs, {"p1": [_sess("a")], "p2": [_sess("b")]}, set(), "a",
+                default_project_id="p1")
+    assert sl.tree.topLevelItem(0).child(1).isExpanded()  # stays open
 
 
 def test_crew_stage_stop_signal(qapp):
@@ -518,7 +573,7 @@ def test_session_list_multi_select_delete(qapp):
     emitted: list[list] = []
     sl.delete_sessions.connect(emitted.append)
     sl.populate([_proj()], {"p1": [_sess("a"), _sess("b"), _sess("c")]}, set(), "a")
-    bucket = sl.tree.topLevelItem(1)  # [0] is the Projects header
+    bucket = sl.tree.topLevelItem(1).child(0)  # [0]=Projects, [1]=Timeline
     for i in range(3):
         bucket.child(i).setSelected(True)
     ids = sl._selected_session_ids()
@@ -1445,9 +1500,10 @@ async def test_move_session_to_project_persists_and_refreshes(qapp, tmp_path):
         await engine.stop()
 
 
-def test_new_project_rows_default_expanded_and_reveal(qapp):
-    """Rows that newly appear must default to expanded — collapsing unknown
-    rows made moved sessions invisible. reveal_session force-opens ancestors."""
+def test_new_project_rows_default_collapsed_and_reveal(qapp):
+    """Project rows default to collapsed so the page doesn't dump every
+    session on open. A moved session is still reachable: reveal_session
+    force-opens the ancestors of its row."""
     from types import SimpleNamespace
 
     from bytebarn.app.session_list import SessionList
@@ -1462,20 +1518,19 @@ def test_new_project_rows_default_expanded_and_reveal(qapp):
                 default_project_id="p0")
     header = sl.tree.topLevelItem(0)
     assert "Projects" in header.text(0)
-    assert header.isExpanded()                 # new header: open
+    assert header.isExpanded()                 # section header: open
     # default project sorts first; Target is the second row
     assert header.childCount() == 2
     target_row = header.child(1)
     assert "Target" in target_row.text(0)
-    assert target_row.isExpanded()             # new project row: open
+    assert not target_row.isExpanded()         # project rows start collapsed
 
-    # user collapses Target, then the session moves into it
-    target_row.setExpanded(False)
+    # session moves into Target; the row stays collapsed but still holds it
     sl.populate([default, proj], {"p0": [], "p9": [s_home]}, set(), "",
                 default_project_id="p0")
     target_row = sl.tree.topLevelItem(0).child(1)
-    assert not target_row.isExpanded()         # explicit collapse is respected
-    assert target_row.childCount() == 1        # row is there, just hidden
+    assert not target_row.isExpanded()
+    assert target_row.childCount() == 1        # row is there, just collapsed
 
     sl.reveal_session("s1")
     assert target_row.isExpanded()             # reveal forces it open
@@ -1509,4 +1564,4 @@ def test_moved_session_stays_under_project_when_it_is_the_default(qapp):
     child_ids = [card_row.child(i).data(0, Qt.UserRole)
                  for i in range(card_row.childCount())]
     assert child_ids == ["s1"]                 # nested under its project
-    assert card_row.isExpanded()
+    assert not card_row.isExpanded()           # projects start collapsed
