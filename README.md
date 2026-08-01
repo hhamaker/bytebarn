@@ -33,9 +33,10 @@ on your own machine via Ollama or LM Studio.
   per-project persistent memory, preview panel for HTML/dev servers, inline
   file editor, side chat (⌘;) for throwaway questions.
 - **Control** — Safe / Plan / Ask / Full-auto permission modes with per-tool
-  glob rules (Plan = explore & design, no edits; `/plan` to enter), run review
-  with per-file revert, cost tracking, automatic model fallback,
-  extended-thinking control per agent.
+  glob rules (Plan = explore & design, no edits; `/plan` to enter), macOS
+  seatbelt sandbox for Full-auto bash, config hooks, `/diff` `/review`
+  `/context` `/rewind`, run review with per-file revert, cost tracking,
+  automatic model fallback, extended-thinking control per agent.
 
 ## Quick start
 

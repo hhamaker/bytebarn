@@ -46,6 +46,10 @@ class ToolContext:
     on_todos: Callable[[list[dict[str, str]]], Awaitable[None]] | None = None
     abort: Any = None  # asyncio.Event
     memory_dir: Path | None = None  # project OKF memory bundle root
+    # sandbox / mode (optional; bash tool reads these)
+    sandbox_config: Any = None
+    session_mode: str | None = None
+    use_sandbox: bool | None = None
 
     def resolve_path(self, path: str) -> Path:
         p = Path(path).expanduser()

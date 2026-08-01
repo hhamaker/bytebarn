@@ -630,6 +630,16 @@ class Runner:
             await self._set_call(session, call, "error", reason)
             return
 
+        # config hooks (pre_tool) — can deny before execution
+        hooks = engine.hooks()
+        pre = await hooks.run_pre(name, arg, cwd=str(ctx.cwd))
+        if not pre.allowed:
+            await self._set_call(
+                session, call, "error",
+                pre.message or "blocked by pre_tool hook",
+            )
+            return
+
         # snapshot the pre-write state so the run can be reviewed/reverted
         if name in ("write", "edit") and getattr(params, "path", ""):
             engine.checkpoints.snapshot(session.id, ctx.resolve_path(params.path))
@@ -644,6 +654,7 @@ class Runner:
         except Exception as exc:
             await self._set_call(session, call, "error", f"tool crashed: {exc}")
             return
+        await hooks.run_post(name, arg, cwd=str(ctx.cwd))
         output, _sidecar = truncate_output(result.output)
         if name == "task" and not result.is_error:
             match = re.search(r"\[task_id: ([0-9a-f]+)\]\s*$", output)
@@ -683,6 +694,8 @@ class Runner:
             return await engine.run_subagent(session, agent, prompt, description, task_id)
 
         session_dir = Path(session.directory) if session.directory else engine.project_dir
+        from .sandbox import SandboxConfig, should_sandbox
+        sconf = SandboxConfig.from_config(engine.config.model_extra)
         return ToolContext(
             cwd=session_dir,
             session_id=session.id,
@@ -695,6 +708,9 @@ class Runner:
             on_todos=on_todos,
             abort=handle.abort,
             memory_dir=engine.memory_dir(session.project_id),
+            sandbox_config=sconf,
+            session_mode=engine.session_mode,
+            use_sandbox=should_sandbox(engine.session_mode, sconf),
         )
 
     # ------------------------------------------------------------------

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from pathlib import Path
 from typing import Any
@@ -238,7 +239,54 @@ class Engine:
         if session is None:
             raise KeyError(f"no session {session_id}")
 
-        rendered, route_agent, route_model = self._apply_command(text)
+        # session-bound meta commands (no model turn)
+        stripped = text.strip()
+        if stripped.startswith("/"):
+            cname, _, cargs = stripped[1:].partition(" ")
+            if cname == "context":
+                bd = await self.context_breakdown(session_id)
+                um = await self.store.add_message(session_id, "user")
+                await self.store.add_part(um.id, "text", {"text": "/context"})
+                am = await self.store.add_message(session_id, "assistant")
+                await self.store.add_part(am.id, "text", {"text": bd.format_text()})
+                self.bus.emit(SessionUpdated(session_id=session_id))
+                return
+            if cname == "diff":
+                report = await self.session_diff(session_id)
+                um = await self.store.add_message(session_id, "user")
+                await self.store.add_part(um.id, "text", {"text": "/diff"})
+                am = await self.store.add_message(session_id, "assistant")
+                await self.store.add_part(am.id, "text", {"text": report})
+                self.bus.emit(SessionUpdated(session_id=session_id))
+                return
+            if cname == "rewind":
+                mid = cargs.strip() or None
+                result = await self.rewind(session_id, mid)
+                note = (
+                    f"Rewound to message {result.get('message_id', '?')}; "
+                    f"restored {len(result.get('restored') or [])} file(s)."
+                    if result.get("ok") else
+                    f"Rewind failed: {result.get('error', 'unknown')}"
+                )
+                am = await self.store.add_message(session_id, "assistant")
+                await self.store.add_part(am.id, "text", {"text": note})
+                self.bus.emit(SessionUpdated(session_id=session_id))
+                return
+            if cname == "review":
+                from .commands import REVIEW_TEMPLATE
+                diff = await self.session_diff(session_id)
+                focus = cargs.strip()
+                text = REVIEW_TEMPLATE.replace(
+                    "$ARGUMENTS",
+                    (focus + "\n\n" if focus else "") + "Changes to review:\n\n" + diff,
+                )
+                # pre-expanded prompt; force explore agent for read-only review
+                rendered, route_agent, route_model = text, "explore", None
+            else:
+                rendered, route_agent, route_model = self._apply_command(text)
+        else:
+            rendered, route_agent, route_model = self._apply_command(text)
+
         agent = route_agent or agent
         model = route_model or model
         updates: dict[str, Any] = {}
@@ -459,12 +507,181 @@ class Engine:
         info = model_info(model_id, self.providers.extra_catalog)
         return tokens, info.context_window
 
+    async def context_breakdown(self, session_id: str):
+        """Structured estimate of what fills the context window."""
+        from .context_usage import build_breakdown
+        from .providers.catalog import model_info
+        from .runner import build_system_prompt, history_to_messages, load_memory
+        from .skills import catalog_section
+        from .tools.registry import build_tools
+
+        session = await self.store.get_session(session_id)
+        if session is None:
+            raise KeyError(session_id)
+        agent = self.agents.get(session.agent)
+        model = session.model or agent.model or self.config.model
+        model_id = model.split("/", 1)[1] if "/" in model else model
+        info = model_info(model_id, self.providers.extra_catalog)
+        tokens, _ = await self.context_usage(session_id)
+
+        cwd = Path(session.directory) if session.directory else self.project_dir
+        proj_instructions, proj_assets = await self.project_knowledge(session.project_id)
+        skills_catalog = catalog_section(self.skills.list())
+        mem = load_memory(self.memory_dir(session.project_id))
+        system = await build_system_prompt(
+            agent, cwd, self.config.instructions,
+            project_instructions=proj_instructions, assets=proj_assets,
+            memory=mem, skills_catalog=skills_catalog,
+        )
+        history = await self.store.session_parts(session_id)
+        hist_msgs = history_to_messages(history)
+        history_text = ""
+        for m in hist_msgs:
+            history_text += json.dumps(m.content, default=str) + "\n"
+        tools = build_tools(
+            agent.tools, include_task=session.parent_session_id is None,
+            skill_registry=self.skills,
+        )
+        tools_text = "\n".join(f"{t.name}: {t.description()}" for t in tools)
+        instructions_text = ""
+        for name in self.config.instructions:
+            p = cwd / name
+            if p.is_file():
+                instructions_text += p.read_text() + "\n"
+        instructions_text += proj_instructions or ""
+        memory_text = "\n".join(t for _, t in mem)
+        return build_breakdown(
+            system=system,
+            history_text=history_text,
+            tools_text=tools_text,
+            skills_text=skills_catalog,
+            memory_text=memory_text,
+            instructions_text=instructions_text,
+            model=model,
+            context_window=info.context_window,
+            last_turn_tokens=tokens,
+        )
+
     async def compact(self, session_id: str) -> None:
         """Summarize old history into a compaction part to free context."""
         from .compaction import compact_session
 
         session = await self.store.get_session(session_id)
         await compact_session(self, session)
+
+    # -- review / diff / rewind -----------------------------------------------
+
+    def last_run_diff(self, session_id: str) -> str:
+        """Unified diff of files changed by the last agent run (write/edit)."""
+        return self.checkpoints.last_run_diff(session_id)
+
+    async def git_diff(self, directory: Path | str | None = None) -> str:
+        """Uncommitted git changes for a directory (status + diff)."""
+        import asyncio
+        cwd = Path(directory) if directory else self.project_dir
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "status", "--short",
+                cwd=str(cwd),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            status, _ = await proc.communicate()
+            proc2 = await asyncio.create_subprocess_exec(
+                "git", "diff", "HEAD",
+                cwd=str(cwd),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            diff, _ = await proc2.communicate()
+        except OSError as exc:
+            return f"(git unavailable: {exc})"
+        parts = []
+        st = status.decode(errors="replace").strip()
+        df = diff.decode(errors="replace").strip()
+        if st:
+            parts.append("## git status\n```\n" + st + "\n```")
+        if df:
+            parts.append("## git diff\n```diff\n" + df + "\n```")
+        return "\n\n".join(parts) if parts else "(working tree clean — no uncommitted changes)"
+
+    async def session_diff(self, session_id: str) -> str:
+        """Last-run agent diff plus current git diff for the session directory."""
+        session = await self.store.get_session(session_id)
+        cwd = Path(session.directory) if session and session.directory else self.project_dir
+        last = self.last_run_diff(session_id)
+        git = await self.git_diff(cwd)
+        return f"# Last agent run\n\n{last}\n\n# Working tree\n\n{git}"
+
+    async def rewind(
+        self, session_id: str, message_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Drop transcript after a user message and restore snapshotted files.
+
+        If ``message_id`` is omitted, rewinds to the latest user message
+        (keeps it, deletes later assistant/user turns).
+        """
+        if self.is_running(session_id):
+            await self.abort(session_id)
+        messages = await self.store.list_messages(session_id)
+        if not messages:
+            return {"ok": False, "error": "empty session", "restored": []}
+        if message_id is None:
+            users = [m for m in messages if m.role == "user"]
+            if not users:
+                return {"ok": False, "error": "no user message", "restored": []}
+            target = users[-1]
+        else:
+            target = next((m for m in messages if m.id == message_id), None)
+            if target is None:
+                return {"ok": False, "error": "message not found", "restored": []}
+        restored = self.checkpoints.restore_after(session_id, target.created_at)
+        await self.store.delete_messages_after(session_id, target.id)
+        self.bus.emit(SessionUpdated(session_id=session_id))
+        return {
+            "ok": True,
+            "message_id": target.id,
+            "restored": restored,
+        }
+
+    def hooks(self):
+        """Live hook runner from current config."""
+        from .hooks import HookRunner
+        # support top-level hooks key via model_extra (config extra=allow)
+        top = {}
+        extra = self.config.model_extra or {}
+        if "hooks" in extra:
+            top = extra
+        # also check attribute if pydantic put it somewhere
+        hooks_attr = getattr(self.config, "hooks", None)
+        if isinstance(hooks_attr, dict):
+            return HookRunner(hooks_attr)
+        return HookRunner.from_engine_config(extra, top)
+
+    def install_mcp_recipe(
+        self, recipe_id: str, values: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """One-click install of a curated MCP server into global config.
+
+        Returns the written config entry. Raises KeyError for unknown recipes.
+        """
+        from .mcp import KNOWN_MCP_SERVERS, config_entry
+
+        spec = KNOWN_MCP_SERVERS.get(recipe_id)
+        if spec is None:
+            raise KeyError(f"unknown MCP recipe: {recipe_id}")
+        entry = config_entry(spec, values or {})
+        patch_config_file(self.global_dir / "config.json", {f"mcp.{spec.id}": entry})
+        self.config = load_config(self.project_dir, self.global_dir)
+        return entry
+
+    async def install_mcp_recipe_async(
+        self, recipe_id: str, values: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Install recipe and reconnect MCP manager."""
+        entry = self.install_mcp_recipe(recipe_id, values)
+        await self.mcp.restart(self.config)
+        return entry
 
     # -- permissions & questions ----------------------------------------------
 

@@ -1299,6 +1299,12 @@ class MainWindow(QMainWindow):
             self._open_agent_editor()
         elif action == "plan_mode":
             self._set_mode_ui(PLAN)
+        elif action == "show_diff" and self.current_session_id:
+            self._fire(self.engine.submit_prompt(self.current_session_id, "/diff"))
+        elif action == "show_context" and self.current_session_id:
+            self._fire(self.engine.submit_prompt(self.current_session_id, "/context"))
+        elif action == "rewind" and self.current_session_id:
+            self._fire(self.engine.submit_prompt(self.current_session_id, "/rewind"))
 
     def _agent_changed(self, agent: str) -> None:
         agent = _AGENT_INTERNAL.get(agent, agent)

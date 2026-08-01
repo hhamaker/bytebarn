@@ -23,50 +23,41 @@ class BashTool(Tool):
     Params = BashParams
 
     async def execute(self, params: BashParams, ctx: ToolContext) -> ToolResult:
-        proc = await asyncio.create_subprocess_shell(
+        from ..sandbox import SandboxConfig, run_command, should_sandbox
+
+        conf = SandboxConfig()
+        session_mode = "ask"
+        use_sandbox = False
+        if ctx.sandbox_config is not None:
+            conf = ctx.sandbox_config
+        if ctx.session_mode is not None:
+            session_mode = ctx.session_mode
+        if ctx.use_sandbox is not None:
+            use_sandbox = ctx.use_sandbox
+        else:
+            use_sandbox = should_sandbox(session_mode, conf)
+
+        code, output, backend = await run_command(
             params.command,
-            cwd=str(ctx.cwd),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True,  # own process group -> killable tree
+            ctx.cwd,
+            conf=conf,
+            sandbox=use_sandbox,
             env=os.environ.copy(),
+            timeout=float(params.timeout),
+            abort=ctx.abort,
         )
-
-        async def _wait() -> bytes:
-            out, _ = await proc.communicate()
-            return out
-
-        wait_task = asyncio.ensure_future(_wait())
-        abort_task = asyncio.ensure_future(ctx.abort.wait()) if ctx.abort else None
-        pending_tasks = {wait_task} | ({abort_task} if abort_task else set())
-        try:
-            done, _ = await asyncio.wait(
-                pending_tasks, timeout=params.timeout, return_when=asyncio.FIRST_COMPLETED
-            )
-        finally:
-            if abort_task:
-                abort_task.cancel()
-
-        if wait_task not in done:
-            self._kill_tree(proc)
-            output = (await wait_task).decode(errors="replace")
-            reason = "aborted" if (abort_task and abort_task in done) else f"timed out after {params.timeout}s"
-            return ToolResult(f"{output}\n[command {reason}]", title=params.command, is_error=True)
-
-        output = wait_task.result().decode(errors="replace")
-        code = proc.returncode
         result = output if output.strip() else "(no output)"
         if code != 0:
             result += f"\n[exit code {code}]"
-        return ToolResult(result, title=params.description or params.command, is_error=code != 0,
-                          metadata={"exit_code": code})
-
-    @staticmethod
-    def _kill_tree(proc: asyncio.subprocess.Process) -> None:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
+            if use_sandbox and backend == "macos-seatbelt":
+                result += "\n[sandboxed — writes outside the project may be denied]"
+        title = params.description or params.command
+        return ToolResult(
+            result,
+            title=title,
+            is_error=code != 0,
+            metadata={"exit_code": code, "sandbox": backend if use_sandbox else "off"},
+        )
 
     def permission_arg(self, params: BashParams) -> str:
         return params.command

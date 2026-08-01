@@ -28,6 +28,16 @@ verification. Do not modify any files.
 $ARGUMENTS
 """
 
+REVIEW_TEMPLATE = """\
+You are reviewing code changes. Do NOT modify any files. Work read-only.
+
+Review the current uncommitted git changes and/or the last agent run's edits.
+Prioritize findings by severity (bug / correctness first, then missing tests,
+then style). Cite file paths. Suggest concrete fixes but do not apply them.
+
+$ARGUMENTS
+"""
+
 INIT_TEMPLATE = """\
 Analyze this codebase and create an AGENTS.md file that will be loaded into
 every agent's system prompt when working in this repository.
@@ -100,6 +110,23 @@ def builtin_commands() -> dict[str, CommandDef]:
             description="Load a skill by name: /skill <name> [args]",
             # body filled in by Engine._apply_command (needs the skill registry)
             template="$ARGUMENTS",
+        ),
+        "review": CommandDef(
+            name="review", builtin=True, agent="explore",
+            description="Read-only review of git / last-run changes",
+            template=REVIEW_TEMPLATE,
+        ),
+        "diff": CommandDef(
+            name="diff", builtin=True, action="show_diff",
+            description="Show last agent-run diff and git working-tree changes",
+        ),
+        "context": CommandDef(
+            name="context", builtin=True, action="show_context",
+            description="Show what is filling the model context window",
+        ),
+        "rewind": CommandDef(
+            name="rewind", builtin=True, action="rewind",
+            description="Rewind to the last user message; restore snapshotted files",
         ),
         "compact": CommandDef(
             name="compact", builtin=True, action="compact",

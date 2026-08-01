@@ -170,20 +170,26 @@ class MCPDialog(QDialog):
         values = {k: e.text() for k, e in self._fields.items()}
         spec = self._spec()
         if spec is not None:
-            name, entry = spec.id, config_entry(spec, values)
-        else:
-            name = values.get("name", "").strip()
-            command = values.get("command", "").strip()
-            url = values.get("url", "").strip()
-            if not name or not (command or url):
-                QMessageBox.information(
-                    self, "Add server", "A name and a command or URL are required.")
+            # one-click curated recipe (no hand-edited JSON)
+            try:
+                self.engine.install_mcp_recipe(spec.id, values)
+            except Exception as exc:
+                QMessageBox.warning(self, "Add server", f"Could not install: {exc}")
                 return
-            if url:
-                entry = {"url": url}
-            else:
-                parts = command.split()
-                entry = {"command": parts[0], "args": parts[1:]}
+            self._apply()
+            return
+        name = values.get("name", "").strip()
+        command = values.get("command", "").strip()
+        url = values.get("url", "").strip()
+        if not name or not (command or url):
+            QMessageBox.information(
+                self, "Add server", "A name and a command or URL are required.")
+            return
+        if url:
+            entry = {"url": url}
+        else:
+            parts = command.split()
+            entry = {"command": parts[0], "args": parts[1:]}
         patch_config_file(self.engine.global_dir / "config.json", {f"mcp.{name}": entry})
         self._apply()
 

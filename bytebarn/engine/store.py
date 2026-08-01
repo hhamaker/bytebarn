@@ -562,6 +562,25 @@ class Store:
         """Convenience wrapper: returns the most recent page_size messages."""
         return await self.session_parts(session_id, limit=page_size)
 
+    async def delete_messages_after(self, session_id: str, message_id: str) -> None:
+        """Delete everything strictly after a message (keep the message itself)."""
+        row = await self._fetchone(
+            "SELECT created_at, id FROM message WHERE id=? AND session_id=?",
+            (message_id, session_id),
+        )
+        if row is None:
+            return
+        doomed = await self._fetchall(
+            "SELECT id FROM message WHERE session_id=? AND"
+            " (created_at > ? OR (created_at = ? AND id > ?))",
+            (session_id, row["created_at"], row["created_at"], row["id"]),
+        )
+        for r in doomed:
+            mid = r["id"]
+            await self.db.execute("DELETE FROM part WHERE message_id=?", (mid,))
+            await self.db.execute("DELETE FROM message WHERE id=?", (mid,))
+        await self.db.commit()
+
     async def delete_messages_from(self, session_id: str, message_id: str) -> None:
         """Delete a message and everything after it (edit-and-rerun fork).
 

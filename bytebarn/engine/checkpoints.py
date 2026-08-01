@@ -40,6 +40,8 @@ class CheckpointStore:
         self.root = root
         self._active: dict[str, RunCheckpoint] = {}   # session_id -> current run
         self._last: dict[str, RunCheckpoint] = {}     # session_id -> last finished run
+        # full history for rewind (session_id -> finished cps chronological)
+        self._history: dict[str, list[RunCheckpoint]] = {}
 
     # -- lifecycle (called by the runner) -----------------------------------
 
@@ -79,6 +81,7 @@ class CheckpointStore:
         cp = self._active.pop(session_id, None)
         if cp is not None and cp.originals:
             self._last[session_id] = cp
+            self._history.setdefault(session_id, []).append(cp)
         return cp
 
     # -- review (called by the UI) ------------------------------------------
@@ -86,6 +89,40 @@ class CheckpointStore:
     def last(self, session_id: str) -> RunCheckpoint | None:
         """The most recent finished run that changed files (None = nothing)."""
         return self._last.get(session_id)
+
+    def history(self, session_id: str) -> list[RunCheckpoint]:
+        """Finished checkpoints for a session, oldest first."""
+        return list(self._history.get(session_id, []))
+
+    def restore_after(self, session_id: str, after_ts: float) -> list[str]:
+        """Revert files from every checkpoint that started at/after after_ts.
+
+        Applies newest-first so intermediate states are not left partially
+        restored. Returns sorted unique paths restored.
+        """
+        cps = [c for c in self.history(session_id) if c.started_at >= after_ts]
+        restored: set[str] = set()
+        for cp in reversed(cps):
+            for path in self.revert_all(cp):
+                restored.add(path)
+        # drop those checkpoints from history (and last if it was included)
+        remaining = [c for c in self.history(session_id) if c.started_at < after_ts]
+        self._history[session_id] = remaining
+        if remaining:
+            self._last[session_id] = remaining[-1]
+        else:
+            self._last.pop(session_id, None)
+        return sorted(restored)
+
+    def last_run_diff(self, session_id: str) -> str:
+        """Unified diff text for the last finished run (all changed files)."""
+        cp = self.last(session_id)
+        if cp is None:
+            return "(no file changes in the last run)"
+        chunks = []
+        for path in self.changed_files(cp):
+            chunks.append(self.diff(cp, path))
+        return "\n".join(chunks) if chunks else "(no textual change)"
 
     def changed_files(self, cp: RunCheckpoint) -> list[str]:
         return sorted(cp.originals.keys())
