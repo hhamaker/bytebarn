@@ -129,3 +129,6 @@ there, not in the widget.
 - **permission mode** — session-wide Safe / Plan / Ask / Full-auto toggle layered under per-tool config rules (`permissions.py`). Plan mode explores and designs with hard write blocks (`/plan`).
 - **subagent session** — child session created by the task tool; `parent_session_id` set, shown nested in the sidebar.
 - **worktree isolation** — new subagents in a git repo get a private `git worktree` (`engine/worktree.py`); on finish, non-conflicting file changes are copied back into the parent tree. Disable with `"worktree": {"enabled": false}`.
+- **sandbox** — macOS seatbelt confinement for bash under Full-auto (or `sandbox.always`); writable roots = project + temp + `~/.bytebarn` (`engine/sandbox.py`).
+- **hooks** — config `hooks.pre_tool` / `post_tool` rules can deny tool calls or run side commands (`engine/hooks.py`).
+- **rewind** — `/rewind` drops transcript after a user message and restores write/edit files from run checkpoints.
