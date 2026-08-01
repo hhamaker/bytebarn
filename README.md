@@ -27,12 +27,13 @@ on your own machine via Ollama or LM Studio.
   and the crew stage animates them working in parallel. Queue goals and walk
   away; routines re-run a prompt on a schedule.
 - **Harness tools** — web search + research agent, MCP servers (12 one-click
-  recipes + custom), skills, per-project persistent memory, preview panel
-  for HTML/dev servers, inline file editor, side chat (⌘;) for throwaway
-  questions.
-- **Control** — Safe / Ask / Full-auto permission modes with per-tool glob
-  rules, run review with per-file revert, cost tracking, automatic model
-  fallback, extended-thinking control per agent.
+  recipes + custom), skills (catalog + `skill` tool + `/skill <name>`),
+  per-project persistent memory, preview panel for HTML/dev servers, inline
+  file editor, side chat (⌘;) for throwaway questions.
+- **Control** — Safe / Plan / Ask / Full-auto permission modes with per-tool
+  glob rules (Plan = explore & design, no edits; `/plan` to enter), run review
+  with per-file revert, cost tracking, automatic model fallback,
+  extended-thinking control per agent.
 
 ## Quick start
 
@@ -205,16 +206,23 @@ right-click one to **close** (archive) or **delete** it, subagents and all.
 
 Custom commands: `.bytebarn/command/foo.md` with a `$ARGUMENTS` template →
 `/foo`. Built-ins: `/init` (analyze the repo and write AGENTS.md — loaded
-into every agent's system prompt), `/goal`, `/compact`, `/new`, `/model`,
-`/agents`.
+into every agent's system prompt), `/goal`, `/plan` (enter Plan mode;
+optional topic), `/skill <name>` (load a skill into the prompt),
+`/compact`, `/new`, `/model`, `/agents`.
+
+Skills are markdown under `~/.bytebarn/skills/` or
+`<project>/.bytebarn/skills/` (optional YAML `description` frontmatter).
+Agents see a skill catalog in the system prompt and load full guidance via
+the `skill` tool when a skill matches the task.
 
 ## Permissions
 
 Per tool: `allow` / `ask` / `deny`, or pattern lists (bash patterns match
 the command, edit/write match paths). Deny → allow → default. Per-agent
 overrides in agent frontmatter. Session toggle in the status bar:
-Safe / Ask / Full-auto. "Allow always" in the permission dialog appends the
-pattern to project config.
+Safe / Plan / Ask / Full-auto. Plan mode lets the agent explore and design
+but hard-blocks writes, mutating shell, and MCP until you leave it. "Allow
+always" in the permission dialog appends the pattern to project config.
 
 ## Architecture
 

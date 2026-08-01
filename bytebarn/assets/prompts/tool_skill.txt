@@ -1,0 +1,5 @@
+Load a reusable skill's full instructions by name.
+
+Use this when an available skill matches the user's task or when they invoke
+a skill. Read the skill carefully and follow it for the rest of the turn.
+Do not invent skill names — only load skills listed under available-skills.

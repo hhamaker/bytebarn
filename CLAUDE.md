@@ -126,5 +126,5 @@ there, not in the widget.
 - **known provider** — an entry in `providers/known.py` with connection recipe + curated models; drives the ⚡ providers GUI.
 - **auth record** — per-provider credential in `~/.bytebarn/auth.json`: `{"type": "api"|"oauth", ...}`.
 - **model fallback** — automatic switch to a comparable connected model after repeated failures (`providers/fallback.py`).
-- **permission mode** — session-wide Safe / Ask / Full-auto toggle layered under per-tool config rules (`permissions.py`).
+- **permission mode** — session-wide Safe / Plan / Ask / Full-auto toggle layered under per-tool config rules (`permissions.py`). Plan mode explores and designs with hard write blocks (`/plan`).
 - **subagent session** — child session created by the task tool; `parent_session_id` set, shown nested in the sidebar.

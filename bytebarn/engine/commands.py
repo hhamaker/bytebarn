@@ -19,6 +19,15 @@ $ARGUMENTS
 
 Orchestrate this goal to completion. Restate the goal in one sentence, write a todo plan, pick the best-fit subagents from the available agent types, and delegate the work — parallel where independent, sequential where dependent. Track todos as tasks start and finish, verify results before marking anything done, and finish with a short summary of what each agent accomplished."""
 
+PLAN_TEMPLATE = """\
+The user wants a plan for the following request. Explore the codebase
+(read/search/read-only shell/web as needed), then produce a concrete
+implementation plan with ordered steps, real file paths, risks, and
+verification. Do not modify any files.
+
+$ARGUMENTS
+"""
+
 INIT_TEMPLATE = """\
 Analyze this codebase and create an AGENTS.md file that will be loaded into
 every agent's system prompt when working in this repository.
@@ -80,6 +89,17 @@ def builtin_commands() -> dict[str, CommandDef]:
             name="init", builtin=True, agent="build",
             description="Analyze the project and create AGENTS.md instructions for agents",
             template=INIT_TEMPLATE,
+        ),
+        "plan": CommandDef(
+            name="plan", builtin=True, action="plan_mode",
+            description="Enter Plan mode (explore & design; no edits). Optional topic after /plan",
+            template=PLAN_TEMPLATE,
+        ),
+        "skill": CommandDef(
+            name="skill", builtin=True,
+            description="Load a skill by name: /skill <name> [args]",
+            # body filled in by Engine._apply_command (needs the skill registry)
+            template="$ARGUMENTS",
         ),
         "compact": CommandDef(
             name="compact", builtin=True, action="compact",

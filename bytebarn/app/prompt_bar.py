@@ -335,11 +335,16 @@ class PromptBar(QWidget):
         if not text:
             return
         if text.startswith("/") and self._commands:
-            name = text[1:].split(" ", 1)[0]
+            name, _, args = text[1:].partition(" ")
             command = self._commands.get(name)
             if command and command.action:
                 self.editor.clear()
                 self.action_requested.emit(command.action)
+                # /plan <topic> also kicks off a planning turn after the mode switch
+                if command.action == "plan_mode" and args.strip():
+                    prompt = (command.render(args.strip()) if command.template
+                              else args.strip())
+                    self.submitted.emit(prompt)
                 return
         self.editor.clear()
         self.submitted.emit(text)

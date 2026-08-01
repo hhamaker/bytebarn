@@ -62,7 +62,9 @@ _READONLY_TOOLS = {"read": True, "grep": True, "glob": True, "bash": True,
                    "webfetch": True, "todowrite": True, "question": True,
                    # memory only writes into the project's OKF bundle, so
                    # read-only agents can still bank what they discover
-                   "memory": True}
+                   "memory": True,
+                   # skill loads prompt guidance only
+                   "skill": True}
 
 
 def builtin_agents() -> dict[str, AgentDef]:
@@ -102,7 +104,8 @@ def builtin_agents() -> dict[str, AgentDef]:
             description="Web researcher: searches the web, reads sources, and writes a cited report. Use for questions the codebase can't answer.",
             prompt=_prompt("research"), color="#e06c75",
             tools={"websearch": True, "webfetch": True, "read": True,
-                   "todowrite": True, "memory": True, "question": True},
+                   "todowrite": True, "memory": True, "question": True,
+                   "skill": True},
         ),
         "explore": AgentDef(
             name="explore", mode="subagent", builtin=True,

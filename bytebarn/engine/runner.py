@@ -68,6 +68,7 @@ async def build_system_prompt(
     project_instructions: str = "",
     assets: list[Any] | None = None,
     memory: list[tuple[str, str]] | None = None,
+    skills_catalog: str = "",
 ) -> str:
     git = await _git_info(cwd)
     env = (
@@ -101,6 +102,8 @@ async def build_system_prompt(
             " of duplicating them.\n</project-memory-guide>")
         for rel, text in memory:
             sections.append(f"<project-memory file=\"{rel}\">\n{text}\n</project-memory>")
+    if skills_catalog.strip():
+        sections.append(skills_catalog.strip())
     return "\n\n".join(s for s in sections if s)
 
 
@@ -299,6 +302,7 @@ class Runner:
             agent.tools,
             include_task=not is_subagent,
             subagents=engine.agents.subagent_descriptions(),
+            skill_registry=engine.skills,
         )
         tools += engine.mcp.tools_for(agent.tools)
         tool_map = {t.name: t for t in tools}
@@ -306,10 +310,16 @@ class Runner:
 
         cwd = Path(session.directory) if session.directory else engine.project_dir
         proj_instructions, proj_assets = await engine.project_knowledge(session.project_id)
+        from .skills import catalog_section
+        skills_catalog = catalog_section(engine.skills.list())
         system = await build_system_prompt(
             agent, cwd, engine.config.instructions,
             project_instructions=proj_instructions, assets=proj_assets,
-            memory=load_memory(engine.memory_dir(session.project_id)))
+            memory=load_memory(engine.memory_dir(session.project_id)),
+            skills_catalog=skills_catalog)
+        from .permissions import PLAN, PLAN_MODE_NOTICE
+        if engine.session_mode == PLAN:
+            system = f"{system}\n\n{PLAN_MODE_NOTICE}"
 
         # model fallback: after N consecutive failed turns, switch to a
         # comparable available model instead of giving up (spec-free QoL)
@@ -609,7 +619,15 @@ class Runner:
         if verdict == "ask":
             verdict = await engine.ask_permission(session.id, name, arg, data.get("input", {}), policy)
         if verdict == "deny":
-            await self._set_call(session, call, "error", "permission denied by user/policy")
+            from .permissions import PLAN
+            if policy.session_mode == PLAN:
+                reason = (
+                    "blocked by Plan mode (read-only explore) — "
+                    "switch to Ask or Full-auto to implement"
+                )
+            else:
+                reason = "permission denied by user/policy"
+            await self._set_call(session, call, "error", reason)
             return
 
         # snapshot the pre-write state so the run can be reviewed/reverted

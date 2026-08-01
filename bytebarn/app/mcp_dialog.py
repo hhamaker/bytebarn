@@ -43,7 +43,7 @@ class MCPDialog(QDialog):
         hint = QLabel(
             "External tool servers (Model Context Protocol). Their tools show"
             " up to agents as <code>mcp__server__tool</code> and follow the"
-            " permission policy — ask by default, denied in Safe mode.")
+            " permission policy — ask by default, denied in Safe and Plan modes.")
         hint.setWordWrap(True)
         layout.addWidget(hint)
 

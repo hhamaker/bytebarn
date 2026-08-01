@@ -78,8 +78,11 @@ class SkillEditor(QDialog):
 
     # ------------------------------------------------------------------
     def _skill_path(self, name: str, source: str) -> Path:
-        base = self.engine.project_dir if source == "project" else self.engine.global_dir
-        return base / ".bytebarn" / "skills" / f"{name}.md"
+        # global_dir is already ~/.bytebarn → skills at ~/.bytebarn/skills/
+        # project skills live under <project>/.bytebarn/skills/
+        if source == "project":
+            return self.engine.project_dir / ".bytebarn" / "skills" / f"{name}.md"
+        return self.engine.global_dir / "skills" / f"{name}.md"
 
     def _new_skill(self):
         name, ok = QInputDialog.getText(self, "New skill", "Skill name:")

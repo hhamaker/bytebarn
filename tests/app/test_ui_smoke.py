@@ -1078,11 +1078,43 @@ async def test_persisted_full_auto_mode_applies_to_engine(qapp, tmp_path):
     try:
         window = MainWindow(engine)
         # the persisted mode must reach the ENGINE, not just the combo box
-        assert window.mode_combo.currentIndex() == 2
+        # SESSION_MODES = Safe, Plan, Ask, Full-auto → Full-auto is index 3
+        assert window.mode_combo.currentIndex() == 3
         assert engine.session_mode == FULL_AUTO
         # and the policy the runner consults must auto-allow
         policy = engine.policy_for(engine.agents.get("build"))
         assert policy.resolve("bash", "rm -rf build") == "allow"
+    finally:
+        await engine.stop()
+
+
+async def test_plan_mode_combo_and_slash_command(qapp, tmp_path):
+    from bytebarn.app.main_window import MainWindow
+    from bytebarn.engine.facade import Engine
+    from bytebarn.engine.permissions import PLAN, SESSION_MODES
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    gdir = tmp_path / "g"
+    gdir.mkdir()
+    (gdir / "config.json").write_text(json.dumps({"model": "fake/m"}))
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=gdir)
+    await engine.start()
+    try:
+        window = MainWindow(engine)
+        assert "Plan" in [window.mode_combo.itemText(i)
+                          for i in range(window.mode_combo.count())]
+        # /plan action selects Plan mode + updates chrome
+        window._action("plan_mode")
+        assert engine.session_mode == PLAN
+        assert window.mode_combo.currentIndex() == SESSION_MODES.index(PLAN)
+        assert "Plan mode" in window.prompt_bar.editor.placeholderText()
+        policy = engine.policy_for(engine.agents.get("build"))
+        assert policy.resolve("edit", "x.py") == "deny"
+        assert policy.resolve("read", "x.py") == "allow"
+        # slash command is registered
+        assert engine.commands.get("plan") is not None
+        assert engine.commands.get("plan").action == "plan_mode"
     finally:
         await engine.stop()
 

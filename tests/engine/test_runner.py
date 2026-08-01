@@ -633,3 +633,70 @@ async def test_max_tokens_configurable_and_capped(engine):
     session = await engine.new_session()
     await _run_and_wait(engine, session, "hi")
     assert provider.requests[-1].max_tokens == 1234
+
+
+async def test_plan_mode_blocks_writes_and_injects_notice(engine, tmp_path):
+    """Plan mode hard-denies mutations and injects the plan-mode system notice."""
+    from bytebarn.engine.permissions import PLAN
+    from bytebarn.engine.providers.fake import text_turn, tool_turn
+
+    target = tmp_path / "proj" / "victim.txt"
+    target.write_text("original")
+    engine.set_session_mode(PLAN)
+    _install(engine, [
+        tool_turn("c1", "write", {"path": "victim.txt", "content": "hacked"}),
+        tool_turn("c2", "bash", {"command": "ls"}),
+        tool_turn("c3", "bash", {"command": "rm -rf victim.txt"}),
+        text_turn("here is the plan"),
+    ])
+    session = await engine.new_session()
+    await _run_and_wait(engine, session, "plan a change")
+
+    history = await engine.store.session_parts(session.id)
+    tool_parts = [p for _, parts in history for p in parts if p.type == "tool"]
+    writes = [p for p in tool_parts if p.data["tool"] == "write"]
+    bashes = [p for p in tool_parts if p.data["tool"] == "bash"]
+    assert writes and writes[0].data["status"] == "error"
+    assert "Plan mode" in writes[0].data["output"]
+    assert target.read_text() == "original"  # never touched
+    assert len(bashes) == 2
+    assert bashes[0].data["status"] == "done"   # ls allowed
+    assert bashes[1].data["status"] == "error"  # rm denied
+    assert "Plan mode" in bashes[1].data["output"]
+    # system prompt for the turn must carry the plan-mode notice
+    provider = engine.providers._providers["fake"]
+    assert any("PLAN MODE" in (req.system or "") for req in provider.requests)
+
+
+async def test_skills_in_loop_catalog_tool_and_slash(engine, tmp_path):
+    """Skills appear in the system catalog, load via tool, expand via /skill."""
+    from bytebarn.engine.providers.fake import text_turn, tool_turn
+
+    skill_dir = engine.project_dir / ".bytebarn" / "skills"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "review.md").write_text(
+        "---\ndescription: Review changes carefully\n---\n"
+        "Check for bugs and missing tests.\n"
+    )
+    engine.skills.reload()
+
+    # slash expansion
+    rendered, _, _ = engine._apply_command("/skill review focus on auth")
+    assert "Check for bugs" in rendered
+    assert "focus on auth" in rendered
+
+    _install(engine, [
+        tool_turn("c1", "skill", {"name": "review"}),
+        text_turn("followed the review skill"),
+    ])
+    session = await engine.new_session()
+    await _run_and_wait(engine, session, "review my change")
+
+    history = await engine.store.session_parts(session.id)
+    tool_parts = [p for _, parts in history for p in parts if p.type == "tool"]
+    assert tool_parts and tool_parts[0].data["tool"] == "skill"
+    assert tool_parts[0].data["status"] == "done"
+    assert "Check for bugs" in tool_parts[0].data["output"]
+    provider = engine.providers._providers["fake"]
+    assert any("available-skills" in (req.system or "") for req in provider.requests)
+    assert any("review:" in (req.system or "") for req in provider.requests)

@@ -37,7 +37,14 @@ from ..engine.events import (
     TodoUpdated,
 )
 from ..engine.facade import Engine
-from ..engine.permissions import ASK_MODE, FULL_AUTO, SAFE
+from ..engine.permissions import (
+    ASK_MODE,
+    FULL_AUTO,
+    PLAN,
+    SAFE,
+    SESSION_MODE_LABELS,
+    SESSION_MODES,
+)
 from ..engine.providers.known import connected_providers, curated_models
 from .agent_editor import AgentEditor
 from .crew_stage import CrewStage
@@ -209,21 +216,23 @@ class MainWindow(QMainWindow):
         self.status_git = QLabel("")
         self.status_cost = QLabel("")
         self.mode_combo = QComboBox()
-        self.mode_combo.addItems(["Safe", "Ask", "Full-auto"])
+        self.mode_combo.addItems([SESSION_MODE_LABELS[m] for m in SESSION_MODES])
         self.mode_combo.setMinimumWidth(90)
         self.mode_combo.setSizePolicy(self.mode_combo.sizePolicy().horizontalPolicy(),
                                       self.mode_combo.sizePolicy().verticalPolicy())
         mode = (self.engine.config.model_extra or {}).get("session_mode")
-        index = {"safe": 0, "ask": 1, "full": 2}.get(mode, 1)
+        index = {m: i for i, m in enumerate(SESSION_MODES)}.get(mode, SESSION_MODES.index(ASK_MODE))
         self.mode_combo.setCurrentIndex(index)
         # the combo isn't wired up yet, so push the persisted mode into the
         # engine explicitly — otherwise Full-auto shows in the UI but the
         # policy still asks
-        self.engine.set_session_mode([SAFE, ASK_MODE, FULL_AUTO][index])
+        self.engine.set_session_mode(SESSION_MODES[index])
         self.mode_combo.currentIndexChanged.connect(self._mode_changed)
         self.mode_combo.setToolTip(
-            "Permission mode — Safe: read-only · Ask: confirm risky tools · "
-            "Full-auto: no prompts")
+            "Permission mode — Safe: hard lock · Plan: explore & design (no edits) · "
+            "Ask: confirm risky tools · Full-auto: no prompts. /plan enters Plan.")
+        # placeholder cue if we restored Plan from config
+        self._update_plan_mode_chrome()
         providers_button = QPushButton("⚡ providers")
         providers_button.setFlat(True)
         providers_button.setToolTip("Connect LLM providers (API keys, web login, local servers)")
@@ -1288,6 +1297,8 @@ class MainWindow(QMainWindow):
             self.prompt_bar.model_combo.showPopup()
         elif action == "open_agent_editor":
             self._open_agent_editor()
+        elif action == "plan_mode":
+            self._set_mode_ui(PLAN)
 
     def _agent_changed(self, agent: str) -> None:
         agent = _AGENT_INTERNAL.get(agent, agent)
@@ -1483,10 +1494,33 @@ class MainWindow(QMainWindow):
 
     def _mode_changed(self, index: int) -> None:
         # set_session_mode also releases permission prompts already waiting
-        mode = [SAFE, ASK_MODE, FULL_AUTO][index]
+        mode = SESSION_MODES[index]
         self.engine.set_session_mode(mode)
         from ..engine.config import patch_config_file
         patch_config_file(self.engine.global_dir / "config.json", {"session_mode": mode})
+        self._update_plan_mode_chrome()
+
+    def _set_mode_ui(self, mode: str) -> None:
+        """Programmatically select a permission mode (e.g. /plan)."""
+        try:
+            index = SESSION_MODES.index(mode)
+        except ValueError:
+            return
+        if self.mode_combo.currentIndex() == index:
+            # still re-apply so /plan is idempotent when already in Plan
+            self.engine.set_session_mode(mode)
+            self._update_plan_mode_chrome()
+            return
+        self.mode_combo.setCurrentIndex(index)  # fires _mode_changed
+
+    def _update_plan_mode_chrome(self) -> None:
+        """Subtle prompt-bar cue when Plan mode is active."""
+        if self.engine.session_mode == PLAN:
+            self.prompt_bar.editor.setPlaceholderText(
+                "Plan mode — explore & design only (no edits). Switch to Ask to implement.")
+        else:
+            self.prompt_bar.editor.setPlaceholderText(
+                "Message the crew — / for commands, @ for files")
 
     def _on_session_moved(self, session_id: str, project_id: str | None) -> None:
         async def run() -> None:

@@ -332,6 +332,26 @@ class Engine:
         command = self.commands.get(name)
         if command is None or command.action:
             return text, None, None
+        # /skill <name> [args] — expand skill body into the user prompt
+        if name == "skill":
+            from .skills import format_skill_prompt
+
+            skill_name, _, rest = args.strip().partition(" ")
+            if not skill_name:
+                available = ", ".join(s.name for s in self.skills.list()) or "(none)"
+                return (
+                    f"No skill name given. Available skills: {available}. "
+                    "Usage: /skill <name> [request]",
+                    None, None,
+                )
+            skill = self.skills.get(skill_name)
+            if skill is None:
+                available = ", ".join(s.name for s in self.skills.list()) or "(none)"
+                return (
+                    f"Unknown skill '{skill_name}'. Available: {available}.",
+                    None, None,
+                )
+            return format_skill_prompt(skill, rest), command.agent, command.model
         return command.render(args.strip()), command.agent, command.model
 
     def _start_run(self, session: Session) -> None:
