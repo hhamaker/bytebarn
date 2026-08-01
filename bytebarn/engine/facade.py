@@ -52,6 +52,8 @@ class Engine:
 
         self.checkpoints = CheckpointStore(self.global_dir / "checkpoints")
         self.mcp = MCPManager()
+        from .worktree import WorktreeManager
+        self.worktrees = WorktreeManager(self.global_dir / "worktrees")
 
         self._runs: dict[str, RunHandle] = {}
         self._new_session_lock = asyncio.Lock()
@@ -537,12 +539,24 @@ class Engine:
 
     # -- subagents (task tool) -------------------------------------------------
 
+    def _worktree_enabled(self) -> bool:
+        conf = (self.config.model_extra or {}).get("worktree") or {}
+        if isinstance(conf, dict):
+            return bool(conf.get("enabled", True))
+        return True
+
     async def run_subagent(
         self, parent: Session, agent: str, prompt: str, description: str, task_id: str | None
     ) -> str:
         """Run a task-tool delegation in a child session and return its final
-        text (task.started/finished events drive the crew stage)."""
+        text (task.started/finished events drive the crew stage).
+
+        New subagents in a git project get an isolated worktree when
+        ``worktree.enabled`` is true (default). Changes are merged back into
+        the parent working tree when the subagent finishes.
+        """
         agent_def = self.agents.get(agent)  # raises KeyError for unknown agents
+        parent_cwd = Path(parent.directory) if parent.directory else self.project_dir
         if task_id:
             child = await self.store.get_session(task_id)
             if child is None or child.parent_session_id != parent.id:
@@ -554,8 +568,20 @@ class Engine:
                 model=agent_def.model or "",
                 parent_session_id=parent.id,
                 title=description[:80],
-                directory=parent.directory,  # subagents work where the parent works
+                directory=parent.directory or "",
             )
+
+        # Isolate each run in a fresh worktree (git projects only) so parallel
+        # writers cannot collide. Disabled via config worktree.enabled=false.
+        if self._worktree_enabled() and self.worktrees.get(child.id) is None:
+            project_key = (self.project.id if self.project else "p")[:16]
+            wt = await self.worktrees.create(
+                child.id, parent_cwd, project_key=project_key,
+            )
+            if wt is not None:
+                await self.store.update_session(child.id, directory=str(wt.path))
+                child = await self.store.get_session(child.id)
+
         self.bus.emit(TaskStarted(
             session_id=parent.id, subagent_session_id=child.id,
             agent=agent, description=description,
@@ -573,10 +599,24 @@ class Engine:
             status = "error" if (handle.task.cancelled() or handle.task.exception()) else "done"
         # final assistant text = tool result
         final_text = await self._final_text(child.id)
+
+        merge_note = ""
+        if self.worktrees.get(child.id) is not None:
+            result = await self.worktrees.apply_and_remove(child.id)
+            # follow-ups should not keep a deleted worktree path
+            await self.store.update_session(
+                child.id, directory=parent.directory or "")
+            if result is not None:
+                merge_note = f"\n[{result.summary()}]"
+
         self.bus.emit(TaskFinished(
             session_id=parent.id, subagent_session_id=child.id, status=status,
         ))
-        return (final_text or "[subagent produced no output]") + f"\n\n[task_id: {child.id}]"
+        return (
+            (final_text or "[subagent produced no output]")
+            + f"\n\n[task_id: {child.id}]"
+            + merge_note
+        )
 
     async def _final_text(self, session_id: str) -> str:
         history = await self.store.session_parts(session_id)

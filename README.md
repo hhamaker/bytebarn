@@ -24,8 +24,10 @@ on your own machine via Ollama or LM Studio.
   copy, in-conversation search (⌘F), full-text search across all chats,
   transcript export, image paste with real vision support, PDF previews.
 - **Goals** — hand the orchestrator a goal; it plans todos, casts subagents,
-  and the crew stage animates them working in parallel. Queue goals and walk
-  away; routines re-run a prompt on a schedule.
+  and the crew stage animates them working in parallel (each write-capable
+  subagent gets a git worktree so parallel edits do not collide; changes
+  merge back into your tree). Queue goals and walk away; routines re-run a
+  prompt on a schedule.
 - **Harness tools** — web search + research agent, MCP servers (12 one-click
   recipes + custom), skills (catalog + `skill` tool + `/skill <name>`),
   per-project persistent memory, preview panel for HTML/dev servers, inline
