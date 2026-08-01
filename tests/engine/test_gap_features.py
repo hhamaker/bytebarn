@@ -320,3 +320,49 @@ async def test_install_mcp_recipe_async_reloads(engine):
     # reload path: config file has the entry
     cfg = json.loads((engine.global_dir / "config.json").read_text())
     assert "puppeteer" in cfg["mcp"]
+
+
+async def test_rewind_skips_meta_diff_context_turns(engine):
+    """Default /rewind after /diff must still restore the last agent write."""
+    path = engine.project_dir / "skipmeta.py"
+    _install(engine, [
+        tool_turn("c1", "write", {"path": "skipmeta.py", "content": "v2\n"}),
+        text_turn("wrote"),
+    ])
+    session = await engine.new_session(agent="build")
+    await _run(engine, session, "create skipmeta")
+    assert path.read_text() == "v2\n"
+
+    # synthetic meta turns that previously stole the default rewind target
+    await engine.submit_prompt(session.id, "/diff")
+    await engine.submit_prompt(session.id, "/context")
+
+    result = await engine.rewind(session.id)
+    assert result["ok"]
+    # file was created by the run → restore deletes it
+    assert not path.exists()
+    assert result["restored"] and any("skipmeta" in p for p in result["restored"])
+
+    # transcript should not end on a /diff or /context user turn as the only keep
+    msgs = await engine.store.list_messages(session.id)
+    assert len(msgs) == 1 and msgs[0].role == "user"
+    text = await engine._user_text(msgs[0].id)
+    assert not engine._is_meta_user_text(text)
+    assert "skipmeta" in text or "create" in text
+
+
+async def test_review_does_not_persist_explore_agent(engine):
+    """/review uses explore for one run only; session.agent stays build."""
+    session = await engine.new_session(agent="build")
+    assert session.agent == "build"
+
+    _install(engine, [text_turn("looks ok")])
+    await engine.submit_prompt(session.id, "/review")
+    handle = engine._runs.get(session.id)
+    assert handle is not None
+    assert handle.agent_override == "explore"
+    if handle.task:
+        await handle.task
+
+    after = await engine.store.get_session(session.id)
+    assert after.agent == "build", "session agent must not stick on explore after /review"

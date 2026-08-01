@@ -280,17 +280,21 @@ class Engine:
                     "$ARGUMENTS",
                     (focus + "\n\n" if focus else "") + "Changes to review:\n\n" + diff,
                 )
-                # pre-expanded prompt; force explore agent for read-only review
+                # explore agent for this run only — do NOT persist session.agent
                 rendered, route_agent, route_model = text, "explore", None
+                run_agent_override = "explore"
             else:
                 rendered, route_agent, route_model = self._apply_command(text)
+                run_agent_override = None
         else:
             rendered, route_agent, route_model = self._apply_command(text)
+            run_agent_override = None
 
         agent = route_agent or agent
         model = route_model or model
         updates: dict[str, Any] = {}
-        if agent and agent != session.agent:
+        # /review routes to explore for one run only; keep the session agent
+        if agent and agent != session.agent and run_agent_override is None:
             updates["agent"] = agent
         if model and model != session.model:
             updates["model"] = model
@@ -308,7 +312,7 @@ class Engine:
         for path in files or ():
             await self.store.add_part(message.id, "file", {"path": path})
         self.bus.emit(SessionUpdated(session_id=session_id))
-        self._start_run(session)
+        self._start_run(session, agent_override=run_agent_override)
 
         if not session.title and not session.parent_session_id:
             from .compaction import generate_title
@@ -404,9 +408,10 @@ class Engine:
             return format_skill_prompt(skill, rest), command.agent, command.model
         return command.render(args.strip()), command.agent, command.model
 
-    def _start_run(self, session: Session) -> None:
+    def _start_run(self, session: Session, agent_override: str | None = None) -> None:
         handle = self._runs.get(session.id) or RunHandle()
         handle.abort = asyncio.Event()
+        handle.agent_override = agent_override
         self._runs[session.id] = handle
         handle.task = asyncio.ensure_future(self.runner.run(session, handle))
 
@@ -613,13 +618,29 @@ class Engine:
         git = await self.git_diff(cwd)
         return f"# Last agent run\n\n{last}\n\n# Working tree\n\n{git}"
 
+    @staticmethod
+    def _is_meta_user_text(text: str) -> bool:
+        """True for slash meta commands that are not real user work turns."""
+        t = (text or "").strip()
+        if not t.startswith("/"):
+            return False
+        name = t[1:].split(None, 1)[0].split("\n", 1)[0].lower()
+        return name in ("diff", "context", "rewind")
+
+    async def _user_text(self, message_id: str) -> str:
+        parts = await self.store.list_parts(message_id)
+        return "\n".join(
+            p.data.get("text", "") for p in parts if p.type == "text"
+        ).strip()
+
     async def rewind(
         self, session_id: str, message_id: str | None = None,
     ) -> dict[str, Any]:
         """Drop transcript after a user message and restore snapshotted files.
 
-        If ``message_id`` is omitted, rewinds to the latest user message
-        (keeps it, deletes later assistant/user turns).
+        If ``message_id`` is omitted, rewinds to the latest *real* user message
+        (skips meta-only turns like ``/diff`` / ``/context`` / ``/rewind`` so
+        a default rewind still undoes the last agent write).
         """
         if self.is_running(session_id):
             await self.abort(session_id)
@@ -630,7 +651,15 @@ class Engine:
             users = [m for m in messages if m.role == "user"]
             if not users:
                 return {"ok": False, "error": "no user message", "restored": []}
-            target = users[-1]
+            target = None
+            for m in reversed(users):
+                text = await self._user_text(m.id)
+                if not self._is_meta_user_text(text):
+                    target = m
+                    break
+            if target is None:
+                # only meta turns exist — fall back to oldest user message
+                target = users[0]
         else:
             target = next((m for m in messages if m.id == message_id), None)
             if target is None:

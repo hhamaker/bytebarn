@@ -262,6 +262,9 @@ class RunHandle:
     task: asyncio.Task | None = None
     abort: asyncio.Event = field(default_factory=asyncio.Event)
     queued: list[str] = field(default_factory=list)
+    # one-shot agent for this run only (e.g. /review → explore without
+    # permanently changing session.agent)
+    agent_override: str | None = None
 
 
 class Runner:
@@ -292,7 +295,8 @@ class Runner:
     async def _loop(self, session: Session, handle: RunHandle) -> None:
         engine = self.engine
         store = engine.store
-        agent = engine.agents.get(session.agent)
+        agent_name = handle.agent_override or session.agent
+        agent = engine.agents.get(agent_name)
         model = session.model or agent.model or engine.config.model
         provider, model_id, info = engine.providers.resolve(model)
         policy = engine.policy_for(agent)
