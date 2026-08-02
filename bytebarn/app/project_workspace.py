@@ -58,6 +58,8 @@ class ProjectWorkspace(QWidget):
         header.addWidget(self.title, 1)
 
         self.tabs = QTabWidget()
+        # sidebar is narrow; never elide tab labels to "Cha…" — show full words
+        self.tabs.tabBar().setElideMode(Qt.ElideNone)
         self.tabs.addTab(self._chats_tab(), "Chats")
         self.tabs.addTab(self._goals_tab(), "Goals")
         self.tabs.addTab(self._memory_tab(), "Memory")
