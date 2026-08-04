@@ -712,7 +712,9 @@ async def test_delete_session_can_discard_the_worktree(engine):
 
 
 async def test_delete_session_survives_a_failing_discard(engine, monkeypatch):
-    """A failed cleanup must never cost the user their session row."""
+    """A failed cleanup must never cost the user their session row — and must
+    not pass for a successful one either: the reason comes back naming the
+    path, because nothing else will ever tell the user it is still there."""
     session = await engine.new_session(isolated=True)
 
     async def _boom(*args, **kwargs):
@@ -720,8 +722,10 @@ async def test_delete_session_survives_a_failing_discard(engine, monkeypatch):
 
     monkeypatch.setattr("bytebarn.engine.worktree.discard", _boom)
 
-    await engine.delete_session(session.id, discard_worktree=True)
+    problem = await engine.delete_session(session.id, discard_worktree=True)
 
+    assert session.directory in problem, problem
+    assert "worktree removal exploded" in problem
     assert await engine.store.get_session(session.id) is None
 
 
@@ -749,3 +753,270 @@ async def test_discard_session_worktree_skips_a_session_without_a_directory(
 
     assert calls == []
     assert await engine.store.get_session(session.id) is None
+
+
+# --- housekeeping: cleanup has to find, and report on, the right checkout ----
+
+
+async def _iso_engine(root: Path, tmp_path: Path, name: str = "g"):
+    """Engine rooted at ``root`` with its own store, ready for isolation."""
+    gdir = tmp_path / name
+    gdir.mkdir(exist_ok=True)
+    (gdir / "config.json").write_text(json.dumps({"model": "fake/model"}))
+    eng = Engine(root, db_path=tmp_path / f"{name}.db", global_dir=gdir)
+    await eng.start()
+    return eng
+
+
+async def test_discarding_a_worktree_rooted_below_the_git_root(tmp_path, monkeypatch):
+    """Finding 1: session.directory is a *subdirectory* of the worktree here.
+
+    Opening /repo/frontend roots the session at <wt>/frontend, so handing that
+    to `git worktree remove` fails ("not a working tree") and the rmtree
+    fallback guts a checkout git still has registered — leaving the branch
+    undeletable and the worktree half-alive.
+    """
+    monkeypatch.chdir(tmp_path)
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "frontend").mkdir()
+    (repo / "frontend" / "app.txt").write_text("v1\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "frontend")
+
+    eng = await _iso_engine(repo / "frontend", tmp_path)
+    try:
+        session = await eng.new_session(isolated=True)
+        branch = session.worktree_branch
+        assert branch
+        sub = Path(session.directory)
+        assert sub.name == "frontend"
+        worktree = sub.parent
+        (sub / "app.txt").write_text("v2\n")
+        _git(sub, "add", ".")
+        _git(sub, "commit", "-m", "agent work")
+
+        # the cost is read from the worktree, not from the session subdir
+        info = await eng.session_worktree_info(session.id)
+        assert info["path"] == str(worktree)
+        assert info["unmerged"] == 1
+
+        problem = await eng.delete_session(session.id, discard_worktree=True)
+
+        assert problem == "", problem
+        assert not worktree.exists()
+        assert branch not in _git(repo, "branch", "--list", branch)
+        assert str(worktree) not in _git(repo, "worktree", "list")
+    finally:
+        await eng.stop()
+
+
+async def test_worktree_info_reads_the_session_s_own_repository(tmp_path, monkeypatch):
+    """Finding 2: a session can live in any registered project.
+
+    Asking the *open* project about a branch that only exists in another repo
+    makes rev-list fail, which unmerged_count reports as 0 — "fully merged"
+    for a branch carrying every commit the session produced.
+    """
+    monkeypatch.chdir(tmp_path)
+    repo_a = tmp_path / "repoA"
+    repo_b = tmp_path / "repoB"
+    _init_repo(repo_a)
+    _init_repo(repo_b)
+
+    eng = await _iso_engine(repo_a, tmp_path)
+    try:
+        session = await eng.new_session(isolated=True, directory=str(repo_b))
+        branch = session.worktree_branch
+        assert branch
+        worktree = Path(session.directory)
+        (worktree / "work.txt").write_text("agent output\n")
+        _git(worktree, "add", ".")
+        _git(worktree, "commit", "-m", "agent work")
+
+        info = await eng.session_worktree_info(session.id)
+        assert info["unmerged"] == 1, "cost read from the wrong repository"
+
+        problem = await eng.delete_session(session.id, discard_worktree=True)
+
+        assert problem == "", problem
+        assert not worktree.exists()
+        assert branch not in _git(repo_b, "branch", "--list", branch)
+    finally:
+        await eng.stop()
+
+
+async def test_discard_deletes_the_branch_when_the_directory_is_gone(engine):
+    """Finding 3: a hand-deleted worktree is still *registered*.
+
+    git refuses `branch -D` for a branch checked out by any registered
+    worktree, so without an unconditional prune the "only the branch is left"
+    path silently removes nothing at all.
+    """
+    session = await engine.new_session(isolated=True)
+    branch = session.worktree_branch
+    worktree = Path(session.directory)
+    shutil.rmtree(worktree)
+
+    problem = await engine.delete_session(session.id, discard_worktree=True)
+
+    assert problem == "", problem
+    assert branch not in _git(engine.project_dir, "branch", "--list", branch)
+    assert str(worktree) not in _git(engine.project_dir, "worktree", "list")
+
+
+async def test_discard_reports_a_worktree_it_could_not_remove(tmp_path, monkeypatch):
+    """Finding 4: discard must be able to say what it left behind.
+
+    A regular file is a path `worktree remove` rejects and
+    `rmtree(ignore_errors=True)` cannot clear — a failure that stays entirely
+    inside tmp_path.
+    """
+    from bytebarn.engine.worktree import discard
+
+    monkeypatch.chdir(tmp_path)
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    stuck = tmp_path / "not-a-worktree"
+    stuck.write_text("still here\n")
+
+    problem = await discard(repo, stuck, "bytebarn/session-deadbeef")
+
+    assert str(stuck) in problem, problem
+    assert stuck.read_text() == "still here\n"
+
+
+async def test_worktree_info_counts_uncommitted_work(engine):
+    """Finding 5: the engine never commits, so this is the normal end state.
+
+    `worktree remove --force` discards uncommitted changes by design; a cost
+    report that counted only commits would call this lossless.
+    """
+    session = await engine.new_session(isolated=True)
+    worktree = Path(session.directory)
+    (worktree / "one.txt").write_text("a\n")
+    (worktree / "two.txt").write_text("b\n")
+    (worktree / "README.md").write_text("edited\n")
+
+    info = await engine.session_worktree_info(session.id)
+
+    assert info["unmerged"] == 0
+    assert info["uncommitted"] == 3
+
+
+async def test_worktree_info_reports_no_uncommitted_work_for_a_clean_worktree(engine):
+    session = await engine.new_session(isolated=True)
+
+    info = await engine.session_worktree_info(session.id)
+
+    assert info["uncommitted"] == 0
+
+
+async def test_unmerged_count_survives_a_huge_ref_namespace(tmp_path):
+    """Minor: the exclusion list cannot ride on argv.
+
+    A repo that has fetched refs/pull/* carries enough refnames to blow past
+    ARG_MAX, and the spawn then fails with OSError(E2BIG) — which reads as
+    "git failed", i.e. 0 unmerged commits, i.e. "safe to delete".
+    """
+    from bytebarn.engine.worktree import unmerged_count
+
+    repo = tmp_path / "bigrefs"
+    _init_repo(repo)
+    head = _git(repo, "rev-parse", "HEAD")
+    pad = "x" * 230
+    subprocess.run(
+        ["git", "update-ref", "--stdin"], cwd=repo, check=True,
+        input="".join(
+            f"create refs/pull/{i:05d}/{pad}head {head}\n" for i in range(4200)),
+        text=True, capture_output=True,
+    )
+    _git(repo, "checkout", "-q", "-b", "bytebarn/session-big")
+    (repo / "work.txt").write_text("only here\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "unmerged")
+    # the joined refnames exceed the exec argument limit
+    assert len("\0".join(_git(repo, "for-each-ref", "--format=%(refname)").split())) > 1_048_576
+
+    assert await unmerged_count(repo, "bytebarn/session-big") == 1
+
+
+async def test_discard_refuses_a_path_that_contains_the_cwd(tmp_path, monkeypatch):
+    """Minor: the cwd guard tested equality, but rmtree takes the cwd out
+    just as thoroughly from one level up."""
+    from bytebarn.engine.worktree import discard
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    outer = tmp_path / "outer"
+    inner = outer / "inner"
+    inner.mkdir(parents=True)
+    marker = inner / "marker.txt"
+    marker.write_text("still here\n")
+    monkeypatch.chdir(inner)
+
+    problem = await discard(repo, outer, "bytebarn/session-cwd")
+
+    assert marker.exists(), "rmtree deleted the process working directory"
+    assert str(outer) in problem, problem
+
+
+async def test_worktree_roots_refuses_a_main_worktree(tmp_path):
+    """Self-review of the finding 1/2 fix: resolving a directory to its git
+    toplevel walks *up*, and the result feeds a removal that falls back to
+    rmtree. A session directory that turns out to sit in an ordinary
+    repository (a home dir under git, with the worktree store inside it) must
+    not hand back that repository's root as something to delete."""
+    from bytebarn.engine.worktree import worktree_roots
+
+    repo = tmp_path / "home"
+    _init_repo(repo)
+    nested = repo / ".bytebarn" / "worktrees" / "abc"
+    nested.mkdir(parents=True)
+
+    assert await worktree_roots(nested) is None
+    assert await worktree_roots(repo) is None
+
+    # a genuine linked worktree still resolves
+    linked = tmp_path / "linked"
+    _git(repo, "worktree", "add", "-b", "bytebarn/x", str(linked), "HEAD")
+    roots = await worktree_roots(linked)
+    assert roots is not None
+    assert roots[0].resolve() == linked.resolve()
+    assert roots[1].resolve() == repo.resolve()
+
+
+async def test_a_session_directory_inside_a_plain_repo_is_not_escalated(
+    tmp_path, monkeypatch,
+):
+    """The same guard on the delete path: cleanup may remove no more than the
+    directory it was given."""
+    from bytebarn.engine.facade import Engine
+
+    monkeypatch.chdir(tmp_path)
+    repo = tmp_path / "home"
+    _init_repo(repo)
+    (repo / "precious.txt").write_text("do not delete\n")
+    _git(repo, "add", "."), _git(repo, "commit", "-m", "precious")
+    stray = repo / ".bytebarn" / "worktrees" / "stray"
+    stray.mkdir(parents=True)
+
+    gdir = tmp_path / "g2"
+    gdir.mkdir()
+    (gdir / "config.json").write_text(json.dumps({"model": "fake/model"}))
+    _init_repo(tmp_path / "elsewhere")
+    eng = Engine(tmp_path / "elsewhere", db_path=tmp_path / "g2.db", global_dir=gdir)
+    await eng.start()
+    try:
+        session = await eng.new_session()
+        await eng.store.update_session(
+            session.id, directory=str(stray),
+            worktree_branch="bytebarn/session-stray")
+
+        await eng.delete_session(session.id, discard_worktree=True)
+
+        assert (repo / "precious.txt").exists(), "cleanup escalated to the repo root"
+        assert repo.is_dir()
+        assert not stray.exists()
+    finally:
+        await eng.stop()

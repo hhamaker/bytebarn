@@ -2164,3 +2164,70 @@ async def test_ask_three_way_resolves_from_the_real_dialog_buttons(qapp, tmp_pat
         assert cancel_answer is None
     finally:
         await engine.stop()
+
+
+async def test_worktree_dialog_warns_about_uncommitted_work_and_names_the_path(
+    qapp, tmp_path
+):
+    """Findings 4/5 in the UI: the engine never commits, so the normal
+    isolated session has a clean commit graph and a dirty tree. "Remove"
+    force-removes the worktree and takes that with it, so the dialog must not
+    read as lossless — and must say where the checkout is, since Keep leaves
+    the user nothing else to find it by."""
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        session = await engine.new_session(isolated=True)
+        worktree = Path(session.directory)
+        (worktree / "generated.py").write_text("X = 1\n")
+        (worktree / "notes.md").write_text("notes\n")
+        asked: list = []
+
+        def _fake(title, text, keep_label, remove_label):
+            asked.append(text)
+            fut = asyncio.get_event_loop().create_future()
+            fut.set_result("keep")
+            return fut
+
+        window._ask_three_way = _fake
+        await window._delete_session(session.id)
+
+        assert asked
+        assert "2 uncommitted files" in asked[0], asked[0]
+        assert "nothing to lose" not in asked[0], asked[0]
+        assert str(worktree) in asked[0], asked[0]
+    finally:
+        await engine.stop()
+
+
+async def test_a_worktree_cleanup_failure_reaches_the_status_bar(qapp, tmp_path):
+    """Finding 4: a delete whose cleanup failed currently looks identical to
+    one that worked. The status bar is the only place this can surface, and
+    it has to carry the path so the user can finish by hand."""
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        session = await engine.new_session(isolated=True)
+        worktree = Path(session.directory)
+
+        async def _stuck(git_root, path, branch):
+            return f"could not remove worktree at {path}"
+
+        import bytebarn.engine.worktree as worktree_mod
+        original = worktree_mod.discard
+        worktree_mod.discard = _stuck
+
+        def _fake(title, text, keep_label, remove_label):
+            fut = asyncio.get_event_loop().create_future()
+            fut.set_result("remove")
+            return fut
+
+        window._ask_three_way = _fake
+        try:
+            await window._delete_session(session.id)
+        finally:
+            worktree_mod.discard = original
+
+        message = window.statusBar().currentMessage()
+        assert str(worktree) in message, message
+        assert await engine.store.get_session(session.id) is None
+    finally:
+        await engine.stop()

@@ -1048,23 +1048,37 @@ class MainWindow(QMainWindow):
         answer = await self._worktree_verdict([session_id])
         if answer is None:
             return
-        await self.engine.delete_session(
+        problem = await self.engine.delete_session(
             session_id, discard_worktree=answer == "remove")
+        self._report_worktree_cleanup([problem])
         await self._after_session_removed(session_id)
 
     async def _delete_sessions(self, session_ids: list[str]) -> None:
         answer = await self._worktree_verdict(session_ids)
         if answer is None:
             return
+        problems = []
         for sid in session_ids:
-            await self.engine.delete_session(
-                sid, discard_worktree=answer == "remove")
+            problems.append(await self.engine.delete_session(
+                sid, discard_worktree=answer == "remove"))
+        self._report_worktree_cleanup(problems)
         for sid in session_ids:
             self._session_stack = [s for s in self._session_stack if s != sid]
         if self.current_session_id in session_ids:
             await self._after_session_removed(self.current_session_id or "")
         else:
             await self._refresh_sessions()
+
+    def _report_worktree_cleanup(self, problems: list[str]) -> None:
+        """Surface anything the worktree cleanup could not remove.
+
+        The delete itself always went through, so this is the user's only
+        signal that a full checkout of their repo is still on disk — with the
+        path, so they can finish it by hand.
+        """
+        left = [p for p in problems if p]
+        if left:
+            self.statusBar().showMessage("; ".join(left), 15000)
 
     async def _worktree_verdict(self, session_ids: list[str]) -> str | None:
         """Ask what to do with any worktrees in this selection.
@@ -1081,17 +1095,29 @@ class MainWindow(QMainWindow):
         if not infos:
             return "keep"
 
+        # What removal would destroy, counted two ways. Commits are only half
+        # of it: the engine never commits, so an isolated session's output is
+        # normally *uncommitted* — "fully merged" on its own would invite
+        # Remove on a worktree holding a whole run's work.
         lines = []
         for info in infos:
+            bits = []
             if info["unmerged"]:
                 plural = "" if info["unmerged"] == 1 else "s"
-                detail = (f"{info['unmerged']} commit{plural} not on any"
-                          f" other branch")
-            else:
-                detail = "fully merged"
+                bits.append(f"{info['unmerged']} commit{plural} not on any"
+                            f" other branch")
+            uncommitted = info.get("uncommitted", 0)
+            if uncommitted:
+                plural = "" if uncommitted == 1 else "s"
+                bits.append(f"{uncommitted} uncommitted file{plural}")
+            detail = ", ".join(bits) if bits else "nothing to lose"
             if not info["exists"]:
                 detail += ", directory already gone"
             lines.append(f"  {info['branch']} — {detail}")
+            if info["path"]:
+                # the location, so Keep still leaves the user something to go
+                # on once the session row is gone
+                lines.append(f"    {info['path']}")
 
         # "this session" vs "these sessions" describes the isolated ones the
         # dialog is actually about, not the whole selection passed in — a

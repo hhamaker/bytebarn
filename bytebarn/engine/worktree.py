@@ -46,15 +46,27 @@ class ApplyResult:
         return "worktree: " + "; ".join(parts)
 
 
-async def _git(cwd: Path, *args: str, timeout: float = 30.0) -> tuple[int, str]:
+async def _git(
+    cwd: Path, *args: str, timeout: float = 30.0, stdin: str | None = None,
+) -> tuple[int, str]:
+    """Run git in ``cwd``; ``stdin`` feeds text to commands that read it.
+
+    ``stdin`` exists so unbounded lists (a repo's whole ref namespace) travel
+    through a pipe instead of argv, which is capped by ``ARG_MAX`` — spawning
+    over that limit raises ``OSError(E2BIG)``, not a git error.
+    """
     try:
         proc = await asyncio.create_subprocess_exec(
             "git", *args,
             cwd=str(cwd),
+            stdin=asyncio.subprocess.PIPE if stdin is not None else None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        out, err = await asyncio.wait_for(
+            proc.communicate(stdin.encode() if stdin is not None else None),
+            timeout=timeout,
+        )
     except (OSError, asyncio.TimeoutError) as exc:
         return 1, str(exc)
     text = (out or b"").decode(errors="replace")
@@ -72,6 +84,51 @@ async def git_root(cwd: Path) -> Path | None:
     return path if path.is_dir() else None
 
 
+async def worktree_roots(directory: Path) -> tuple[Path, Path] | None:
+    """``(worktree root, owning main worktree)`` for a path inside a checkout.
+
+    Both halves have to come from the checkout itself, not from whatever
+    project the app happens to have open:
+
+    * A session rooted below the git root (``/repo/frontend``) has its
+      directory at ``<worktree>/frontend``, which is a *subdirectory* of the
+      worktree — ``git worktree remove`` on it fails ("not a working tree")
+      and a blind ``rmtree`` would gut a still-registered checkout.
+      ``--show-toplevel`` walks back up to the worktree git actually knows.
+    * A session can live in any registered project, so the repository that
+      owns the branch is not necessarily the open one. The first entry of
+      ``git worktree list`` is always the main worktree; it is the only cwd
+      from which ``worktree remove`` and ``branch -D`` reach this branch.
+
+    ``None`` when the directory is gone, is not a git checkout, or resolves to
+    a repository's **main** worktree rather than a linked one. That last case
+    is not pedantry: this walks *up* from a session directory to a toplevel,
+    and the answer feeds a removal that falls back to ``rmtree``. If the
+    worktree store ever sits inside an unrelated repository — a home directory
+    under git with ``.bytebarn`` not ignored is the easy way to get there —
+    the toplevel found here would be that repository's root, and a caller
+    trusting it would delete the user's actual checkout. Refusing to identify
+    the main worktree as removable keeps the blast radius at the path the
+    caller already had.
+    """
+    code, top = await _git(directory, "rev-parse", "--show-toplevel")
+    if code != 0 or not top:
+        return None
+    root = Path(top)
+    if not root.is_dir():
+        return None
+    code, listing = await _git(directory, "worktree", "list", "--porcelain")
+    if code != 0:
+        return None
+    for line in listing.splitlines():
+        if line.startswith("worktree "):
+            main = Path(line[len("worktree "):].strip())
+            if not main.is_dir() or main.resolve() == root.resolve():
+                return None
+            return root, main
+    return None
+
+
 async def head_commit(git_root: Path) -> str | None:
     code, out = await _git(git_root, "rev-parse", "HEAD")
     return out if code == 0 and out else None
@@ -87,6 +144,14 @@ async def unmerged_count(git_root: Path, branch: str) -> int:
     ``--exclude`` does not filter, and a session branch is checked out in its
     own worktree — so that spelling reports 0 every time.
 
+    The exclusions go in on **stdin**, not argv: a repo that has fetched
+    ``refs/pull/*`` can carry tens of thousands of refs, and once the joined
+    refnames pass ``ARG_MAX`` the spawn itself fails with ``OSError(E2BIG)``
+    — which would land here as "git failed" and report 0 for a branch full of
+    unmerged commits, the one answer this must never invent. ``--stdin`` reads
+    revs as if they were argv, so ``^<ref>`` carries the same exclusion
+    ``--not <ref>`` would.
+
     Returns 0 when git fails or the branch is gone. The caller is deciding
     whether to warn, and a warning we cannot substantiate is noise.
     """
@@ -95,7 +160,10 @@ async def unmerged_count(git_root: Path, branch: str) -> int:
     if code != 0:
         return 0
     others = [line for line in out.splitlines() if line.strip() and line.strip() != ref]
-    code, out = await _git(git_root, "rev-list", "--count", ref, "--not", *others)
+    code, out = await _git(
+        git_root, "rev-list", "--count", ref, "--stdin",
+        stdin="".join(f"^{other}\n" for other in others),
+    )
     if code != 0:
         return 0
     try:
@@ -104,33 +172,70 @@ async def unmerged_count(git_root: Path, branch: str) -> int:
         return 0
 
 
-async def discard(git_root: Path, path: Path, branch: str) -> None:
+async def discard(git_root: Path, path: Path, branch: str) -> str:
     """Remove a worktree and the throwaway branch that came with it.
 
     Falls back to a plain tree delete plus ``worktree prune`` when git refuses,
     so a half-removed worktree cannot wedge the caller.
 
-    Refuses (silently — this must never raise into a delete path that cannot
-    be blocked) when ``path`` resolves to the current working directory.
-    ``Path("")`` — an unset/empty session directory — normalizes to ``Path(".")``,
-    which ``.exists()`` happily resolves against the *process* cwd; without this
-    guard a failed ``worktree remove`` falls through to
-    ``shutil.rmtree(path, ignore_errors=True)`` and silently deletes whatever
-    directory the caller happened to be running in. This is a second line of
-    defence — callers should never pass such a path in the first place — but
-    ``discard`` is a module-level function any caller can reach, so it must
-    not depend on every one of them getting that right.
+    Returns "" when nothing is left behind, otherwise a human-readable reason
+    naming what survived and where. A **returned** reason, never a raise: the
+    delete path this feeds cannot be blocked (a leftover worktree is
+    recoverable by hand, a deleted session row is not), but a cleanup that
+    silently fails is indistinguishable from one that worked, which is how a
+    user ends up believing their branch is gone when it is not.
+
+    ``worktree prune`` runs before ``branch -D`` unconditionally, not only in
+    the rmtree fallback: a worktree whose directory was deleted by hand is
+    still *registered*, and git refuses to delete a branch that any registered
+    worktree has checked out ("Cannot delete branch … checked out at …"). The
+    "directory already gone, only the branch left" case is exactly the one
+    that reaches here with nothing to remove, so pruning has to happen on that
+    path too.
+
+    Refuses (without raising) when the current working directory is ``path``
+    or lives inside it. ``Path("")`` — an unset/empty session directory —
+    normalizes to ``Path(".")``, which ``.exists()`` happily resolves against
+    the *process* cwd; without this guard a failed ``worktree remove`` falls
+    through to ``shutil.rmtree(path, ignore_errors=True)`` and deletes
+    whatever directory the caller happened to be running in. Containment, not
+    equality: ``rmtree`` takes the cwd out just as thoroughly from one level
+    up. This is a second line of defence — callers should never pass such a
+    path in the first place — but ``discard`` is a module-level function any
+    caller can reach, so it must not depend on every one of them getting that
+    right.
     """
-    if path.resolve() == Path.cwd().resolve():
-        return
+    resolved = path.resolve()
+    if Path.cwd().resolve().is_relative_to(resolved):
+        return f"refused to remove {path} — it contains the working directory"
+
+    left: list[str] = []
     if path.exists():
-        code, _ = await _git(git_root, "worktree", "remove", "--force", str(path), timeout=60.0)
+        code, _ = await _git(
+            git_root, "worktree", "remove", "--force", str(path), timeout=60.0)
         if code != 0 and path.exists():
             shutil.rmtree(path, ignore_errors=True)
-            await _git(git_root, "worktree", "prune")
+    if path.exists():
+        left.append(f"worktree at {path}")
+
+    await _git(git_root, "worktree", "prune")
+
     # drop the throwaway branch if we created one
     if branch.startswith("bytebarn/"):
-        await _git(git_root, "branch", "-D", branch)
+        code, _ = await _git(git_root, "branch", "-D", branch)
+        if code != 0 and await _branch_exists(git_root, branch):
+            left.append(f"branch {branch} in {git_root}")
+
+    return ("could not remove " + " or ".join(left)) if left else ""
+
+
+async def _branch_exists(git_root: Path, branch: str) -> bool:
+    """Whether ``branch`` is still there — so a no-op ``branch -D`` (the branch
+    was already gone, or lives in another repo entirely) is not reported as a
+    failure the user needs to act on."""
+    code, _ = await _git(
+        git_root, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}")
+    return code == 0
 
 
 async def dirty_files(root: Path) -> list[str]:
