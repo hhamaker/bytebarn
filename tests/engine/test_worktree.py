@@ -1109,3 +1109,60 @@ async def test_a_vanished_worktree_with_no_repo_left_reports_nothing(
         assert str(stuck) in problem, problem
     finally:
         await eng.stop()
+
+
+async def test_a_detached_worktree_is_not_offered_as_an_isolated_session(
+    tmp_path, monkeypatch,
+):
+    """Round-3 regression: detached session worktrees must never exist.
+
+    `worktree add -b` falls back to a detached checkout when the branch name
+    is taken. Cleanup identifies a session's worktree by the ref it is checked
+    out on, so a detached one is unrecognisable and gets cleaned up by *path*
+    instead — and the recorded path is `<wt>/frontend` when the project sits
+    below the git root, i.e. a subdirectory of a live registered worktree.
+    Removing that reports success while gutting the subtree and leaving the
+    worktree registered, and the pre-delete dialog calls it "nothing to lose".
+
+    So it is refused upstream: no branch means no isolation.
+    """
+    from bytebarn.engine.worktree import WorktreeManager
+
+    monkeypatch.chdir(tmp_path)
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "frontend").mkdir()
+    (repo / "frontend" / "app.txt").write_text("v1\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "frontend")
+
+    original = WorktreeManager.create
+
+    async def create_with_the_branch_taken(
+        self, session_id, parent_cwd, project_key="default", *,
+        track=True, branch=None,
+    ):
+        # occupy the exact name the session is about to ask for, which is the
+        # one condition `create`'s detached fallback exists for
+        if branch:
+            _git(repo, "branch", branch, "HEAD")
+        return await original(
+            self, session_id, parent_cwd, project_key,
+            track=track, branch=branch)
+
+    monkeypatch.setattr(WorktreeManager, "create", create_with_the_branch_taken)
+
+    eng = await _iso_engine(repo / "frontend", tmp_path)
+    try:
+        session = await eng.new_session(isolated=True)
+
+        assert session.worktree_branch == "", "detached checkout sold as isolated"
+        # left as a plain session: rooted in the live checkout, not the store
+        assert str(eng.worktrees.store_root) not in session.directory
+        # nothing registered and nothing left on disk under the worktree store
+        listed = _git(repo, "worktree", "list")
+        assert str(eng.worktrees.store_root) not in listed, listed
+        assert listed.count("\n") == 0, listed  # main worktree only
+        assert await eng.session_worktree_info(session.id) is None
+    finally:
+        await eng.stop()

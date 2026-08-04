@@ -26,6 +26,10 @@ class Worktree:
     base_commit: str
     parent_cwd: Path
     git_root: Path
+    # True when ``create`` could not take the branch it asked for and fell
+    # back to a detached checkout. ``branch`` is then a placeholder, not a ref
+    # — an explicit flag so callers never have to parse it back out.
+    detached: bool = False
 
 
 @dataclass
@@ -342,6 +346,7 @@ class WorktreeManager:
             await discard(root, path, branch)
 
         path.parent.mkdir(parents=True, exist_ok=True)
+        detached = False
         code, _ = await _git(
             root, "worktree", "add", "-b", branch, str(path), base,
             timeout=60.0,
@@ -354,6 +359,7 @@ class WorktreeManager:
             if code2 != 0:
                 return None
             branch = f"(detached@{base[:8]})"
+            detached = True
 
         wt = Worktree(
             session_id=session_id,
@@ -362,6 +368,7 @@ class WorktreeManager:
             base_commit=base,
             parent_cwd=parent_cwd.resolve(),
             git_root=root,
+            detached=detached,
         )
         if track:
             self._active[session_id] = wt

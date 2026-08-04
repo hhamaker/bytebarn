@@ -156,9 +156,19 @@ class Engine:
         """Give a top-level session its own git worktree.
 
         Returns the session unchanged when isolation is unavailable — a non-git
-        directory, a repo with no commits, or ``worktree.enabled=false``. The
-        worktree is created untracked so no subagent cleanup path can remove
-        it; the user merges the branch in git when the run is done.
+        directory, a repo with no commits, ``worktree.enabled=false``, or a
+        worktree git would only give us **detached**. The worktree is created
+        untracked so no subagent cleanup path can remove it; the user merges
+        the branch in git when the run is done.
+
+        A detached worktree cannot deliver what isolation promises: there is no
+        branch for the user to merge, and every later lookup keys off the
+        branch — cleanup identifies the session's worktree by the ref it is
+        checked out on, so a detached one is unrecognisable and would be
+        cleaned up by path instead, which is wrong whenever the project sits
+        below the git root. Better to hand back a plain session and say so
+        (the UI already shows "Isolation unavailable") than an isolated one
+        that is isolated in name only.
         """
         if not self.worktree_enabled():
             return session
@@ -169,6 +179,17 @@ class Engine:
             track=False, branch=f"bytebarn/session-{session.id[:8]}",
         )
         if wt is None:
+            return session
+        if wt.detached:
+            try:
+                from .worktree import discard
+
+                await discard(wt.git_root, wt.path, wt.branch)
+            except Exception:
+                # the session is going back un-isolated either way; a stray
+                # checkout under the worktree store is a far smaller problem
+                # than failing to create the session the user asked for
+                pass
             return session
         session_dir = self._worktree_cwd(wt.path, wt.git_root, base)
         try:
