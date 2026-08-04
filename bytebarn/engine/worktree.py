@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import shutil
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -153,19 +152,18 @@ class WorktreeManager:
             await self._force_remove(root, path, branch)
 
         path.parent.mkdir(parents=True, exist_ok=True)
-        code, out = await _git(
+        code, _ = await _git(
             root, "worktree", "add", "-b", branch, str(path), base,
             timeout=60.0,
         )
         if code != 0:
             # branch may already exist; try without -b
-            code2, out2 = await _git(
+            code2, _ = await _git(
                 root, "worktree", "add", str(path), base, timeout=60.0,
             )
             if code2 != 0:
                 return None
             branch = f"(detached@{base[:8]})"
-            out = out2
 
         wt = Worktree(
             session_id=session_id,

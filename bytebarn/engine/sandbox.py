@@ -20,7 +20,6 @@ from __future__ import annotations
 import asyncio
 import os
 import platform
-import shlex
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path

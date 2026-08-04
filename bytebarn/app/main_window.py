@@ -41,7 +41,6 @@ from ..engine.permissions import (
     ASK_MODE,
     FULL_AUTO,
     PLAN,
-    SAFE,
     SESSION_MODE_LABELS,
     SESSION_MODES,
 )
