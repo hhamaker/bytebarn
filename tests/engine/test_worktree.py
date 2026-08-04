@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -629,3 +630,72 @@ async def test_missing_worktree_falls_back_to_project_dir_with_one_warning(engin
         for p in parts if p.type == "text"
     ]
     assert len([t for t in texts2 if "no longer exists" in t]) == 2
+
+
+async def test_session_worktree_info_describes_the_cost(engine):
+    session = await engine.new_session(isolated=True)
+    assert session.worktree_branch
+    worktree = Path(session.directory)
+
+    info = await engine.session_worktree_info(session.id)
+    assert info["branch"] == session.worktree_branch
+    assert info["path"] == session.directory
+    assert info["exists"] is True
+    assert info["unmerged"] == 0          # nothing committed in it yet
+
+    (worktree / "work.txt").write_text("agent output\n")
+    _git(worktree, "add", ".")
+    _git(worktree, "commit", "-m", "agent work")
+
+    info = await engine.session_worktree_info(session.id)
+    assert info["unmerged"] == 1
+
+
+async def test_session_worktree_info_is_none_for_a_plain_session(engine):
+    session = await engine.new_session()
+    assert await engine.session_worktree_info(session.id) is None
+
+
+async def test_session_worktree_info_reports_a_deleted_directory(engine):
+    session = await engine.new_session(isolated=True)
+    shutil.rmtree(session.directory)
+
+    info = await engine.session_worktree_info(session.id)
+    assert info["exists"] is False
+    assert info["branch"] == session.worktree_branch
+
+
+async def test_delete_session_keeps_the_worktree_by_default(engine):
+    session = await engine.new_session(isolated=True)
+    worktree = Path(session.directory)
+
+    await engine.delete_session(session.id)
+
+    assert worktree.is_dir()
+    assert await engine.store.get_session(session.id) is None
+
+
+async def test_delete_session_can_discard_the_worktree(engine):
+    session = await engine.new_session(isolated=True)
+    worktree = Path(session.directory)
+    branch = session.worktree_branch
+
+    await engine.delete_session(session.id, discard_worktree=True)
+
+    assert not worktree.exists()
+    assert branch not in _git(engine.project_dir, "branch", "--list", branch)
+    assert await engine.store.get_session(session.id) is None
+
+
+async def test_delete_session_survives_a_failing_discard(engine, monkeypatch):
+    """A failed cleanup must never cost the user their session row."""
+    session = await engine.new_session(isolated=True)
+
+    async def _boom(*args, **kwargs):
+        raise OSError("worktree removal exploded")
+
+    monkeypatch.setattr("bytebarn.engine.worktree.discard", _boom)
+
+    await engine.delete_session(session.id, discard_worktree=True)
+
+    assert await engine.store.get_session(session.id) is None

@@ -242,13 +242,66 @@ class Engine:
         await self.store.update_session(session_id, archived=1)
         self.bus.emit(SessionUpdated(session_id=session_id))
 
-    async def delete_session(self, session_id: str) -> None:
-        """Permanently remove a session, its children, and their history."""
+    async def session_worktree_info(self, session_id: str) -> dict | None:
+        """What deleting this session's worktree would cost, or None.
+
+        ``None`` means the session is not isolated and there is nothing to ask
+        the user about. ``unmerged`` is the number of commits that exist only
+        on this branch; ``exists`` is False when the directory has already been
+        removed by hand, in which case only the branch is left to clean up.
+        """
+        from .worktree import git_root, unmerged_count
+
+        session = await self.store.get_session(session_id)
+        if session is None or not session.worktree_branch:
+            return None
+        path = Path(session.directory) if session.directory else None
+        root = await git_root(self.project_dir)
+        unmerged = 0
+        if root is not None:
+            unmerged = await unmerged_count(root, session.worktree_branch)
+        return {
+            "branch": session.worktree_branch,
+            "path": str(path) if path else "",
+            "unmerged": unmerged,
+            "exists": bool(path and path.is_dir()),
+        }
+
+    async def delete_session(
+        self, session_id: str, discard_worktree: bool = False
+    ) -> None:
+        """Permanently remove a session, its children, and their history.
+
+        ``discard_worktree`` also removes an isolated session's worktree and
+        branch. Opt-in, because that destroys any commits living only there.
+        Cleanup failure never blocks the delete: a worktree left behind can be
+        removed by hand, a session row cannot be brought back.
+        """
         await self.abort(session_id)
+        if discard_worktree:
+            await self._discard_session_worktree(session_id)
         await self.store.delete_session(session_id)
         self._files_read.pop(session_id, None)
         self._runs.pop(session_id, None)
         self.bus.emit(SessionUpdated(session_id=session_id))
+
+    async def _discard_session_worktree(self, session_id: str) -> None:
+        """Best-effort worktree teardown — never raises into the delete path."""
+        from . import worktree as worktree_mod
+
+        try:
+            session = await self.store.get_session(session_id)
+            if session is None or not session.worktree_branch:
+                return
+            root = await worktree_mod.git_root(self.project_dir)
+            if root is None:
+                return
+            await worktree_mod.discard(
+                root, Path(session.directory), session.worktree_branch)
+        except Exception:
+            # reported by the caller from session_worktree_info; a cleanup
+            # failure must not cost the user the session row
+            pass
 
     async def list_models(self, provider_name: str, *, force: bool = True) -> list[str]:
         """Live model ids for a connected provider ([] if unreachable).
