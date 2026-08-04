@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -1944,5 +1945,121 @@ async def test_remember_project_refuses_worktree_paths(qapp, tmp_path):
         # and a worktree path already persisted by an older build is ignored
         engine.config.model_extra["last_project"] = iso.directory
         assert window._last_project() == ""
+    finally:
+        await engine.stop()
+
+
+async def test_deleting_an_isolated_session_offers_to_remove_the_worktree(
+    qapp, tmp_path
+):
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        session = await engine.new_session(isolated=True)
+        worktree = Path(session.directory)
+        asked: list = []
+
+        def _fake(title, text, keep_label, remove_label):
+            asked.append(text)
+            fut = asyncio.get_event_loop().create_future()
+            fut.set_result("remove")
+            return fut
+
+        window._ask_three_way = _fake
+        await window._delete_session(session.id)
+
+        assert asked, "no worktree dialog was shown"
+        assert session.worktree_branch in asked[0]
+        assert not worktree.exists()
+        assert await engine.store.get_session(session.id) is None
+    finally:
+        await engine.stop()
+
+
+async def test_keeping_the_worktree_still_deletes_the_session(qapp, tmp_path):
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        session = await engine.new_session(isolated=True)
+        worktree = Path(session.directory)
+
+        def _fake(title, text, keep_label, remove_label):
+            fut = asyncio.get_event_loop().create_future()
+            fut.set_result("keep")
+            return fut
+
+        window._ask_three_way = _fake
+        await window._delete_session(session.id)
+
+        assert worktree.is_dir()
+        assert await engine.store.get_session(session.id) is None
+    finally:
+        await engine.stop()
+
+
+async def test_cancelling_the_worktree_dialog_deletes_nothing(qapp, tmp_path):
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        session = await engine.new_session(isolated=True)
+        worktree = Path(session.directory)
+
+        def _fake(title, text, keep_label, remove_label):
+            fut = asyncio.get_event_loop().create_future()
+            fut.set_result(None)
+            return fut
+
+        window._ask_three_way = _fake
+        await window._delete_session(session.id)
+
+        assert worktree.is_dir()
+        assert await engine.store.get_session(session.id) is not None
+    finally:
+        await engine.stop()
+
+
+async def test_deleting_a_plain_session_shows_no_worktree_dialog(qapp, tmp_path):
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        session = await engine.new_session()
+        asked: list = []
+
+        def _fake(title, text, keep_label, remove_label):
+            asked.append(text)
+            fut = asyncio.get_event_loop().create_future()
+            fut.set_result("keep")
+            return fut
+
+        window._ask_three_way = _fake
+        await window._delete_session(session.id)
+
+        assert not asked
+        assert await engine.store.get_session(session.id) is None
+    finally:
+        await engine.stop()
+
+
+async def test_multi_delete_asks_once_and_lists_every_worktree(qapp, tmp_path):
+    """One dialog for the whole selection — a prompt per session is worse."""
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        first = await engine.new_session(isolated=True)
+        second = await engine.new_session(isolated=True)
+        plain = await engine.new_session()
+        asked: list = []
+
+        def _fake(title, text, keep_label, remove_label):
+            asked.append(text)
+            fut = asyncio.get_event_loop().create_future()
+            fut.set_result("remove")
+            return fut
+
+        window._ask_three_way = _fake
+        await window._delete_sessions([first.id, second.id, plain.id])
+
+        assert len(asked) == 1
+        assert first.worktree_branch in asked[0]
+        assert second.worktree_branch in asked[0]
+        assert not Path(first.directory).exists()
+        assert not Path(second.directory).exists()
+        for sid in (first.id, second.id, plain.id):
+            assert await engine.store.get_session(sid) is None
     finally:
         await engine.stop()

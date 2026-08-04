@@ -860,6 +860,35 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, _show)
         return fut
 
+    def _ask_three_way(
+        self, title: str, text: str, keep_label: str, remove_label: str
+    ):
+        """Await a three-button modal from an asyncio task.
+
+        Same qasync task re-entry dodge as `_ask_yes_no` — the dialog opens on
+        the next Qt loop turn and resolves a future. Resolves to "remove",
+        "keep", or None for cancel.
+        """
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QMessageBox
+
+        fut = asyncio.get_event_loop().create_future()
+
+        def _show() -> None:
+            box = QMessageBox(QMessageBox.Warning, title, text, parent=self)
+            remove = box.addButton(remove_label, QMessageBox.DestructiveRole)
+            keep = box.addButton(keep_label, QMessageBox.AcceptRole)
+            box.addButton(QMessageBox.Cancel)
+            box.setDefaultButton(keep)
+            box.exec()
+            clicked = box.clickedButton()
+            answer = "remove" if clicked is remove else "keep" if clicked is keep else None
+            if not fut.done():
+                fut.set_result(answer)
+
+        QTimer.singleShot(0, _show)
+        return fut
+
     async def _default_new_session_dir(self, project_id: str | None = None) -> str:
         """Working directory for an instant new session."""
         if project_id:
@@ -1016,18 +1045,59 @@ class MainWindow(QMainWindow):
         await self._after_session_removed(session_id)
 
     async def _delete_session(self, session_id: str) -> None:
-        await self.engine.delete_session(session_id)
+        answer = await self._worktree_verdict([session_id])
+        if answer is None:
+            return
+        await self.engine.delete_session(
+            session_id, discard_worktree=answer == "remove")
         await self._after_session_removed(session_id)
 
     async def _delete_sessions(self, session_ids: list[str]) -> None:
+        answer = await self._worktree_verdict(session_ids)
+        if answer is None:
+            return
         for sid in session_ids:
-            await self.engine.delete_session(sid)
+            await self.engine.delete_session(
+                sid, discard_worktree=answer == "remove")
         for sid in session_ids:
             self._session_stack = [s for s in self._session_stack if s != sid]
         if self.current_session_id in session_ids:
             await self._after_session_removed(self.current_session_id or "")
         else:
             await self._refresh_sessions()
+
+    async def _worktree_verdict(self, session_ids: list[str]) -> str | None:
+        """Ask what to do with any worktrees in this selection.
+
+        Returns "remove", "keep", or None to cancel the delete entirely. A
+        selection with no isolated sessions answers "keep" without asking —
+        SessionList already took the "permanently delete?" confirmation.
+        """
+        infos = []
+        for sid in session_ids:
+            info = await self.engine.session_worktree_info(sid)
+            if info is not None:
+                infos.append(info)
+        if not infos:
+            return "keep"
+
+        lines = []
+        for info in infos:
+            if info["unmerged"]:
+                plural = "" if info["unmerged"] == 1 else "s"
+                detail = (f"{info['unmerged']} commit{plural} not on any"
+                          f" other branch")
+            else:
+                detail = "fully merged"
+            if not info["exists"]:
+                detail += ", directory already gone"
+            lines.append(f"  {info['branch']} — {detail}")
+
+        what = "this session" if len(session_ids) == 1 else "these sessions"
+        body = (f"Remove the git worktree{'s' if len(infos) > 1 else ''} for"
+                f" {what} too?\n\n" + "\n".join(lines))
+        return await self._ask_three_way(
+            "Delete worktrees", body, "Keep worktrees", "Remove worktrees")
 
     def _rename_session(self, session_id: str) -> None:
         title, ok = QInputDialog.getText(self, "Rename session", "New title:")

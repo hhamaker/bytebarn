@@ -144,7 +144,9 @@ there, not in the widget.
   out from HEAD (`Engine.new_session(isolated=True)`). Its whole delegation tree
   writes there, so the live checkout never changes mid-run — this is how you run
   ByteBarn on ByteBarn. Branch `bytebarn/session-<id8>`, recorded in
-  `session.worktree_branch`; never auto-applied or auto-removed, merge it in git.
+  `session.worktree_branch`; never auto-applied or auto-removed, merge it in
+  git. Deleting the session offers to remove the worktree and branch, saying
+  first how many commits exist only there.
 - **sandbox** — macOS seatbelt confinement for bash under Full-auto (or `sandbox.always`); writable roots = project + temp + `~/.bytebarn` (`engine/sandbox.py`).
 - **hooks** — config `hooks.pre_tool` / `post_tool` rules can deny tool calls or run side commands (`engine/hooks.py`).
 - **rewind** — `/rewind` drops transcript after a user message and restores write/edit files from run checkpoints.
