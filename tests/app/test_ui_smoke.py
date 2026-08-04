@@ -19,6 +19,37 @@ def qapp():
     yield app
 
 
+@pytest.fixture
+def no_mcp_transport(monkeypatch):
+    """Fail the test if it opens a real MCP connection.
+
+    The suite is meant to run with no network and no API keys, but the curated
+    MCP recipes carry live URLs and `npx` commands, so a dialog test that
+    triggers a reconnect will reach out for real — and leave the in-flight
+    attempt to be abandoned at teardown, which surfaces later as an unraisable
+    "coroutine was never awaited" warning against an unrelated test.
+
+    `_Connection.run` swallows transport errors into `conn.error`, so raising
+    here cannot fail the test on its own; the teardown assertion is what does.
+    """
+    import mcp.client.stdio as stdio_mod
+    import mcp.client.streamable_http as http_mod
+
+    opened: list[str] = []
+
+    def _forbid(kind: str):
+        def _blow_up(*args, **kwargs):
+            opened.append(kind)
+            raise AssertionError(f"real MCP {kind} connection attempted")
+
+        return _blow_up
+
+    monkeypatch.setattr(stdio_mod, "stdio_client", _forbid("stdio"))
+    monkeypatch.setattr(http_mod, "streamablehttp_client", _forbid("http"))
+    yield opened
+    assert not opened, f"test opened real MCP connections: {sorted(set(opened))}"
+
+
 async def test_main_window_builds_and_loads(qapp, tmp_path):
     from bytebarn.app.main_window import MainWindow
     from bytebarn.engine.facade import Engine
@@ -1017,7 +1048,7 @@ async def test_mcp_dialog_builds(qapp, tmp_path):
         await engine.stop()
 
 
-async def test_mcp_dialog_add_and_remove_server(qapp, tmp_path):
+async def test_mcp_dialog_add_and_remove_server(qapp, tmp_path, no_mcp_transport):
     from bytebarn.app.mcp_dialog import MCPDialog
     from bytebarn.engine.facade import Engine
 
@@ -1027,6 +1058,15 @@ async def test_mcp_dialog_add_and_remove_server(qapp, tmp_path):
     gdir.mkdir()
     engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=gdir)
     await engine.start()
+    # what's under test is the config the dialog writes, not the connecting —
+    # the curated recipes point at live URLs and `npx`, so let the reconnect
+    # be observed rather than performed
+    restarts: list = []
+
+    async def _record_restart(config):
+        restarts.append(config)
+
+    engine.mcp.restart = _record_restart
     try:
         dlg = MCPDialog(engine)
         # curated picks + Custom in the picker
@@ -1058,6 +1098,8 @@ async def test_mcp_dialog_add_and_remove_server(qapp, tmp_path):
         config = json.loads((gdir / "config.json").read_text())
         assert "github" not in config["mcp"]
         await asyncio.sleep(0.3)  # drain pending reconnect tasks before stop
+        # each _add re-reads config and reconnects; the wiring still fires
+        assert len(restarts) >= 2
     finally:
         await engine.stop()
 
