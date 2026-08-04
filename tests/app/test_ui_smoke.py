@@ -1817,6 +1817,93 @@ async def test_isolated_status_bar_reports_unavailable_outside_git(qapp, tmp_pat
         await engine.stop()
 
 
+async def test_isolated_status_bar_names_the_disabled_config(qapp, tmp_path):
+    """`worktree.enabled=false` is the user's own choice, so say so.
+
+    Telling someone their git repo is "not a git repo" sends them debugging
+    the repo instead of the setting they flipped.
+    """
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        engine.config.model_extra["worktree"] = {"enabled": False}
+
+        await window._new_session(isolated=True)
+
+        message = window.statusBar().currentMessage()
+        assert "disabled" in message.lower()
+        assert "not a git repo" not in message
+        session = await engine.store.get_session(window.current_session_id)
+        assert session.worktree_branch == ""
+    finally:
+        engine.config.model_extra.pop("worktree", None)
+        await engine.stop()
+
+
+async def test_isolated_header_shows_the_branch_not_the_session_id(qapp, tmp_path):
+    """An isolated worktree's directory name is the raw session id.
+
+    `ByteBarn — 7f3a9c2b8d1e4f5a...` tells the user nothing. The sidebar row
+    already substitutes the branch short-name; the header and window title
+    should agree with it.
+    """
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        iso = await engine.new_session(isolated=True)
+        assert iso.worktree_branch
+        await window._load_session(iso.id)
+
+        short = iso.worktree_branch.split("/")[-1]
+        assert short in window.windowTitle()
+        assert iso.id not in window.windowTitle()
+        assert short in window.dir_button.text()
+        assert iso.id not in window.dir_button.text()
+        # the full path stays reachable
+        assert iso.directory in window.dir_button.toolTip()
+    finally:
+        await engine.stop()
+
+
+async def test_plain_header_still_shows_the_directory_name(qapp, tmp_path):
+    """The substitution must not leak into ordinary sessions."""
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        plain = await engine.new_session(directory=str(engine.project_dir))
+        await window._load_session(plain.id)
+
+        assert engine.project_dir.name in window.windowTitle()
+        assert engine.project_dir.name in window.dir_button.text()
+    finally:
+        await engine.stop()
+
+
+async def test_project_workspace_marks_isolated_sessions(qapp, tmp_path):
+    """The workspace is the second place sessions are listed.
+
+    Without the mark here, the same session reads as isolated in the sidebar
+    and ordinary in the workspace.
+    """
+    from bytebarn.app.project_workspace import ProjectWorkspace
+
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        iso = await engine.new_session(isolated=True)
+        plain = await engine.new_session(directory=str(engine.project_dir))
+        assert iso.worktree_branch and not plain.worktree_branch
+
+        ws = ProjectWorkspace(engine)
+        iso_item = ws._session_item(iso, {})
+        plain_item = ws._session_item(plain, {})
+
+        from bytebarn.app.delegates import TITLE_ROLE
+
+        assert "⑂" in iso_item.data(TITLE_ROLE)
+        assert "⑂" in iso_item.text()
+        assert "⑂" not in plain_item.data(TITLE_ROLE)
+        assert "⑂" not in plain_item.text()
+    finally:
+        await engine.stop()
+
+
 async def test_new_session_button_forwards_the_isolate_checkbox(qapp, tmp_path):
     """`+ New session` must carry the checkbox through to the engine."""
     window, engine = await _iso_window(tmp_path, qapp)

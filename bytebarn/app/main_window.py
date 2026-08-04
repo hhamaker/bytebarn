@@ -825,6 +825,10 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(
                     f"Isolated on {session.worktree_branch} — {session.directory}",
                     8000)
+            elif not self.engine.worktree_enabled():
+                self.statusBar().showMessage(
+                    'Isolation unavailable — worktrees are disabled '
+                    '("worktree": {"enabled": false} in config)', 8000)
             else:
                 self.statusBar().showMessage(
                     "Isolation unavailable — not a git repo, or no commits yet",
@@ -1088,8 +1092,12 @@ class MainWindow(QMainWindow):
         self.header_meta.setText(meta)
         directory = session.directory or str(self.engine.project_dir)
         self.status_project.setText(directory)
-        self.setWindowTitle(f"ByteBarn — {Path(directory).name}")
-        self.dir_button.setText(f"📁 {Path(directory).name}")
+        # an isolated worktree's directory name is the raw session id, which
+        # says nothing — show the branch short-name, as the sidebar row does
+        branch = getattr(session, "worktree_branch", "") or ""
+        label = branch.split("/")[-1] if branch else Path(directory).name
+        self.setWindowTitle(f"ByteBarn — {label}")
+        self.dir_button.setText(f"📁 {label}")
         self.dir_button.setToolTip(
             f"Working directory: {directory}\nClick to change (this session only)")
 
