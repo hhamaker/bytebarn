@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS session (
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
     archived INTEGER NOT NULL DEFAULT 0,
-    permission_mode TEXT
+    permission_mode TEXT,
+    worktree_branch TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS message (
     id TEXT PRIMARY KEY,
@@ -131,6 +132,7 @@ class Session:
     archived: bool
     directory: str = ""   # per-session working dir ('' = project default)
     permission_mode: str | None = None
+    worktree_branch: str = ""   # git branch when the session owns a worktree
 
 
 @dataclass
@@ -204,6 +206,10 @@ class Store:
         if "permission_mode" not in cols:
             await self._db.execute(
                 "ALTER TABLE session ADD COLUMN permission_mode TEXT")
+        # migration: sessions gained a worktree branch (isolated sessions)
+        if "worktree_branch" not in cols:
+            await self._db.execute(
+                "ALTER TABLE session ADD COLUMN worktree_branch TEXT NOT NULL DEFAULT ''")
         # migration: projects gained Claude-style custom instructions
         cur = await self._db.execute("PRAGMA table_info(project)")
         pcols = [r[1] for r in await cur.fetchall()]
@@ -372,17 +378,20 @@ class Store:
         title: str = "",
         directory: str = "",
         permission_mode: str | None = None,
+        worktree_branch: str = "",
     ) -> Session:
         now = time.time()
         sid = _id()
         await self.db.execute(
             "INSERT INTO session (id, project_id, parent_session_id, title, agent, model,"
-            " directory, created_at, updated_at, archived, permission_mode) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (sid, project_id, parent_session_id, title, agent, model, directory, now, now, 0, permission_mode),
+            " directory, created_at, updated_at, archived, permission_mode, worktree_branch)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (sid, project_id, parent_session_id, title, agent, model, directory, now, now,
+             0, permission_mode, worktree_branch),
         )
         await self.db.commit()
         return Session(sid, project_id, parent_session_id, title, agent, model,
-                       now, now, False, directory, permission_mode)
+                       now, now, False, directory, permission_mode, worktree_branch)
 
     async def get_session(self, session_id: str) -> Session | None:
         row = await self._fetchone("SELECT * FROM session WHERE id=?", (session_id,))
@@ -773,9 +782,10 @@ class Store:
     def _session(r: aiosqlite.Row) -> Session:
         directory = r["directory"] if "directory" in r.keys() else ""
         pmode = r["permission_mode"] if "permission_mode" in r.keys() else None
+        branch = r["worktree_branch"] if "worktree_branch" in r.keys() else ""
         return Session(r["id"], r["project_id"], r["parent_session_id"], r["title"], r["agent"],
                        r["model"], r["created_at"], r["updated_at"], bool(r["archived"]),
-                       directory, pmode)
+                       directory, pmode, branch)
 
     async def _execute(self, q: str, args: tuple = ()) -> None:
         await self.db.execute(q, args)

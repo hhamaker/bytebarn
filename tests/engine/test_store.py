@@ -175,3 +175,62 @@ async def test_project_instructions_and_assets(store, tmp_path):
     await store.add_project_asset(p.id, f, "notes.md")
     await store.delete_project(p.id)
     assert await store.list_project_assets(p.id) == []
+
+
+async def test_session_worktree_branch_roundtrip(store, tmp_path):
+    project = await store.open_project(str(tmp_path))
+
+    plain = await store.create_session(project.id)
+    assert plain.worktree_branch == ""
+
+    isolated = await store.create_session(
+        project.id, worktree_branch="bytebarn/session-a1b2c3d4")
+    assert isolated.worktree_branch == "bytebarn/session-a1b2c3d4"
+
+    fetched = await store.get_session(isolated.id)
+    assert fetched.worktree_branch == "bytebarn/session-a1b2c3d4"
+
+    await store.update_session(plain.id, worktree_branch="bytebarn/session-deadbeef")
+    again = await store.get_session(plain.id)
+    assert again.worktree_branch == "bytebarn/session-deadbeef"
+
+
+async def test_session_worktree_branch_migrates_old_db(tmp_path):
+    """A DB created before the column exists must gain it on open()."""
+    import sqlite3
+
+    from bytebarn.engine.store import Store
+
+    db_path = tmp_path / "old.db"
+    con = sqlite3.connect(db_path)
+    con.executescript(
+        """
+        CREATE TABLE project (
+            id TEXT PRIMARY KEY, path TEXT NOT NULL, name TEXT NOT NULL,
+            last_opened_at REAL NOT NULL
+        );
+        CREATE TABLE session (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL REFERENCES project(id),
+            parent_session_id TEXT REFERENCES session(id),
+            title TEXT NOT NULL DEFAULT '',
+            agent TEXT NOT NULL DEFAULT 'build',
+            model TEXT NOT NULL DEFAULT '',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            archived INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT INTO project VALUES ('p1', '/tmp/x', 'x', 0);
+        INSERT INTO session (id, project_id, created_at, updated_at)
+            VALUES ('s1', 'p1', 0, 0);
+        """
+    )
+    con.commit()
+    con.close()
+
+    store = Store(db_path)
+    await store.open()
+    session = await store.get_session("s1")
+    assert session is not None
+    assert session.worktree_branch == ""
+    await store.close()
