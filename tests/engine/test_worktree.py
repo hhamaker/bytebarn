@@ -49,6 +49,22 @@ async def engine(tmp_path):
     await eng.stop()
 
 
+@pytest.fixture
+async def nongit_engine(tmp_path):
+    """Engine rooted in a plain (non-git) directory — isolation unavailable."""
+    proj = tmp_path / "plain"
+    proj.mkdir()
+    gdir = tmp_path / "global"
+    gdir.mkdir()
+    (gdir / "config.json").write_text(json.dumps({"model": "fake/model"}))
+    eng = Engine(proj, db_path=tmp_path / "crew.db", global_dir=gdir)
+    await eng.start()
+    try:
+        yield eng
+    finally:
+        await eng.stop()
+
+
 def _install(engine, script):
     provider = FakeProvider(script)
     engine.providers.register("fake", provider)
@@ -260,12 +276,22 @@ async def test_isolated_session_gets_its_own_worktree(engine):
     assert again.worktree_branch == session.worktree_branch
 
 
-async def test_isolated_sessions_never_reuse_an_empty_session(engine):
-    first = await engine.new_session(isolated=True)
-    second = await engine.new_session(isolated=True)
+async def test_isolated_sessions_never_reuse_an_empty_session(nongit_engine):
+    """Guards the ``if not isolated:`` skip in the reuse loop.
+
+    Must run against a non-git project: in a git project, ``_isolate_session``
+    rewrites ``directory`` to the fresh worktree path on every call, so the
+    reuse loop's ``existing.directory == directory`` check already fails on
+    its own — the test would pass whether or not the isolated guard exists.
+    Only when isolation is unavailable does ``directory`` stay constant
+    (the caller-supplied value) across both calls, making this the one setup
+    where removing the guard actually changes the outcome.
+    """
+    proj = str(nongit_engine.project_dir)
+    first = await nongit_engine.new_session(isolated=True, directory=proj)
+    second = await nongit_engine.new_session(isolated=True, directory=proj)
 
     assert first.id != second.id
-    assert first.directory != second.directory
 
 
 async def test_plain_session_is_not_isolated(engine):
@@ -273,25 +299,12 @@ async def test_plain_session_is_not_isolated(engine):
     assert session.worktree_branch == ""
 
 
-async def test_isolation_is_a_no_op_outside_git(tmp_path):
+async def test_isolation_is_a_no_op_outside_git(nongit_engine):
     """A non-git project still yields a usable session, just not isolated."""
-    import json
-
-    from bytebarn.engine.facade import Engine
-
-    proj = tmp_path / "plain"
-    proj.mkdir()
-    gdir = tmp_path / "global"
-    gdir.mkdir()
-    (gdir / "config.json").write_text(json.dumps({"model": "fake/model"}))
-    eng = Engine(proj, db_path=tmp_path / "crew.db", global_dir=gdir)
-    await eng.start()
-    try:
-        session = await eng.new_session(isolated=True, directory=str(proj))
-        assert session.worktree_branch == ""
-        assert session.directory == str(proj)
-    finally:
-        await eng.stop()
+    proj = str(nongit_engine.project_dir)
+    session = await nongit_engine.new_session(isolated=True, directory=proj)
+    assert session.worktree_branch == ""
+    assert session.directory == proj
 
 
 async def test_isolation_respects_worktree_disabled(engine):
@@ -307,6 +320,31 @@ async def test_repo_dirty(engine):
     assert await engine.repo_dirty() == []
     (engine.project_dir / "scratch.txt").write_text("wip\n")
     assert await engine.repo_dirty() == ["scratch.txt"]
+
+
+async def test_isolate_session_cleans_up_worktree_on_store_failure(engine, monkeypatch):
+    """A store write failure after the worktree exists must not orphan it.
+
+    ``track=False`` worktrees are never registered with the manager, so if
+    ``_isolate_session`` didn't clean up on its own error path, nothing else
+    would ever remove the directory or its ``bytebarn/session-*`` branch.
+    """
+    calls: list[str] = []
+
+    async def boom(session_id, **fields):
+        calls.append(session_id)
+        raise RuntimeError("store exploded")
+
+    monkeypatch.setattr(engine.store, "update_session", boom)
+
+    with pytest.raises(RuntimeError, match="store exploded"):
+        await engine.new_session(isolated=True)
+
+    assert calls, "update_session should have been attempted"
+    session_id = calls[0]
+    project_key = (engine.project.id if engine.project else "p")[:16]
+    leftover = engine.worktrees.store_root / project_key / session_id
+    assert not leftover.exists()
 
 
 async def test_worktree_can_be_disabled(engine):

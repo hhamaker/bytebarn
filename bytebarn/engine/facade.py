@@ -167,8 +167,16 @@ class Engine:
         )
         if wt is None:
             return session
-        await self.store.update_session(
-            session.id, directory=str(wt.path), worktree_branch=wt.branch)
+        try:
+            await self.store.update_session(
+                session.id, directory=str(wt.path), worktree_branch=wt.branch)
+        except Exception:
+            # store write failed after the worktree/branch already exist on
+            # disk (untracked, so nothing else will ever clean them up) —
+            # best-effort teardown, then let the original error propagate so
+            # the caller never silently gets back a non-isolated session.
+            await self.worktrees._force_remove(wt.git_root, wt.path, wt.branch)
+            raise
         return await self.store.get_session(session.id) or session
 
     async def repo_dirty(self) -> list[str]:
