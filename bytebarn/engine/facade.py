@@ -291,7 +291,7 @@ class Engine:
 
         try:
             session = await self.store.get_session(session_id)
-            if session is None or not session.worktree_branch:
+            if session is None or not session.worktree_branch or not session.directory:
                 return
             root = await worktree_mod.git_root(self.project_dir)
             if root is None:

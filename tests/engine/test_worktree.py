@@ -588,6 +588,30 @@ async def test_discard_keeps_a_branch_it_did_not_create(tmp_path):
     assert "feature/mine" in _git(repo, "branch", "--list", "feature/mine")
 
 
+async def test_discard_refuses_an_empty_path(tmp_path, monkeypatch):
+    """An unset session directory must never let discard() touch the cwd.
+
+    ``Path("")`` normalizes to ``Path(".")``, which ``.exists()`` happily
+    resolves against the *process* cwd. Without a guard, a failed
+    ``git worktree remove`` (git_root is not a linked worktree of ".") falls
+    through to ``shutil.rmtree(Path("."), ignore_errors=True)`` and silently
+    deletes whatever directory the engine happened to be running in.
+    """
+    from bytebarn.engine.worktree import discard
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    marker = cwd / "marker.txt"
+    marker.write_text("still here\n")
+    monkeypatch.chdir(cwd)
+
+    await discard(repo, Path(""), "bytebarn/session-empty")
+
+    assert marker.exists()
+
+
 async def test_missing_worktree_falls_back_to_project_dir_with_one_warning(engine):
     """The documented cleanup (`git worktree remove`) must not brick the session.
 
@@ -698,4 +722,30 @@ async def test_delete_session_survives_a_failing_discard(engine, monkeypatch):
 
     await engine.delete_session(session.id, discard_worktree=True)
 
+    assert await engine.store.get_session(session.id) is None
+
+
+async def test_discard_session_worktree_skips_a_session_without_a_directory(
+    engine, monkeypatch,
+):
+    """Mirrors session_worktree_info's directory guard on the delete path.
+
+    A worktree_branch with no directory should never happen in practice
+    (``_isolate_session`` writes both in the same update), but
+    ``_discard_session_worktree`` must not assume that — it should refuse to
+    hand ``discard()`` an empty path rather than rely on ``discard()`` alone.
+    """
+    session = await engine.new_session(isolated=True)
+    await engine.store.update_session(session.id, directory="")
+
+    calls = []
+
+    async def spy(*args, **kwargs):
+        calls.append(args)
+
+    monkeypatch.setattr("bytebarn.engine.worktree.discard", spy)
+
+    await engine.delete_session(session.id, discard_worktree=True)
+
+    assert calls == []
     assert await engine.store.get_session(session.id) is None

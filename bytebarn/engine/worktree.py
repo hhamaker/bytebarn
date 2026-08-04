@@ -109,7 +109,20 @@ async def discard(git_root: Path, path: Path, branch: str) -> None:
 
     Falls back to a plain tree delete plus ``worktree prune`` when git refuses,
     so a half-removed worktree cannot wedge the caller.
+
+    Refuses (silently — this must never raise into a delete path that cannot
+    be blocked) when ``path`` resolves to the current working directory.
+    ``Path("")`` — an unset/empty session directory — normalizes to ``Path(".")``,
+    which ``.exists()`` happily resolves against the *process* cwd; without this
+    guard a failed ``worktree remove`` falls through to
+    ``shutil.rmtree(path, ignore_errors=True)`` and silently deletes whatever
+    directory the caller happened to be running in. This is a second line of
+    defence — callers should never pass such a path in the first place — but
+    ``discard`` is a module-level function any caller can reach, so it must
+    not depend on every one of them getting that right.
     """
+    if path.resolve() == Path.cwd().resolve():
+        return
     if path.exists():
         code, _ = await _git(git_root, "worktree", "remove", "--force", str(path), timeout=60.0)
         if code != 0 and path.exists():
