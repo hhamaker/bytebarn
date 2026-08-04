@@ -180,7 +180,9 @@ class Engine:
             # best-effort teardown, then let the *original* error propagate
             # so the caller never silently gets back a non-isolated session.
             try:
-                await self.worktrees._force_remove(wt.git_root, wt.path, wt.branch)
+                from .worktree import discard
+
+                await discard(wt.git_root, wt.path, wt.branch)
             except Exception:
                 # teardown is best-effort only: whatever went wrong here is
                 # strictly less informative than the store failure that

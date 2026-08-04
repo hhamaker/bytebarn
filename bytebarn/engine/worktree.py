@@ -77,6 +77,49 @@ async def head_commit(git_root: Path) -> str | None:
     return out if code == 0 and out else None
 
 
+async def unmerged_count(git_root: Path, branch: str) -> int:
+    """Commits reachable only from ``branch`` — what deleting it would lose.
+
+    Reachability from every other ref, not a comparison against a default
+    branch: the work may have landed by merge, rebase, squash, or cherry-pick.
+
+    Deliberately not ``--exclude=<ref> --all``: ``--all`` includes HEAD, which
+    ``--exclude`` does not filter, and a session branch is checked out in its
+    own worktree — so that spelling reports 0 every time.
+
+    Returns 0 when git fails or the branch is gone. The caller is deciding
+    whether to warn, and a warning we cannot substantiate is noise.
+    """
+    ref = f"refs/heads/{branch}"
+    code, out = await _git(git_root, "for-each-ref", "--format=%(refname)")
+    if code != 0:
+        return 0
+    others = [line for line in out.splitlines() if line.strip() and line.strip() != ref]
+    code, out = await _git(git_root, "rev-list", "--count", ref, "--not", *others)
+    if code != 0:
+        return 0
+    try:
+        return int(out.strip())
+    except ValueError:
+        return 0
+
+
+async def discard(git_root: Path, path: Path, branch: str) -> None:
+    """Remove a worktree and the throwaway branch that came with it.
+
+    Falls back to a plain tree delete plus ``worktree prune`` when git refuses,
+    so a half-removed worktree cannot wedge the caller.
+    """
+    if path.exists():
+        code, _ = await _git(git_root, "worktree", "remove", "--force", str(path), timeout=60.0)
+        if code != 0 and path.exists():
+            shutil.rmtree(path, ignore_errors=True)
+            await _git(git_root, "worktree", "prune")
+    # drop the throwaway branch if we created one
+    if branch.startswith("bytebarn/"):
+        await _git(git_root, "branch", "-D", branch)
+
+
 async def dirty_files(root: Path) -> list[str]:
     """Uncommitted paths (modified, staged, untracked) relative to the git root.
 
@@ -149,7 +192,7 @@ class WorktreeManager:
         path = self.store_root / project_key / session_id
         if path.exists():
             # leftover from a crashed run — drop it
-            await self._force_remove(root, path, branch)
+            await discard(root, path, branch)
 
         path.parent.mkdir(parents=True, exist_ok=True)
         code, _ = await _git(
@@ -299,17 +342,7 @@ class WorktreeManager:
         wt = self._active.pop(session_id, None)
         if wt is None:
             return
-        await self._force_remove(wt.git_root, wt.path, wt.branch)
-
-    async def _force_remove(self, git_root: Path, path: Path, branch: str) -> None:
-        if path.exists():
-            code, _ = await _git(git_root, "worktree", "remove", "--force", str(path), timeout=60.0)
-            if code != 0 and path.exists():
-                shutil.rmtree(path, ignore_errors=True)
-                await _git(git_root, "worktree", "prune")
-        # drop the throwaway branch if we created one
-        if branch.startswith("bytebarn/"):
-            await _git(git_root, "branch", "-D", branch)
+        await discard(wt.git_root, wt.path, wt.branch)
 
     async def apply_and_remove(self, session_id: str) -> ApplyResult | None:
         wt = self._active.get(session_id)

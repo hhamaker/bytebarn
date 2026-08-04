@@ -358,7 +358,7 @@ async def test_isolate_session_store_failure_survives_cleanup_failure(engine, mo
         raise ValueError("cleanup exploded")
 
     monkeypatch.setattr(engine.store, "update_session", boom_store)
-    monkeypatch.setattr(engine.worktrees, "_force_remove", boom_cleanup)
+    monkeypatch.setattr("bytebarn.engine.worktree.discard", boom_cleanup)
 
     with pytest.raises(RuntimeError, match="store exploded"):
         await engine.new_session(isolated=True)
@@ -511,6 +511,80 @@ async def test_isolated_session_in_untracked_subdir_still_has_a_cwd(tmp_path):
         assert cwd.name == "scratch"
     finally:
         await eng.stop()
+
+
+async def test_unmerged_count_sees_commits_only_on_this_branch(tmp_path):
+    """The branch is checked out in a linked worktree, as a real one always is."""
+    from bytebarn.engine.worktree import unmerged_count
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    wt_path = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-b", "bytebarn/session-aaa", str(wt_path), "HEAD")
+    (wt_path / "b.txt").write_text("b\n")
+    _git(wt_path, "add", ".")
+    _git(wt_path, "commit", "-m", "w1")
+    (wt_path / "c.txt").write_text("c\n")
+    _git(wt_path, "add", ".")
+    _git(wt_path, "commit", "-m", "w2")
+
+    assert await unmerged_count(repo, "bytebarn/session-aaa") == 2
+
+
+async def test_unmerged_count_is_zero_once_merged(tmp_path):
+    from bytebarn.engine.worktree import unmerged_count
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    wt_path = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-b", "bytebarn/session-bbb", str(wt_path), "HEAD")
+    (wt_path / "b.txt").write_text("b\n")
+    _git(wt_path, "add", ".")
+    _git(wt_path, "commit", "-m", "w1")
+
+    assert await unmerged_count(repo, "bytebarn/session-bbb") == 1
+    _git(repo, "merge", "--no-ff", "-m", "merge", "bytebarn/session-bbb")
+    assert await unmerged_count(repo, "bytebarn/session-bbb") == 0
+
+
+async def test_unmerged_count_is_zero_for_a_missing_branch(tmp_path):
+    """A warning we cannot substantiate is noise — never raise here."""
+    from bytebarn.engine.worktree import unmerged_count
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    assert await unmerged_count(repo, "bytebarn/session-nope") == 0
+
+
+async def test_discard_removes_worktree_and_branch(tmp_path):
+    from bytebarn.engine.worktree import discard
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    wt_path = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-b", "bytebarn/session-ccc", str(wt_path), "HEAD")
+    assert wt_path.is_dir()
+
+    await discard(repo, wt_path, "bytebarn/session-ccc")
+
+    assert not wt_path.exists()
+    branches = _git(repo, "branch", "--list", "bytebarn/session-ccc")
+    assert branches.strip() == ""
+
+
+async def test_discard_keeps_a_branch_it_did_not_create(tmp_path):
+    """Only throwaway bytebarn/ branches are deleted — same guard as before."""
+    from bytebarn.engine.worktree import discard
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    wt_path = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-b", "feature/mine", str(wt_path), "HEAD")
+
+    await discard(repo, wt_path, "feature/mine")
+
+    assert not wt_path.exists()
+    assert "feature/mine" in _git(repo, "branch", "--list", "feature/mine")
 
 
 async def test_missing_worktree_falls_back_to_project_dir_with_one_warning(engine):
