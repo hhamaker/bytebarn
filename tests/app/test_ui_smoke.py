@@ -2063,3 +2063,104 @@ async def test_multi_delete_asks_once_and_lists_every_worktree(qapp, tmp_path):
             assert await engine.store.get_session(sid) is None
     finally:
         await engine.stop()
+
+
+async def test_worktree_dialog_wording_matches_the_isolated_count_not_the_selection(
+    qapp, tmp_path
+):
+    """Review finding 2: one isolated session plus any number of plain ones
+    must still read "this session", singular — the dialog is only ever
+    about the isolated sessions in the selection, not the whole selection.
+    """
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        iso = await engine.new_session(isolated=True)
+        plain_a = await engine.new_session()
+        plain_b = await engine.new_session()
+        asked: list = []
+
+        def _fake(title, text, keep_label, remove_label):
+            asked.append(text)
+            fut = asyncio.get_event_loop().create_future()
+            fut.set_result("keep")
+            return fut
+
+        window._ask_three_way = _fake
+        await window._delete_sessions([iso.id, plain_a.id, plain_b.id])
+
+        assert len(asked) == 1
+        assert "this session" in asked[0]
+        assert "these sessions" not in asked[0]
+    finally:
+        await engine.stop()
+
+
+async def test_ask_three_way_resolves_from_the_real_dialog_buttons(qapp, tmp_path):
+    """Review finding 1: every other test replaces `_ask_three_way` before it
+    runs, so the button-role -> verdict mapping inside it (main_window.py,
+    next to `_ask_yes_no`) was only correct by inspection. This drives the
+    real `QMessageBox`: `QMessageBox.exec` is patched to click a button
+    chosen by identity (the actual Remove/Keep/Cancel button, not merely a
+    role match) once its own nested event loop starts, then the dialog is
+    left to resolve `_ask_three_way`'s future for real.
+
+    Cancel is exercised by clicking the real Cancel button so the mapping is
+    proven to fall through to `None` by *not* matching either captured
+    button — not by matching a role that happens to coincide.
+
+    Both `QTimer.singleShot(0, ...)` calls here run on the Qt event
+    dispatcher, not the asyncio loop pytest-asyncio drives this test with
+    (there is no qasync integration in the test harness) — so nothing pumps
+    them on its own the way `await asyncio.sleep(0)` pumps a plain asyncio
+    task elsewhere in this file. `qapp.processEvents()` turns the Qt loop
+    directly instead.
+    """
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QMessageBox
+
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        async def ask_and_click(pick):
+            """``pick(box) -> QAbstractButton`` chooses the button to press."""
+            orig_exec = QMessageBox.exec
+
+            def patched_exec(self):
+                def _click():
+                    pick(self).click()
+
+                QTimer.singleShot(0, _click)
+                return orig_exec(self)
+
+            QMessageBox.exec = patched_exec
+            try:
+                fut = window._ask_three_way(
+                    "Delete worktrees", "body text",
+                    "Keep worktrees", "Remove worktrees")
+                for _ in range(200):
+                    if fut.done():
+                        break
+                    qapp.processEvents()
+                    await asyncio.sleep(0)
+                else:
+                    raise AssertionError("dialog never resolved its future")
+                return fut.result()
+            finally:
+                QMessageBox.exec = orig_exec
+
+        remove_answer = await ask_and_click(
+            lambda box: next(
+                b for b in box.buttons()
+                if box.buttonRole(b) == QMessageBox.DestructiveRole))
+        assert remove_answer == "remove"
+
+        keep_answer = await ask_and_click(
+            lambda box: next(
+                b for b in box.buttons()
+                if box.buttonRole(b) == QMessageBox.AcceptRole))
+        assert keep_answer == "keep"
+
+        cancel_answer = await ask_and_click(
+            lambda box: box.button(QMessageBox.Cancel))
+        assert cancel_answer is None
+    finally:
+        await engine.stop()

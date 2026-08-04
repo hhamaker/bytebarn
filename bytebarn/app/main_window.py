@@ -1093,7 +1093,10 @@ class MainWindow(QMainWindow):
                 detail += ", directory already gone"
             lines.append(f"  {info['branch']} — {detail}")
 
-        what = "this session" if len(session_ids) == 1 else "these sessions"
+        # "this session" vs "these sessions" describes the isolated ones the
+        # dialog is actually about, not the whole selection passed in — a
+        # plain session mixed into the selection must not tip the wording.
+        what = "this session" if len(infos) == 1 else "these sessions"
         body = (f"Remove the git worktree{'s' if len(infos) > 1 else ''} for"
                 f" {what} too?\n\n" + "\n".join(lines))
         return await self._ask_three_way(
