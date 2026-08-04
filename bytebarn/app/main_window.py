@@ -801,7 +801,10 @@ class MainWindow(QMainWindow):
         if directory is None:
             directory = await self._default_new_session_dir(project_id)
         if isolated:
-            dirty = await self.engine.repo_dirty()
+            # probe the very repo the worktree will branch from — a new session
+            # can be rooted in any registered project, and listing another
+            # repo's dirty files is worse than saying nothing
+            dirty = await self.engine.repo_dirty(directory)
             if dirty:
                 shown = "\n".join(f"  {p}" for p in dirty[:10])
                 if len(dirty) > 10:
@@ -862,7 +865,12 @@ class MainWindow(QMainWindow):
                     return p.path
         if self.current_session_id:
             current = await self.engine.store.get_session(self.current_session_id)
-            if current and current.directory and Path(current.directory).is_dir():
+            # never inherit an isolated session's worktree: a plain new session
+            # rooted there would write to another session's branch while the
+            # UI showed nothing to say so, and `git status` in the live
+            # checkout would stay clean
+            if (current and current.directory and not current.worktree_branch
+                    and Path(current.directory).is_dir()):
                 return current.directory
         last = self._last_project()
         if last and Path(last).is_dir():
@@ -949,17 +957,38 @@ class MainWindow(QMainWindow):
         self._fire(apply())
 
     def _remember_project(self, path: str) -> None:
-        """Remember the last chosen folder to seed the next directory picker."""
+        """Remember the last chosen folder to seed the next directory picker.
+
+        Worktree paths are never remembered: they are throwaway checkouts under
+        the worktree store, so persisting one as ``last_project`` would outlive
+        the session, survive a restart, and seed the directory picker with a
+        directory the user never chose (and that git may since have removed).
+        """
         from ..engine.config import patch_config_file
 
+        if self._is_worktree_path(path):
+            return
         try:
             patch_config_file(self.engine.global_dir / "config.json",
                               {"last_project": path})
         except Exception:
             pass
 
+    def _is_worktree_path(self, path: str) -> bool:
+        """True when ``path`` lives under the engine's worktree store."""
+        if not path:
+            return False
+        try:
+            Path(path).resolve().relative_to(
+                Path(self.engine.worktrees.store_root).resolve())
+        except (ValueError, OSError):
+            return False
+        return True
+
     def _last_project(self) -> str:
-        return (self.engine.config.model_extra or {}).get("last_project", "")
+        """Last chosen folder, ignoring any stale worktree path already stored."""
+        last = (self.engine.config.model_extra or {}).get("last_project", "")
+        return "" if self._is_worktree_path(last) else last
 
     def _open_session(self, session_id: str) -> None:
         if session_id == self.current_session_id:

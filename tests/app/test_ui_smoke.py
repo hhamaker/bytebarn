@@ -1637,3 +1637,195 @@ def test_session_item_marks_isolated_sessions(qapp):
 
     assert "⑂" not in plain_item.data(0, TITLE_ROLE)
     assert "⑂" in iso_item.data(0, TITLE_ROLE)
+
+
+# --- isolated sessions: the UI-side flow ------------------------------------
+
+
+def _init_git_repo(path):
+    import subprocess
+
+    path.mkdir(parents=True, exist_ok=True)
+    def g(*args):
+        subprocess.run(["git", *args], cwd=path, check=True, capture_output=True)
+    g("init")
+    g("config", "user.email", "test@bytebarn.local")
+    g("config", "user.name", "ByteBarn Test")
+    (path / "README.md").write_text("hi\n")
+    g("add", ".")
+    g("commit", "-m", "init")
+
+
+async def _iso_window(tmp_path, qapp, git: bool = True):
+    """(window, engine) rooted in a fresh project; caller must stop the engine."""
+    from bytebarn.app.main_window import MainWindow
+    from bytebarn.engine.facade import Engine
+
+    proj = tmp_path / "proj"
+    if git:
+        _init_git_repo(proj)
+    else:
+        proj.mkdir()
+    gdir = tmp_path / "g"
+    gdir.mkdir()
+    (gdir / "config.json").write_text(json.dumps({"model": "fake/m"}))
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=gdir)
+    await engine.start()
+    return MainWindow(engine), engine
+
+
+def _auto_answer(window, answer: bool, seen: list):
+    """Replace the modal dirty warning with a recorded, instant verdict."""
+    def _fake(title, text):
+        seen.append((title, text))
+        fut = asyncio.get_event_loop().create_future()
+        fut.set_result(answer)
+        return fut
+
+    window._ask_yes_no = _fake
+
+
+async def test_default_new_session_dir_never_returns_a_worktree(qapp, tmp_path):
+    """Finding 1: an isolated session's worktree must not become the default.
+
+    Inheriting it would root the next plain session inside another session's
+    branch — every write landing somewhere `git status` in the live checkout
+    never mentions.
+    """
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        iso = await engine.new_session(isolated=True)
+        assert iso.worktree_branch
+        await window._load_session(iso.id)
+
+        default = await window._default_new_session_dir()
+
+        assert default != iso.directory
+        assert default == str(engine.project_dir)
+    finally:
+        await engine.stop()
+
+
+async def test_plain_new_session_after_isolated_is_a_different_session(qapp, tmp_path):
+    """The whole '+ New session' path, untick Isolated after ticking it."""
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        await window._new_session(isolated=True)
+        iso_id = window.current_session_id
+        iso = await engine.store.get_session(iso_id)
+        assert iso.worktree_branch
+
+        await window._new_session(isolated=False)
+        plain = await engine.store.get_session(window.current_session_id)
+
+        assert plain.id != iso.id
+        assert plain.worktree_branch == ""
+        assert plain.directory == str(engine.project_dir)
+    finally:
+        await engine.stop()
+
+
+async def test_dirty_preflight_probes_the_project_being_branched(qapp, tmp_path):
+    """Finding 2: the warning must list the repo the worktree comes from."""
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        other = tmp_path / "other"
+        _init_git_repo(other)
+        (other / "wip.txt").write_text("unsaved\n")
+        (engine.project_dir / "only-here.txt").write_text("live\n")
+        project_b = await engine.create_project(str(other))
+
+        seen: list = []
+        _auto_answer(window, True, seen)
+        await window._new_session(project_id=project_b.id, isolated=True)
+
+        assert seen, "no dirty warning for the repo actually being branched"
+        _title, text = seen[0]
+        assert "wip.txt" in text
+        assert "only-here.txt" not in text
+    finally:
+        await engine.stop()
+
+
+async def test_dirty_preflight_cancel_creates_nothing(qapp, tmp_path):
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        (engine.project_dir / "wip.txt").write_text("unsaved\n")
+        before = await engine.store.list_sessions(engine.project.id)
+
+        seen: list = []
+        _auto_answer(window, False, seen)
+        await window._new_session(isolated=True)
+
+        assert seen  # the warning was shown
+        after = await engine.store.list_sessions(engine.project.id)
+        assert len(after) == len(before)
+    finally:
+        await engine.stop()
+
+
+async def test_isolated_status_bar_reports_success(qapp, tmp_path):
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        await window._new_session(isolated=True)
+        session = await engine.store.get_session(window.current_session_id)
+        message = window.statusBar().currentMessage()
+        assert session.worktree_branch in message
+        assert session.directory in message
+    finally:
+        await engine.stop()
+
+
+async def test_isolated_status_bar_reports_unavailable_outside_git(qapp, tmp_path):
+    window, engine = await _iso_window(tmp_path, qapp, git=False)
+    try:
+        await window._new_session(isolated=True)
+        assert "Isolation unavailable" in window.statusBar().currentMessage()
+        session = await engine.store.get_session(window.current_session_id)
+        assert session.worktree_branch == ""
+    finally:
+        await engine.stop()
+
+
+async def test_new_session_button_forwards_the_isolate_checkbox(qapp, tmp_path):
+    """`+ New session` must carry the checkbox through to the engine."""
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        calls: list = []
+
+        async def record(**kwargs):
+            calls.append(kwargs)
+
+        window._new_session = record
+        window.session_list.isolate_check.setChecked(True)
+        window._prompt_new_session()
+        await asyncio.sleep(0)
+        assert calls and calls[0]["isolated"] is True
+
+        calls.clear()
+        window.session_list.isolate_check.setChecked(False)
+        window._prompt_new_session()
+        await asyncio.sleep(0)
+        assert calls and calls[0]["isolated"] is False
+    finally:
+        await engine.stop()
+
+
+async def test_remember_project_refuses_worktree_paths(qapp, tmp_path):
+    """Finding 1's persistence half: a worktree must never become last_project."""
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        iso = await engine.new_session(isolated=True)
+        conf = engine.global_dir / "config.json"
+
+        window._remember_project(iso.directory)
+        assert "last_project" not in json.loads(conf.read_text())
+
+        window._remember_project(str(engine.project_dir))
+        assert json.loads(conf.read_text())["last_project"] == str(engine.project_dir)
+
+        # and a worktree path already persisted by an older build is ignored
+        engine.config.model_extra["last_project"] = iso.directory
+        assert window._last_project() == ""
+    finally:
+        await engine.stop()
