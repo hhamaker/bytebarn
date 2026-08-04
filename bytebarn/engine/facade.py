@@ -268,7 +268,7 @@ class Engine:
         if session is None or not session.worktree_branch:
             return None
         directory = Path(session.directory) if session.directory else None
-        roots = await worktree_roots(directory) if directory else None
+        roots = await worktree_roots(directory, session.worktree_branch) if directory else None
         if roots is not None:
             wt_root, repo = roots
         else:
@@ -325,14 +325,20 @@ class Engine:
             if session is None or not session.worktree_branch or not session.directory:
                 return ""
             where = session.directory
-            roots = await worktree_mod.worktree_roots(Path(session.directory))
+            roots = await worktree_mod.worktree_roots(
+                Path(session.directory), session.worktree_branch)
             if roots is None:
                 # directory already gone (or no longer a checkout): the branch
                 # may still be registered, so prune + delete it from the open
                 # project — the only repo left to ask
                 repo = await worktree_mod.git_root(self.project_dir)
                 if repo is None:
-                    return f"could not remove worktree at {where}"
+                    # no repo left to ask. Only a worktree still sitting on
+                    # disk is worth reporting — when the directory is already
+                    # gone there was nothing to remove, and saying otherwise
+                    # is status-bar noise about a success.
+                    return (f"could not remove worktree at {where}"
+                            if Path(where).exists() else "")
                 return await worktree_mod.discard(
                     repo, Path(session.directory), session.worktree_branch)
             wt_root, repo = roots

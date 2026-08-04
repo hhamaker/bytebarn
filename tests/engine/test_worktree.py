@@ -965,7 +965,7 @@ async def test_worktree_roots_refuses_a_main_worktree(tmp_path):
     """Self-review of the finding 1/2 fix: resolving a directory to its git
     toplevel walks *up*, and the result feeds a removal that falls back to
     rmtree. A session directory that turns out to sit in an ordinary
-    repository (a home dir under git, with the worktree store inside it) must
+    repository (the worktree store inside a checkout that is under git) must
     not hand back that repository's root as something to delete."""
     from bytebarn.engine.worktree import worktree_roots
 
@@ -974,16 +974,63 @@ async def test_worktree_roots_refuses_a_main_worktree(tmp_path):
     nested = repo / ".bytebarn" / "worktrees" / "abc"
     nested.mkdir(parents=True)
 
-    assert await worktree_roots(nested) is None
-    assert await worktree_roots(repo) is None
+    assert await worktree_roots(nested, "bytebarn/x") is None
+    assert await worktree_roots(repo, "bytebarn/x") is None
 
     # a genuine linked worktree still resolves
     linked = tmp_path / "linked"
     _git(repo, "worktree", "add", "-b", "bytebarn/x", str(linked), "HEAD")
-    roots = await worktree_roots(linked)
+    roots = await worktree_roots(linked, "bytebarn/x")
     assert roots is not None
     assert roots[0].resolve() == linked.resolve()
     assert roots[1].resolve() == repo.resolve()
+
+
+async def test_worktree_roots_refuses_a_checkout_that_is_not_this_session_s(
+    tmp_path, monkeypatch,
+):
+    """Re-review gap: "not the main worktree" is too narrow a guard.
+
+    A bare-backed dotfiles layout (`git init --bare dots.git;
+    git -C dots.git worktree add ~`) makes the *containing* checkout a linked
+    worktree, so root != main and a main-only guard waves it through — handing
+    a whole home directory to `git worktree remove --force` with an rmtree
+    fallback. The question that actually matters is not "which worktree is
+    this" but "is this **this session's** worktree", which only the branch can
+    answer.
+    """
+    from bytebarn.engine.worktree import worktree_roots
+
+    # cwd is deliberately outside the tree under test, and everything the
+    # test builds lives under tmp_path
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    bare = tmp_path / "dots.git"
+    _git(tmp_path, "init", "--bare", "-q", "dots.git")
+    seed = tmp_path / "seed"
+    _init_repo(seed)
+    _git(seed, "push", "-q", str(bare), "HEAD:refs/heads/main")
+
+    home = tmp_path / "home"
+    _git(bare, "worktree", "add", "-q", str(home), "main")
+    session_dir = home / ".bytebarn" / "worktrees" / "key" / "sid"
+    session_dir.mkdir(parents=True)
+
+    # the containing checkout is a *linked* worktree, so it is not the main
+    # one — yet it is emphatically not this session's worktree either
+    assert (home / "README.md").is_file()
+    roots = await worktree_roots(session_dir, "bytebarn/session-abc12345")
+    assert roots is None, f"offered {roots} — a home checkout — for removal"
+
+    # a real session worktree off the same bare repo still resolves
+    real = tmp_path / "real-session"
+    _git(bare, "worktree", "add", "-q", "-b", "bytebarn/session-abc12345",
+         str(real), "main")
+    roots = await worktree_roots(real, "bytebarn/session-abc12345")
+    assert roots is not None
+    assert roots[0].resolve() == real.resolve()
 
 
 async def test_a_session_directory_inside_a_plain_repo_is_not_escalated(
@@ -1018,5 +1065,47 @@ async def test_a_session_directory_inside_a_plain_repo_is_not_escalated(
         assert (repo / "precious.txt").exists(), "cleanup escalated to the repo root"
         assert repo.is_dir()
         assert not stray.exists()
+    finally:
+        await eng.stop()
+
+
+async def test_a_vanished_worktree_with_no_repo_left_reports_nothing(
+    tmp_path, monkeypatch,
+):
+    """Nothing to remove is not a failure to remove.
+
+    With the open project not a git repo there is no repo left to prune the
+    branch from — but if the directory is already gone, the cleanup achieved
+    exactly what it was asked to, and must not claim otherwise.
+    """
+    from bytebarn.engine.facade import Engine
+
+    monkeypatch.chdir(tmp_path)
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    gdir = tmp_path / "g3"
+    gdir.mkdir()
+    (gdir / "config.json").write_text(json.dumps({"model": "fake/model"}))
+    eng = Engine(plain, db_path=tmp_path / "g3.db", global_dir=gdir)
+    await eng.start()
+    try:
+        session = await eng.new_session()
+        gone = tmp_path / "already-removed"
+        await eng.store.update_session(
+            session.id, directory=str(gone),
+            worktree_branch="bytebarn/session-vanished")
+
+        assert await eng.delete_session(session.id, discard_worktree=True) == ""
+
+        # a directory that *is* still there is still reported
+        stuck = tmp_path / "still-there"
+        stuck.mkdir()
+        other = await eng.new_session()
+        await eng.store.update_session(
+            other.id, directory=str(stuck),
+            worktree_branch="bytebarn/session-stuck")
+
+        problem = await eng.delete_session(other.id, discard_worktree=True)
+        assert str(stuck) in problem, problem
     finally:
         await eng.stop()

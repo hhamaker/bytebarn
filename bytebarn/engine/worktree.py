@@ -84,7 +84,7 @@ async def git_root(cwd: Path) -> Path | None:
     return path if path.is_dir() else None
 
 
-async def worktree_roots(directory: Path) -> tuple[Path, Path] | None:
+async def worktree_roots(directory: Path, branch: str) -> tuple[Path, Path] | None:
     """``(worktree root, owning main worktree)`` for a path inside a checkout.
 
     Both halves have to come from the checkout itself, not from whatever
@@ -100,17 +100,34 @@ async def worktree_roots(directory: Path) -> tuple[Path, Path] | None:
       ``git worktree list`` is always the main worktree; it is the only cwd
       from which ``worktree remove`` and ``branch -D`` reach this branch.
 
-    ``None`` when the directory is gone, is not a git checkout, or resolves to
-    a repository's **main** worktree rather than a linked one. That last case
-    is not pedantry: this walks *up* from a session directory to a toplevel,
-    and the answer feeds a removal that falls back to ``rmtree``. If the
-    worktree store ever sits inside an unrelated repository — a home directory
-    under git with ``.bytebarn`` not ignored is the easy way to get there —
-    the toplevel found here would be that repository's root, and a caller
-    trusting it would delete the user's actual checkout. Refusing to identify
-    the main worktree as removable keeps the blast radius at the path the
-    caller already had.
+    Returns ``None`` — silently, never raising, so the caller falls back to
+    the path it already had — unless the resolved root is **the worktree
+    checked out on** ``branch``. That is the whole safety property, and
+    nothing weaker will do. This walks *up* from a session directory to a
+    toplevel and the answer feeds a removal with an ``rmtree`` fallback, so
+    when the worktree store happens to sit inside some *other* checkout, the
+    toplevel found here is that checkout's root — a user's home directory, in
+    the layout that makes this easy to hit. Note that ``.gitignore`` offers no
+    protection whatsoever: ``rev-parse --show-toplevel`` walks up to the
+    enclosing repository regardless of whether the path it started from is
+    ignored, tracked, or unknown to git.
+
+    "Is this the main worktree" is *not* a sufficient test for that, because
+    the containing checkout can itself be linked: a bare-backed dotfiles repo
+    (``git init --bare dots.git; git -C dots.git worktree add ~``) makes the
+    home directory a linked worktree of a bare repo, so the main entry is
+    ``dots.git`` and any main-only check waves the home checkout straight
+    through. ``git worktree list --porcelain`` reports each worktree's branch,
+    so match on that instead: only the checkout git says is on
+    ``refs/heads/<branch>`` is this session's, and only that one is removable.
+    (The main-worktree check is kept as well — it costs nothing and covers the
+    contrived case where a main checkout is sitting on the session branch.)
+
+    The first ``worktree`` entry is always the main worktree; it is the cwd
+    from which ``worktree remove`` and ``branch -D`` reach this branch.
     """
+    if not branch:
+        return None
     code, top = await _git(directory, "rev-parse", "--show-toplevel")
     if code != 0 or not top:
         return None
@@ -120,13 +137,25 @@ async def worktree_roots(directory: Path) -> tuple[Path, Path] | None:
     code, listing = await _git(directory, "worktree", "list", "--porcelain")
     if code != 0:
         return None
+
+    resolved = root.resolve()
+    main: Path | None = None
+    entry: Path | None = None
+    matched = False
     for line in listing.splitlines():
         if line.startswith("worktree "):
-            main = Path(line[len("worktree "):].strip())
-            if not main.is_dir() or main.resolve() == root.resolve():
-                return None
-            return root, main
-    return None
+            entry = Path(line[len("worktree "):].strip())
+            if main is None:
+                main = entry
+        elif line.startswith("branch ") and entry is not None:
+            if (line[len("branch "):].strip() == f"refs/heads/{branch}"
+                    and entry.resolve() == resolved):
+                matched = True
+    if not matched or main is None:
+        return None
+    if not main.is_dir() or main.resolve() == resolved:
+        return None
+    return root, main
 
 
 async def head_commit(git_root: Path) -> str | None:
