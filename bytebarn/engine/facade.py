@@ -127,13 +127,16 @@ class Engine:
         ``isolated`` gives the session its own git worktree so its whole
         delegation tree writes there instead of the live checkout (spec:
         isolated sessions). Isolated sessions never reuse an existing row —
-        each one needs its own worktree.
+        each one needs its own worktree — and they are never reused *by* a
+        plain request either: handing back an isolated row for a plain
+        ``+ New session`` would silently drop the user into a worktree.
         """
         pid = project_id or self.project.id
         async with self._new_session_lock:
             if not isolated:
                 for existing in await self.store.list_sessions(pid):
                     if (not existing.title and existing.directory == directory
+                            and not existing.worktree_branch
                             and not await self.store.message_count(existing.id)):
                         return existing
             # per-project defaults fill in whatever the caller didn't pin
@@ -167,9 +170,10 @@ class Engine:
         )
         if wt is None:
             return session
+        session_dir = self._worktree_cwd(wt.path, wt.git_root, base)
         try:
             await self.store.update_session(
-                session.id, directory=str(wt.path), worktree_branch=wt.branch)
+                session.id, directory=str(session_dir), worktree_branch=wt.branch)
         except Exception:
             # store write failed after the worktree/branch already exist on
             # disk (untracked, so nothing else will ever clean them up) —
@@ -186,15 +190,49 @@ class Engine:
             raise
         return await self.store.get_session(session.id) or session
 
-    async def repo_dirty(self) -> list[str]:
-        """Uncommitted paths in the live project checkout ([] when not a repo).
+    @staticmethod
+    def _worktree_cwd(wt_path: Path, git_root: Path, base: Path) -> Path:
+        """Where inside the worktree the session should be rooted.
+
+        ``git worktree add`` always checks out the whole repository, so a
+        project opened *below* the git root (``/repo/frontend``) would land the
+        session at the repo-root checkout — an agent told to edit
+        ``src/App.tsx`` would write ``<wt>/src/App.tsx``, and
+        ``/repo/frontend/CLAUDE.md`` would stop loading as project
+        instructions. Mirror the depth instead.
+
+        The subdirectory is created when the checkout lacks it: ``base`` may be
+        untracked (gitignored build output, a fresh dir never committed), in
+        which case HEAD has no such path. An empty dir is still the right cwd —
+        without it every tool call would fail on a missing cwd, which is
+        exactly the failure this mapping exists to avoid.
+        """
+        try:
+            rel = base.resolve().relative_to(git_root.resolve())
+        except ValueError:
+            return wt_path  # base is not inside the repo — nothing to mirror
+        if not rel.parts:
+            return wt_path
+        sub = wt_path / rel
+        try:
+            sub.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return wt_path  # unwritable: repo root beats a nonexistent cwd
+        return sub
+
+    async def repo_dirty(self, directory: Path | str | None = None) -> list[str]:
+        """Uncommitted paths in a checkout ([] when it is not a repo).
 
         The UI warns with this before starting an isolated session, because the
-        worktree is checked out from HEAD and will not contain them.
+        worktree is checked out from HEAD and will not contain them. Callers
+        must pass the *same* directory ``_isolate_session`` will branch from —
+        a new session can be rooted in any registered project, and warning
+        about a repo that is not the one being branched is worse than silence.
+        Defaults to the engine's own project dir.
         """
         from .worktree import dirty_files
 
-        return await dirty_files(self.project_dir)
+        return await dirty_files(Path(directory) if directory else self.project_dir)
 
     async def close_session(self, session_id: str) -> None:
         """Archive a session: abort any run, hide it from the session list."""

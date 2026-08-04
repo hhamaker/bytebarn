@@ -426,3 +426,132 @@ async def test_worktree_can_be_disabled(engine):
     )
     assert (engine.project_dir / "x.py").read_text() == "1\n"
     assert "worktree:" not in out
+
+
+# --- seams between isolation and adjacent behaviour -------------------------
+
+
+async def test_plain_session_never_reuses_an_isolated_row(engine):
+    """A plain ``+ New session`` must not hand back an isolated session.
+
+    The reuse loop matches on (no title, same directory, no messages) — an
+    untouched isolated session satisfies all three the moment the user unticks
+    Isolated and clicks again with its worktree still inherited as the default
+    directory. Returning it would silently drop the user into another
+    session's worktree.
+    """
+    isolated = await engine.new_session(isolated=True)
+    assert isolated.worktree_branch
+
+    plain = await engine.new_session(isolated=False, directory=isolated.directory)
+
+    assert plain.id != isolated.id
+    assert plain.worktree_branch == ""
+
+
+async def test_repo_dirty_inspects_the_directory_it_is_given(engine, tmp_path):
+    """The dirty pre-flight must probe the repo actually being branched."""
+    other = tmp_path / "other"
+    _init_repo(other)
+    (other / "wip.txt").write_text("unsaved\n")
+
+    # the engine's own project is clean; the other repo is not
+    assert await engine.repo_dirty() == []
+    assert await engine.repo_dirty(other) == ["wip.txt"]
+    assert await engine.repo_dirty(engine.project_dir) == []
+
+
+async def test_isolated_session_below_git_root_keeps_its_depth(tmp_path):
+    """Opening ``/repo/frontend`` must not relocate the session to the repo root."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "frontend" / "src").mkdir(parents=True)
+    (repo / "frontend" / "src" / "App.tsx").write_text("export default 1\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "frontend")
+
+    gdir = tmp_path / "global"
+    gdir.mkdir()
+    (gdir / "config.json").write_text(json.dumps({"model": "fake/model"}))
+    eng = Engine(repo / "frontend", db_path=tmp_path / "crew.db", global_dir=gdir)
+    await eng.start()
+    try:
+        session = await eng.new_session(isolated=True)
+        assert session.worktree_branch
+        cwd = Path(session.directory)
+        assert cwd.is_dir()
+        assert cwd.name == "frontend"
+        # the checked-out frontend/, not the repo root
+        assert (cwd / "src" / "App.tsx").is_file()
+        assert not (cwd / "frontend").exists()
+    finally:
+        await eng.stop()
+
+
+async def test_isolated_session_in_untracked_subdir_still_has_a_cwd(tmp_path):
+    """A project dir git has never seen still needs an existing cwd.
+
+    ``worktree add`` checks out HEAD, which has no such path — mirror the
+    depth anyway rather than hand the run a directory that does not exist.
+    """
+    repo = tmp_path / "repo2"
+    _init_repo(repo)
+    (repo / "scratch").mkdir()  # never committed
+
+    gdir = tmp_path / "global"
+    gdir.mkdir()
+    (gdir / "config.json").write_text(json.dumps({"model": "fake/model"}))
+    eng = Engine(repo / "scratch", db_path=tmp_path / "crew.db", global_dir=gdir)
+    await eng.start()
+    try:
+        session = await eng.new_session(isolated=True)
+        assert session.worktree_branch
+        cwd = Path(session.directory)
+        assert cwd.is_dir()
+        assert cwd.name == "scratch"
+    finally:
+        await eng.stop()
+
+
+async def test_missing_worktree_falls_back_to_project_dir_with_one_warning(engine):
+    """The documented cleanup (`git worktree remove`) must not brick the session.
+
+    Without a fallback every bash call raises FileNotFoundError out of the
+    subprocess spawn and ``write`` recreates the path as a plain untracked
+    directory — writes appear to succeed into a tree git no longer knows.
+    """
+    import shutil
+
+    session = await engine.new_session(isolated=True)
+    gone = Path(session.directory)
+    assert gone.is_dir()
+    shutil.rmtree(gone)  # what `git worktree remove` leaves behind
+
+    _install(engine, [
+        tool_turn("c1", "write", {"path": "recovered.py", "content": "R = 1\n"}),
+        text_turn("done"),
+        text_turn("second turn"),
+    ])
+    await _run_and_wait(engine, session, "write recovered.py")
+
+    # the write landed in the live checkout, not a resurrected phantom dir
+    assert (engine.project_dir / "recovered.py").read_text() == "R = 1\n"
+    assert not gone.exists()
+
+    texts = [
+        p.data.get("text", "")
+        for _m, parts in await engine.store.session_parts(session.id)
+        for p in parts if p.type == "text"
+    ]
+    warnings = [t for t in texts if "no longer exists" in t]
+    assert len(warnings) == 1, texts
+    assert str(engine.project_dir) in warnings[0]
+
+    # a second run warns again (once), never silently
+    await _run_and_wait(engine, session, "anything else")
+    texts2 = [
+        p.data.get("text", "")
+        for _m, parts in await engine.store.session_parts(session.id)
+        for p in parts if p.type == "text"
+    ]
+    assert len([t for t in texts2 if "no longer exists" in t]) == 2
