@@ -115,20 +115,27 @@ class Engine:
 
     async def new_session(
         self, agent: str = "", model: str = "", directory: str = "",
-        project_id: str | None = None,
+        project_id: str | None = None, isolated: bool = False,
     ) -> Session:
         """Create a session (optionally rooted in its own working directory).
 
         Reuses an existing empty untitled session in the same place instead of
         stacking "(untitled)" rows — mirrors Claude Desktop's lazy-chat feel.
         The lock keeps concurrent calls (e.g. startup auto-create racing a
-        user's ⌘N) from both passing the reuse check before either inserts."""
+        user's ⌘N) from both passing the reuse check before either inserts.
+
+        ``isolated`` gives the session its own git worktree so its whole
+        delegation tree writes there instead of the live checkout (spec:
+        isolated sessions). Isolated sessions never reuse an existing row —
+        each one needs its own worktree.
+        """
         pid = project_id or self.project.id
         async with self._new_session_lock:
-            for existing in await self.store.list_sessions(pid):
-                if (not existing.title and existing.directory == directory
-                        and not await self.store.message_count(existing.id)):
-                    return existing
+            if not isolated:
+                for existing in await self.store.list_sessions(pid):
+                    if (not existing.title and existing.directory == directory
+                            and not await self.store.message_count(existing.id)):
+                        return existing
             # per-project defaults fill in whatever the caller didn't pin
             project = await self.store.get_project(pid)
             if project and not agent:
@@ -137,8 +144,42 @@ class Engine:
                 model = project.default_model
             session = await self.store.create_session(
                 pid, agent=agent or "build", model=model, directory=directory)
+            if isolated:
+                session = await self._isolate_session(session, directory)
         self.bus.emit(SessionUpdated(session_id=session.id))
         return session
+
+    async def _isolate_session(self, session: Session, directory: str) -> Session:
+        """Give a top-level session its own git worktree.
+
+        Returns the session unchanged when isolation is unavailable — a non-git
+        directory, a repo with no commits, or ``worktree.enabled=false``. The
+        worktree is created untracked so no subagent cleanup path can remove
+        it; the user merges the branch in git when the run is done.
+        """
+        if not self._worktree_enabled():
+            return session
+        base = Path(directory) if directory else self.project_dir
+        project_key = (self.project.id if self.project else "p")[:16]
+        wt = await self.worktrees.create(
+            session.id, base, project_key=project_key,
+            track=False, branch=f"bytebarn/session-{session.id[:8]}",
+        )
+        if wt is None:
+            return session
+        await self.store.update_session(
+            session.id, directory=str(wt.path), worktree_branch=wt.branch)
+        return await self.store.get_session(session.id) or session
+
+    async def repo_dirty(self) -> list[str]:
+        """Uncommitted paths in the live project checkout ([] when not a repo).
+
+        The UI warns with this before starting an isolated session, because the
+        worktree is checked out from HEAD and will not contain them.
+        """
+        from .worktree import dirty_files
+
+        return await dirty_files(self.project_dir)
 
     async def close_session(self, session_id: str) -> None:
         """Archive a session: abort any run, hide it from the session list."""

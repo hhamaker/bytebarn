@@ -244,6 +244,71 @@ async def test_dirty_files_on_non_git_dir(tmp_path):
     assert await dirty_files(plain) == []
 
 
+async def test_isolated_session_gets_its_own_worktree(engine):
+    session = await engine.new_session(isolated=True)
+
+    assert session.worktree_branch == f"bytebarn/session-{session.id[:8]}"
+    assert session.directory
+    wt_path = Path(session.directory)
+    assert wt_path.is_dir()
+    assert wt_path != engine.project_dir
+    assert (wt_path / "README.md").is_file()
+
+    # persisted, so isolation survives a restart
+    again = await engine.store.get_session(session.id)
+    assert again.directory == session.directory
+    assert again.worktree_branch == session.worktree_branch
+
+
+async def test_isolated_sessions_never_reuse_an_empty_session(engine):
+    first = await engine.new_session(isolated=True)
+    second = await engine.new_session(isolated=True)
+
+    assert first.id != second.id
+    assert first.directory != second.directory
+
+
+async def test_plain_session_is_not_isolated(engine):
+    session = await engine.new_session()
+    assert session.worktree_branch == ""
+
+
+async def test_isolation_is_a_no_op_outside_git(tmp_path):
+    """A non-git project still yields a usable session, just not isolated."""
+    import json
+
+    from bytebarn.engine.facade import Engine
+
+    proj = tmp_path / "plain"
+    proj.mkdir()
+    gdir = tmp_path / "global"
+    gdir.mkdir()
+    (gdir / "config.json").write_text(json.dumps({"model": "fake/model"}))
+    eng = Engine(proj, db_path=tmp_path / "crew.db", global_dir=gdir)
+    await eng.start()
+    try:
+        session = await eng.new_session(isolated=True, directory=str(proj))
+        assert session.worktree_branch == ""
+        assert session.directory == str(proj)
+    finally:
+        await eng.stop()
+
+
+async def test_isolation_respects_worktree_disabled(engine):
+    engine.config.model_extra["worktree"] = {"enabled": False}
+    try:
+        session = await engine.new_session(isolated=True)
+        assert session.worktree_branch == ""
+    finally:
+        engine.config.model_extra.pop("worktree", None)
+
+
+async def test_repo_dirty(engine):
+    assert await engine.repo_dirty() == []
+    (engine.project_dir / "scratch.txt").write_text("wip\n")
+    assert await engine.repo_dirty() == ["scratch.txt"]
+
+
 async def test_worktree_can_be_disabled(engine):
     engine.config.model_extra["worktree"] = {"enabled": False}
     _install(engine, [
