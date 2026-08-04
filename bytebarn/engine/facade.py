@@ -160,7 +160,7 @@ class Engine:
         worktree is created untracked so no subagent cleanup path can remove
         it; the user merges the branch in git when the run is done.
         """
-        if not self._worktree_enabled():
+        if not self.worktree_enabled():
             return session
         base = Path(directory) if directory else self.project_dir
         project_key = (self.project.id if self.project else "p")[:16]
@@ -879,7 +879,12 @@ class Engine:
 
     # -- subagents (task tool) -------------------------------------------------
 
-    def _worktree_enabled(self) -> bool:
+    def worktree_enabled(self) -> bool:
+        """Whether `worktree.enabled` permits isolation (defaults to true).
+
+        Public because the UI distinguishes "you turned this off" from the
+        other reasons isolation can be unavailable.
+        """
         conf = (self.config.model_extra or {}).get("worktree") or {}
         if isinstance(conf, dict):
             return bool(conf.get("enabled", True))
@@ -913,7 +918,7 @@ class Engine:
 
         # Isolate each run in a fresh worktree (git projects only) so parallel
         # writers cannot collide. Disabled via config worktree.enabled=false.
-        if self._worktree_enabled() and self.worktrees.get(child.id) is None:
+        if self.worktree_enabled() and self.worktrees.get(child.id) is None:
             project_key = (self.project.id if self.project else "p")[:16]
             wt = await self.worktrees.create(
                 child.id, parent_cwd, project_key=project_key,

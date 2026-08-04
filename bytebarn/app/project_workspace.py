@@ -365,6 +365,10 @@ class ProjectWorkspace(QWidget):
 
         running = self.engine.is_running(session.id)
         title = session.title or "(untitled)"
+        # keep the isolation mark in step with the sidebar row, and put it in
+        # TITLE_ROLE — the delegate paints that, not the item's text
+        branch = getattr(session, "worktree_branch", "") or ""
+        title = f"⑂ {title}" if branch else title
         label = f"{'● ' if running else ''}{title}" \
                 f" · {relative_time(session.updated_at)}"
         item = QListWidgetItem(label)

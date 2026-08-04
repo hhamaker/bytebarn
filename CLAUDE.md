@@ -27,7 +27,18 @@ QT_QPA_PLATFORM=offscreen .venv/bin/pytest tests/engine/test_store.py -k cascade
 ```
 
 pytest runs with `asyncio_mode = "auto"` — write async test functions
-directly, no `@pytest.mark.asyncio` needed. No linter is configured.
+directly, no `@pytest.mark.asyncio` needed.
+
+CI (`.github/workflows/ci.yml`) runs the suite on 3.12 and 3.13 across
+macOS and Ubuntu, plus a lint job:
+
+```bash
+ruff check .          # config in pyproject.toml: select E4,E7,E9,F
+```
+
+Ruff is not in `[dev]`, so it is not in `.venv` — run it via `pipx run
+ruff check .` (what CI does) or a system install. It is correctness-only
+(pyflakes + a slice of pycodestyle); formatting stays human.
 
 ## Architecture
 

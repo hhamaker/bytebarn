@@ -825,6 +825,10 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(
                     f"Isolated on {session.worktree_branch} — {session.directory}",
                     8000)
+            elif not self.engine.worktree_enabled():
+                self.statusBar().showMessage(
+                    'Isolation unavailable — worktrees are disabled '
+                    '("worktree": {"enabled": false} in config)', 8000)
             else:
                 self.statusBar().showMessage(
                     "Isolation unavailable — not a git repo, or no commits yet",
@@ -864,11 +868,14 @@ class MainWindow(QMainWindow):
                     return p.path
         if self.current_session_id:
             current = await self.engine.store.get_session(self.current_session_id)
-            # never inherit an isolated session's worktree: a plain new session
-            # rooted there would write to another session's branch while the
-            # UI showed nothing to say so, and `git status` in the live
-            # checkout would stay clean
+            # never inherit any worktree: a plain new session rooted there
+            # would write to another session's branch while the UI showed
+            # nothing to say so, and `git status` in the live checkout would
+            # stay clean. The path test also covers subagent worktrees, which
+            # carry a directory but no worktree_branch — and which are removed
+            # outright when their run finishes.
             if (current and current.directory and not current.worktree_branch
+                    and not self._is_worktree_path(current.directory)
                     and Path(current.directory).is_dir()):
                 return current.directory
         last = self._last_project()
@@ -1085,8 +1092,12 @@ class MainWindow(QMainWindow):
         self.header_meta.setText(meta)
         directory = session.directory or str(self.engine.project_dir)
         self.status_project.setText(directory)
-        self.setWindowTitle(f"ByteBarn — {Path(directory).name}")
-        self.dir_button.setText(f"📁 {Path(directory).name}")
+        # an isolated worktree's directory name is the raw session id, which
+        # says nothing — show the branch short-name, as the sidebar row does
+        branch = getattr(session, "worktree_branch", "") or ""
+        label = branch.split("/")[-1] if branch else Path(directory).name
+        self.setWindowTitle(f"ByteBarn — {label}")
+        self.dir_button.setText(f"📁 {label}")
         self.dir_button.setToolTip(
             f"Working directory: {directory}\nClick to change (this session only)")
 
