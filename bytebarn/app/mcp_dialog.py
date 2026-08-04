@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..engine.config import DELETE, patch_config_file
-from ..engine.mcp import KNOWN_MCP_SERVERS, config_entry
+from ..engine.mcp import KNOWN_MCP_SERVERS
 
 _CUSTOM = "Custom…"
 _NAME_ROLE = Qt.UserRole

@@ -61,6 +61,32 @@ async def _git_info(cwd: Path) -> str:
 _ASSET_INLINE_LIMIT = 32_000  # bytes of a text asset inlined into the prompt
 
 
+def resolve_cwd(session: Session, project_dir: Path) -> tuple[Path, str]:
+    """(working directory, warning) for a run — falls back when it is gone.
+
+    A session's recorded directory can stop existing between turns: the
+    documented cleanup for an isolated session is a manual
+    ``git worktree remove``, so the store keeps pointing at a path git has
+    deleted. Left alone, every ``bash`` call raises FileNotFoundError out of
+    the subprocess spawn, read/glob/grep see an empty tree, and ``write``
+    silently recreates the path as a plain untracked directory. Fall back to
+    the project dir and hand the caller one warning to surface (spec:
+    isolated sessions, "Error handling").
+
+    The warning is empty in the normal case.
+    """
+    recorded = Path(session.directory) if session.directory else project_dir
+    if recorded.is_dir():
+        return recorded, ""
+    return project_dir, (
+        f"⚠ Working directory `{recorded}` no longer exists"
+        + (f" (worktree branch `{session.worktree_branch}`)"
+           if session.worktree_branch else "")
+        + f" — running in `{project_dir}` instead. Changes will land in the"
+        " live checkout, not an isolated worktree."
+    )
+
+
 async def build_system_prompt(
     agent: AgentDef,
     cwd: Path,
@@ -310,9 +336,11 @@ class Runner:
         )
         tools += engine.mcp.tools_for(agent.tools)
         tool_map = {t.name: t for t in tools}
-        ctx = self._make_context(session, agent, handle)
+        # one resolution for the whole run: the tool context and the system
+        # prompt must never disagree about where the agent is standing
+        cwd, cwd_warning = resolve_cwd(session, engine.project_dir)
+        ctx = self._make_context(session, agent, handle, cwd)
 
-        cwd = Path(session.directory) if session.directory else engine.project_dir
         proj_instructions, proj_assets = await engine.project_knowledge(session.project_id)
         from .skills import catalog_section
         skills_catalog = catalog_section(engine.skills.list())
@@ -357,6 +385,11 @@ class Runner:
             message = await store.add_message(
                 session.id, "assistant", model=model_id, provider=provider.name
             )
+            if cwd_warning:
+                # once per run, on the same transcript channel as the rate-limit
+                # and model-fallback notices — not silently, not every turn
+                await self._notice(session, message.id, cwd_warning)
+                cwd_warning = ""
             outcome = await self._stream_turn(session, message.id, provider, req, model_id, info)
             if outcome["error"]:
                 await store.update_message(message.id, error=outcome["error"])
@@ -684,7 +717,10 @@ class Runner:
         ))
 
     # ------------------------------------------------------------------
-    def _make_context(self, session: Session, agent: AgentDef, handle: RunHandle) -> ToolContext:
+    def _make_context(
+        self, session: Session, agent: AgentDef, handle: RunHandle,
+        cwd: Path | None = None,
+    ) -> ToolContext:
         engine = self.engine
 
         async def on_todos(items: list[dict[str, str]]) -> None:
@@ -697,7 +733,8 @@ class Runner:
         async def run_subagent(agent: str, prompt: str, description: str, task_id: str | None) -> str:
             return await engine.run_subagent(session, agent, prompt, description, task_id)
 
-        session_dir = Path(session.directory) if session.directory else engine.project_dir
+        session_dir = cwd if cwd is not None else resolve_cwd(
+            session, engine.project_dir)[0]
         from .sandbox import SandboxConfig, should_sandbox
         sconf = SandboxConfig.from_config(engine.config.model_extra)
         return ToolContext(

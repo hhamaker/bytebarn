@@ -49,6 +49,22 @@ async def engine(tmp_path):
     await eng.stop()
 
 
+@pytest.fixture
+async def nongit_engine(tmp_path):
+    """Engine rooted in a plain (non-git) directory — isolation unavailable."""
+    proj = tmp_path / "plain"
+    proj.mkdir()
+    gdir = tmp_path / "global"
+    gdir.mkdir()
+    (gdir / "config.json").write_text(json.dumps({"model": "fake/model"}))
+    eng = Engine(proj, db_path=tmp_path / "crew.db", global_dir=gdir)
+    await eng.start()
+    try:
+        yield eng
+    finally:
+        await eng.stop()
+
+
 def _install(engine, script):
     provider = FakeProvider(script)
     engine.providers.register("fake", provider)
@@ -186,6 +202,218 @@ async def test_parallel_subagents_isolated_then_merged(engine):
     assert concurrency["peak"] >= 2  # ran in parallel
 
 
+async def test_create_untracked_is_not_removable(tmp_path):
+    """track=False keeps the manager from ever owning (and deleting) it."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    mgr = WorktreeManager(tmp_path / "worktrees")
+
+    wt = await mgr.create(
+        "sess1234abcd", repo, project_key="p",
+        track=False, branch="bytebarn/session-sess1234",
+    )
+    assert wt is not None
+    assert wt.branch == "bytebarn/session-sess1234"
+    assert wt.path.is_dir()
+    assert (wt.path / "README.md").is_file()
+
+    # the manager does not know about it, so cleanup calls are no-ops
+    assert mgr.get("sess1234abcd") is None
+    await mgr.remove("sess1234abcd")
+    assert await mgr.apply_and_remove("sess1234abcd") is None
+    assert wt.path.is_dir()
+
+
+async def test_create_tracked_still_default(tmp_path):
+    """Subagent behaviour is unchanged: tracked, default branch name."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    mgr = WorktreeManager(tmp_path / "worktrees")
+
+    wt = await mgr.create("abcdefghijklmnop", repo, project_key="p")
+    assert wt is not None
+    assert wt.branch == "bytebarn/abcdefghijkl"
+    assert mgr.get("abcdefghijklmnop") is wt
+
+    await mgr.remove("abcdefghijklmnop")
+    assert not wt.path.exists()
+
+
+async def test_dirty_files_reports_modified_and_untracked(tmp_path):
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    from bytebarn.engine.worktree import dirty_files
+
+    assert await dirty_files(repo) == []
+
+    (repo / "README.md").write_text("changed\n")
+    (repo / "brand_new.txt").write_text("new\n")
+    found = set(await dirty_files(repo))
+    assert found == {"README.md", "brand_new.txt"}
+
+
+async def test_dirty_files_on_non_git_dir(tmp_path):
+    from bytebarn.engine.worktree import dirty_files
+
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert await dirty_files(plain) == []
+
+
+async def test_isolated_session_gets_its_own_worktree(engine):
+    session = await engine.new_session(isolated=True)
+
+    assert session.worktree_branch == f"bytebarn/session-{session.id[:8]}"
+    assert session.directory
+    wt_path = Path(session.directory)
+    assert wt_path.is_dir()
+    assert wt_path != engine.project_dir
+    assert (wt_path / "README.md").is_file()
+
+    # persisted, so isolation survives a restart
+    again = await engine.store.get_session(session.id)
+    assert again.directory == session.directory
+    assert again.worktree_branch == session.worktree_branch
+
+
+async def test_isolated_sessions_never_reuse_an_empty_session(nongit_engine):
+    """Guards the ``if not isolated:`` skip in the reuse loop.
+
+    Must run against a non-git project: in a git project, ``_isolate_session``
+    rewrites ``directory`` to the fresh worktree path on every call, so the
+    reuse loop's ``existing.directory == directory`` check already fails on
+    its own — the test would pass whether or not the isolated guard exists.
+    Only when isolation is unavailable does ``directory`` stay constant
+    (the caller-supplied value) across both calls, making this the one setup
+    where removing the guard actually changes the outcome.
+    """
+    proj = str(nongit_engine.project_dir)
+    first = await nongit_engine.new_session(isolated=True, directory=proj)
+    second = await nongit_engine.new_session(isolated=True, directory=proj)
+
+    assert first.id != second.id
+
+
+async def test_plain_session_is_not_isolated(engine):
+    session = await engine.new_session()
+    assert session.worktree_branch == ""
+
+
+async def test_isolation_is_a_no_op_outside_git(nongit_engine):
+    """A non-git project still yields a usable session, just not isolated."""
+    proj = str(nongit_engine.project_dir)
+    session = await nongit_engine.new_session(isolated=True, directory=proj)
+    assert session.worktree_branch == ""
+    assert session.directory == proj
+
+
+async def test_isolation_respects_worktree_disabled(engine):
+    engine.config.model_extra["worktree"] = {"enabled": False}
+    try:
+        session = await engine.new_session(isolated=True)
+        assert session.worktree_branch == ""
+    finally:
+        engine.config.model_extra.pop("worktree", None)
+
+
+async def test_repo_dirty(engine):
+    assert await engine.repo_dirty() == []
+    (engine.project_dir / "scratch.txt").write_text("wip\n")
+    assert await engine.repo_dirty() == ["scratch.txt"]
+
+
+async def test_isolate_session_cleans_up_worktree_on_store_failure(engine, monkeypatch):
+    """A store write failure after the worktree exists must not orphan it.
+
+    ``track=False`` worktrees are never registered with the manager, so if
+    ``_isolate_session`` didn't clean up on its own error path, nothing else
+    would ever remove the directory or its ``bytebarn/session-*`` branch.
+    """
+    calls: list[str] = []
+
+    async def boom(session_id, **fields):
+        calls.append(session_id)
+        raise RuntimeError("store exploded")
+
+    monkeypatch.setattr(engine.store, "update_session", boom)
+
+    with pytest.raises(RuntimeError, match="store exploded"):
+        await engine.new_session(isolated=True)
+
+    assert calls, "update_session should have been attempted"
+    session_id = calls[0]
+    project_key = (engine.project.id if engine.project else "p")[:16]
+    leftover = engine.worktrees.store_root / project_key / session_id
+    assert not leftover.exists()
+
+
+async def test_isolate_session_store_failure_survives_cleanup_failure(engine, monkeypatch):
+    """Cleanup is best-effort: if teardown itself blows up, the caller must
+    still see the original store exception, not the teardown's.
+    """
+    async def boom_store(session_id, **fields):
+        raise RuntimeError("store exploded")
+
+    async def boom_cleanup(*args, **kwargs):
+        raise ValueError("cleanup exploded")
+
+    monkeypatch.setattr(engine.store, "update_session", boom_store)
+    monkeypatch.setattr(engine.worktrees, "_force_remove", boom_cleanup)
+
+    with pytest.raises(RuntimeError, match="store exploded"):
+        await engine.new_session(isolated=True)
+
+
+def _tree_snapshot(root: Path) -> dict[str, bytes]:
+    """Every tracked-ish file under root, excluding .git, for byte comparison."""
+    out: dict[str, bytes] = {}
+    for p in sorted(root.rglob("*")):
+        if p.is_file() and ".git" not in p.parts:
+            out[str(p.relative_to(root))] = p.read_bytes()
+    return out
+
+
+async def test_subagent_of_isolated_session_never_touches_live_tree(engine):
+    """The whole point: a /goal-style delegation writes only in the worktree."""
+    before = _tree_snapshot(engine.project_dir)
+    assert before  # guard against a broken glob making this comparison vacuous
+
+    session = await engine.new_session(isolated=True)
+    assert session.worktree_branch  # isolation actually happened
+    worktree = Path(session.directory)
+
+    # Script mirrors the existing subagent tests in this file: it dispatches
+    # on a call counter, since the same FakeProvider serves both the parent
+    # and the child session. tool_turn's signature is (call_id, name, input).
+    calls = {"n": 0}
+
+    def script(req):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return tool_turn("c1", "task", {
+                "agent": "general",
+                "description": "write a file",
+                "prompt": "create hello.txt",
+            })
+        if calls["n"] == 2:
+            return tool_turn("c2", "write", {"path": "hello.txt", "content": "hi\n"})
+        return text_turn("done")
+
+    _install(engine, script)
+    await _run_and_wait(engine, session, "delegate this")
+
+    # the subagent's file reached the session worktree...
+    assert (worktree / "hello.txt").read_text() == "hi\n"
+    # ...and the live checkout is byte-identical to before the run
+    assert _tree_snapshot(engine.project_dir) == before
+    assert not (engine.project_dir / "hello.txt").exists()
+
+    # the session worktree itself survived the child's apply_and_remove
+    assert worktree.is_dir()
+    still = await engine.store.get_session(session.id)
+    assert still.directory == str(worktree)
+
+
 async def test_worktree_can_be_disabled(engine):
     engine.config.model_extra["worktree"] = {"enabled": False}
     _install(engine, [
@@ -198,3 +426,132 @@ async def test_worktree_can_be_disabled(engine):
     )
     assert (engine.project_dir / "x.py").read_text() == "1\n"
     assert "worktree:" not in out
+
+
+# --- seams between isolation and adjacent behaviour -------------------------
+
+
+async def test_plain_session_never_reuses_an_isolated_row(engine):
+    """A plain ``+ New session`` must not hand back an isolated session.
+
+    The reuse loop matches on (no title, same directory, no messages) — an
+    untouched isolated session satisfies all three the moment the user unticks
+    Isolated and clicks again with its worktree still inherited as the default
+    directory. Returning it would silently drop the user into another
+    session's worktree.
+    """
+    isolated = await engine.new_session(isolated=True)
+    assert isolated.worktree_branch
+
+    plain = await engine.new_session(isolated=False, directory=isolated.directory)
+
+    assert plain.id != isolated.id
+    assert plain.worktree_branch == ""
+
+
+async def test_repo_dirty_inspects_the_directory_it_is_given(engine, tmp_path):
+    """The dirty pre-flight must probe the repo actually being branched."""
+    other = tmp_path / "other"
+    _init_repo(other)
+    (other / "wip.txt").write_text("unsaved\n")
+
+    # the engine's own project is clean; the other repo is not
+    assert await engine.repo_dirty() == []
+    assert await engine.repo_dirty(other) == ["wip.txt"]
+    assert await engine.repo_dirty(engine.project_dir) == []
+
+
+async def test_isolated_session_below_git_root_keeps_its_depth(tmp_path):
+    """Opening ``/repo/frontend`` must not relocate the session to the repo root."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "frontend" / "src").mkdir(parents=True)
+    (repo / "frontend" / "src" / "App.tsx").write_text("export default 1\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "frontend")
+
+    gdir = tmp_path / "global"
+    gdir.mkdir()
+    (gdir / "config.json").write_text(json.dumps({"model": "fake/model"}))
+    eng = Engine(repo / "frontend", db_path=tmp_path / "crew.db", global_dir=gdir)
+    await eng.start()
+    try:
+        session = await eng.new_session(isolated=True)
+        assert session.worktree_branch
+        cwd = Path(session.directory)
+        assert cwd.is_dir()
+        assert cwd.name == "frontend"
+        # the checked-out frontend/, not the repo root
+        assert (cwd / "src" / "App.tsx").is_file()
+        assert not (cwd / "frontend").exists()
+    finally:
+        await eng.stop()
+
+
+async def test_isolated_session_in_untracked_subdir_still_has_a_cwd(tmp_path):
+    """A project dir git has never seen still needs an existing cwd.
+
+    ``worktree add`` checks out HEAD, which has no such path — mirror the
+    depth anyway rather than hand the run a directory that does not exist.
+    """
+    repo = tmp_path / "repo2"
+    _init_repo(repo)
+    (repo / "scratch").mkdir()  # never committed
+
+    gdir = tmp_path / "global"
+    gdir.mkdir()
+    (gdir / "config.json").write_text(json.dumps({"model": "fake/model"}))
+    eng = Engine(repo / "scratch", db_path=tmp_path / "crew.db", global_dir=gdir)
+    await eng.start()
+    try:
+        session = await eng.new_session(isolated=True)
+        assert session.worktree_branch
+        cwd = Path(session.directory)
+        assert cwd.is_dir()
+        assert cwd.name == "scratch"
+    finally:
+        await eng.stop()
+
+
+async def test_missing_worktree_falls_back_to_project_dir_with_one_warning(engine):
+    """The documented cleanup (`git worktree remove`) must not brick the session.
+
+    Without a fallback every bash call raises FileNotFoundError out of the
+    subprocess spawn and ``write`` recreates the path as a plain untracked
+    directory — writes appear to succeed into a tree git no longer knows.
+    """
+    import shutil
+
+    session = await engine.new_session(isolated=True)
+    gone = Path(session.directory)
+    assert gone.is_dir()
+    shutil.rmtree(gone)  # what `git worktree remove` leaves behind
+
+    _install(engine, [
+        tool_turn("c1", "write", {"path": "recovered.py", "content": "R = 1\n"}),
+        text_turn("done"),
+        text_turn("second turn"),
+    ])
+    await _run_and_wait(engine, session, "write recovered.py")
+
+    # the write landed in the live checkout, not a resurrected phantom dir
+    assert (engine.project_dir / "recovered.py").read_text() == "R = 1\n"
+    assert not gone.exists()
+
+    texts = [
+        p.data.get("text", "")
+        for _m, parts in await engine.store.session_parts(session.id)
+        for p in parts if p.type == "text"
+    ]
+    warnings = [t for t in texts if "no longer exists" in t]
+    assert len(warnings) == 1, texts
+    assert str(engine.project_dir) in warnings[0]
+
+    # a second run warns again (once), never silently
+    await _run_and_wait(engine, session, "anything else")
+    texts2 = [
+        p.data.get("text", "")
+        for _m, parts in await engine.store.session_parts(session.id)
+        for p in parts if p.type == "text"
+    ]
+    assert len([t for t in texts2 if "no longer exists" in t]) == 2

@@ -26,7 +26,9 @@ dependencies = [
     "pygments>=2.18",
     "watchfiles>=0.22",
     "PyYAML>=6.0",
-    "mcp>=1.0",
+    # <2: mcp 2.0 removed mcp.server.fastmcp and renamed streamablehttp_client
+    # to streamable_http_client, which engine/mcp.py's HTTP transport still uses.
+    "mcp>=1.0,<2",
     "boto3>=1.34",
 ]
 
