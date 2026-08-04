@@ -173,9 +173,16 @@ class Engine:
         except Exception:
             # store write failed after the worktree/branch already exist on
             # disk (untracked, so nothing else will ever clean them up) —
-            # best-effort teardown, then let the original error propagate so
-            # the caller never silently gets back a non-isolated session.
-            await self.worktrees._force_remove(wt.git_root, wt.path, wt.branch)
+            # best-effort teardown, then let the *original* error propagate
+            # so the caller never silently gets back a non-isolated session.
+            try:
+                await self.worktrees._force_remove(wt.git_root, wt.path, wt.branch)
+            except Exception:
+                # teardown is best-effort only: whatever went wrong here is
+                # strictly less informative than the store failure that
+                # triggered it, so swallow it rather than let it mask the
+                # real cause.
+                pass
             raise
         return await self.store.get_session(session.id) or session
 

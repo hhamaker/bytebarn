@@ -347,6 +347,23 @@ async def test_isolate_session_cleans_up_worktree_on_store_failure(engine, monke
     assert not leftover.exists()
 
 
+async def test_isolate_session_store_failure_survives_cleanup_failure(engine, monkeypatch):
+    """Cleanup is best-effort: if teardown itself blows up, the caller must
+    still see the original store exception, not the teardown's.
+    """
+    async def boom_store(session_id, **fields):
+        raise RuntimeError("store exploded")
+
+    async def boom_cleanup(*args, **kwargs):
+        raise ValueError("cleanup exploded")
+
+    monkeypatch.setattr(engine.store, "update_session", boom_store)
+    monkeypatch.setattr(engine.worktrees, "_force_remove", boom_cleanup)
+
+    with pytest.raises(RuntimeError, match="store exploded"):
+        await engine.new_session(isolated=True)
+
+
 async def test_worktree_can_be_disabled(engine):
     engine.config.model_extra["worktree"] = {"enabled": False}
     _install(engine, [
