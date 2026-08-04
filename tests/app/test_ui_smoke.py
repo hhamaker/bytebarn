@@ -1597,3 +1597,36 @@ def test_moved_session_stays_under_project_when_it_is_the_default(qapp):
                  for i in range(card_row.childCount())]
     assert child_ids == ["s1"]                 # nested under its project
     assert not card_row.isExpanded()           # projects start collapsed
+
+
+def test_session_list_isolate_toggle(qapp):
+    from bytebarn.app.session_list import SessionList
+
+    widget = SessionList()
+    assert widget.isolate_requested() is False
+    widget.isolate_check.setChecked(True)
+    assert widget.isolate_requested() is True
+
+
+def test_session_item_marks_isolated_sessions(qapp):
+    from types import SimpleNamespace
+
+    from bytebarn.app.session_list import SessionList
+
+    plain = SimpleNamespace(
+        id="s1", title="plain", agent="build", model="fake/model",
+        directory="/repo", updated_at=0.0, worktree_branch="",
+    )
+    isolated = SimpleNamespace(
+        id="s2", title="isolated", agent="build", model="fake/model",
+        directory="/wt/s2", updated_at=0.0,
+        worktree_branch="bytebarn/session-abcd1234",
+    )
+
+    plain_item = SessionList._session_item(plain, set(), None)
+    iso_item = SessionList._session_item(isolated, set(), None)
+
+    assert "⑂" not in plain_item.text(0)
+    assert "⑂" in iso_item.text(0)
+    assert "session-abcd1234" in iso_item.text(0)
+    assert "bytebarn/session-abcd1234" in iso_item.toolTip(0)

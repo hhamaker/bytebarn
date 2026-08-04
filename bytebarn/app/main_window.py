@@ -774,7 +774,10 @@ class MainWindow(QMainWindow):
         """Instant new session (Claude-Desktop style): inherit the working
         directory from context instead of forcing a picker. "New Session in
         Folder…" keeps the explicit choice available."""
-        self._fire(self._new_session(project_id=target_project_id))
+        self._fire(self._new_session(
+            project_id=target_project_id,
+            isolated=self.session_list.isolate_requested(),
+        ))
 
     def _prompt_new_session_in_folder(self) -> None:
         """Explicit-directory variant: pick a folder (modal, from the Qt
@@ -784,14 +787,46 @@ class MainWindow(QMainWindow):
         if directory:
             self._fire(self._new_session(directory=directory))
 
-    async def _new_session(self, directory: str | None = None, project_id: str | None = None) -> None:
+    async def _new_session(
+        self, directory: str | None = None, project_id: str | None = None,
+        isolated: bool = False,
+    ) -> None:
         """Create a session; with no explicit directory, inherit one from
-        context: target project → current session → last used → project root."""
+        context: target project → current session → last used → project root.
+
+        ``isolated`` runs it in its own git worktree checked out from HEAD, so
+        uncommitted work in the live tree will not be visible to it — warn
+        before that surprises anyone.
+        """
         if directory is None:
             directory = await self._default_new_session_dir(project_id)
+        if isolated:
+            dirty = await self.engine.repo_dirty()
+            if dirty:
+                shown = "\n".join(f"  {p}" for p in dirty[:10])
+                if len(dirty) > 10:
+                    shown += f"\n  …and {len(dirty) - 10} more"
+                ok = await self._ask_yes_no(
+                    "Uncommitted changes",
+                    "The isolated worktree is checked out from HEAD, so these "
+                    f"uncommitted files will not be in it:\n\n{shown}\n\n"
+                    "Start the isolated session anyway?",
+                )
+                if not ok:
+                    return
         self._remember_project(directory)
         session = await self.engine.new_session(
-            model=self._default_model(), directory=directory, project_id=project_id)
+            model=self._default_model(), directory=directory,
+            project_id=project_id, isolated=isolated)
+        if isolated:
+            if session.worktree_branch:
+                self.statusBar().showMessage(
+                    f"Isolated on {session.worktree_branch} — {session.directory}",
+                    8000)
+            else:
+                self.statusBar().showMessage(
+                    "Isolation unavailable — not a git repo, or no commits yet",
+                    6000)
         await self._load_session(session.id)
         await self._refresh_sessions()
 
@@ -800,6 +835,24 @@ class MainWindow(QMainWindow):
 
         start = self._last_project() or str(Path.home())
         return QFileDialog.getExistingDirectory(self, caption, start)
+
+    def _ask_yes_no(self, title: str, text: str):
+        """Await a modal from an asyncio task without qasync task re-entry:
+        the dialog opens on the next Qt loop turn and resolves a future."""
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QMessageBox
+
+        fut = asyncio.get_event_loop().create_future()
+
+        def _show() -> None:
+            box = QMessageBox(QMessageBox.Warning, title, text, parent=self)
+            box.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+            answered = box.exec() == QMessageBox.Ok
+            if not fut.done():
+                fut.set_result(answered)
+
+        QTimer.singleShot(0, _show)
+        return fut
 
     async def _default_new_session_dir(self, project_id: str | None = None) -> str:
         """Working directory for an instant new session."""

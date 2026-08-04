@@ -153,6 +153,12 @@ class SessionList(QWidget):
         self._search_timer.timeout.connect(_emit_search)
         self.new_button = QPushButton("+ New session")
         self.new_button.clicked.connect(self.new_session)
+        from PySide6.QtWidgets import QCheckBox
+
+        self.isolate_check = QCheckBox("Isolated")
+        self.isolate_check.setToolTip(
+            "Run the session in its own git worktree checked out from HEAD.\n"
+            "Your working tree is never modified; merge the branch when done.")
 
         header = QWidget()
         hl = QHBoxLayout(header)
@@ -188,8 +194,13 @@ class SessionList(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.addWidget(header)
         layout.addWidget(self.new_button)
+        layout.addWidget(self.isolate_check)
         layout.addWidget(self.search)
         layout.addWidget(self.tree)
+
+    def isolate_requested(self) -> bool:
+        """Whether the next new session should get its own worktree."""
+        return self.isolate_check.isChecked()
 
     # -- population ---------------------------------------------------------
 
@@ -372,12 +383,17 @@ class SessionList(QWidget):
         title = session.title or "(untitled)"
         is_running = session.id in running
         directory = getattr(session, "directory", "") or ""
-        dir_name = Path(directory).name if directory else ""
+        branch = getattr(session, "worktree_branch", "") or ""
+        # an isolated session's directory is an opaque worktree path — its
+        # branch name is the useful thing to show
+        dir_name = branch.split("/")[-1] if branch else (
+            Path(directory).name if directory else "")
         parts = [title]
         if dir_name:
             parts.append(dir_name)
         parts.append(relative_time(session.updated_at))
-        label = f"{'● ' if is_running else ''}{' · '.join(parts)}"
+        mark = "⑂ " if branch else ""
+        label = f"{'● ' if is_running else ''}{mark}{' · '.join(parts)}"
         item = QTreeWidgetItem([label])
         item.setData(0, _ID_ROLE, session.id)
         item.setData(0, _KIND_ROLE, "session")
@@ -390,6 +406,8 @@ class SessionList(QWidget):
             tooltip += f"\n{project_name}"
         if directory:
             tooltip += f"\n{directory}"
+        if branch:
+            tooltip += f"\nisolated on {branch}"
         item.setToolTip(0, tooltip)
         color = (agent_colors or {}).get(session.agent, "#98c379")
         from .sprites import critter_pixmap
