@@ -397,7 +397,7 @@ class SessionList(QWidget):
         item = QTreeWidgetItem([label])
         item.setData(0, _ID_ROLE, session.id)
         item.setData(0, _KIND_ROLE, "session")
-        item.setData(0, TITLE_ROLE, title)
+        item.setData(0, TITLE_ROLE, f"{mark}{title}" if mark else title)
         meta_bits = [b for b in (dir_name, relative_time(session.updated_at)) if b]
         item.setData(0, META_ROLE, " · ".join(meta_bits))
         item.setData(0, RUNNING_ROLE, is_running)

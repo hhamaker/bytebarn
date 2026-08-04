@@ -1630,3 +1630,10 @@ def test_session_item_marks_isolated_sessions(qapp):
     assert "⑂" in iso_item.text(0)
     assert "session-abcd1234" in iso_item.text(0)
     assert "bytebarn/session-abcd1234" in iso_item.toolTip(0)
+
+    # TITLE_ROLE is what SessionRowDelegate actually paints — text(0) alone
+    # would pass even if the mark never reached the screen.
+    from bytebarn.app.delegates import TITLE_ROLE
+
+    assert "⑂" not in plain_item.data(0, TITLE_ROLE)
+    assert "⑂" in iso_item.data(0, TITLE_ROLE)
