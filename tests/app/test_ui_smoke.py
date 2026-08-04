@@ -1706,6 +1706,36 @@ async def test_default_new_session_dir_never_returns_a_worktree(qapp, tmp_path):
         await engine.stop()
 
 
+async def test_default_new_session_dir_never_returns_a_subagent_worktree(qapp, tmp_path):
+    """A subagent's worktree is a worse inheritance than an isolated session's.
+
+    Subagent rows carry a worktree ``directory`` but no ``worktree_branch``,
+    so the isolated-session guard does not see them. The crew stage lets you
+    open a *running* subagent, and its worktree is force-removed and its
+    branch deleted the moment the run finishes — so a plain session rooted
+    there writes to a branch that is about to stop existing.
+    """
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        parent = await engine.new_session()
+        child = await engine.store.create_session(
+            engine.project.id, parent_session_id=parent.id, title="a subagent")
+        wt = await engine.worktrees.create(
+            child.id, engine.project_dir, project_key="p")
+        assert wt is not None
+        await engine.store.update_session(child.id, directory=str(wt.path))
+        child = await engine.store.get_session(child.id)
+        assert child.directory and not child.worktree_branch
+
+        await window._load_session(child.id)
+        default = await window._default_new_session_dir()
+
+        assert default != child.directory
+        assert default == str(engine.project_dir)
+    finally:
+        await engine.stop()
+
+
 async def test_plain_new_session_after_isolated_is_a_different_session(qapp, tmp_path):
     """The whole '+ New session' path, untick Isolated after ticking it."""
     window, engine = await _iso_window(tmp_path, qapp)

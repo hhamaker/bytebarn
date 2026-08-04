@@ -864,11 +864,14 @@ class MainWindow(QMainWindow):
                     return p.path
         if self.current_session_id:
             current = await self.engine.store.get_session(self.current_session_id)
-            # never inherit an isolated session's worktree: a plain new session
-            # rooted there would write to another session's branch while the
-            # UI showed nothing to say so, and `git status` in the live
-            # checkout would stay clean
+            # never inherit any worktree: a plain new session rooted there
+            # would write to another session's branch while the UI showed
+            # nothing to say so, and `git status` in the live checkout would
+            # stay clean. The path test also covers subagent worktrees, which
+            # carry a directory but no worktree_branch — and which are removed
+            # outright when their run finishes.
             if (current and current.directory and not current.worktree_branch
+                    and not self._is_worktree_path(current.directory)
                     and Path(current.directory).is_dir()):
                 return current.directory
         last = self._last_project()
