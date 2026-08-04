@@ -78,6 +78,42 @@ async def head_commit(git_root: Path) -> str | None:
     return out if code == 0 and out else None
 
 
+async def dirty_files(root: Path) -> list[str]:
+    """Uncommitted paths (modified, staged, untracked) relative to the git root.
+
+    Empty when ``root`` is not a git repo — callers treat that as "nothing to
+    warn about" rather than an error.
+    """
+    top = await git_root(root)
+    if top is None:
+        return []
+    # `--porcelain` lines are fixed-column ("XY path"; X/Y may be a literal
+    # space), so this can't go through `_git()` — its `.strip()` on the whole
+    # blob eats a leading-space status code off the first line.
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "status", "--porcelain",
+            cwd=str(top),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=30.0)
+    except (OSError, asyncio.TimeoutError):
+        return []
+    if proc.returncode != 0:
+        return []
+    names: list[str] = []
+    for line in out.decode(errors="replace").splitlines():
+        if len(line) <= 3:
+            continue
+        path = line[3:]
+        # renames render as "old -> new"; report the destination
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        names.append(path.strip('"'))
+    return names
+
+
 class WorktreeManager:
     """Create / apply / remove per-subagent worktrees under a store root."""
 
@@ -93,8 +129,16 @@ class WorktreeManager:
         session_id: str,
         parent_cwd: Path,
         project_key: str = "default",
+        *,
+        track: bool = True,
+        branch: str | None = None,
     ) -> Worktree | None:
-        """Add a worktree for session_id. Returns None if isolation is unavailable."""
+        """Add a worktree for session_id. Returns None if isolation is unavailable.
+
+        ``track=False`` hands back the worktree without registering it, so
+        ``remove`` / ``apply_and_remove`` can never reach it — that is how
+        session worktrees (spec: isolated sessions) outlive their run.
+        """
         root = await git_root(parent_cwd)
         if root is None:
             return None
@@ -102,7 +146,7 @@ class WorktreeManager:
         if not base:
             return None  # empty repo / no commits
 
-        branch = f"bytebarn/{session_id[:12]}"
+        branch = branch or f"bytebarn/{session_id[:12]}"
         path = self.store_root / project_key / session_id
         if path.exists():
             # leftover from a crashed run — drop it
@@ -131,7 +175,8 @@ class WorktreeManager:
             parent_cwd=parent_cwd.resolve(),
             git_root=root,
         )
-        self._active[session_id] = wt
+        if track:
+            self._active[session_id] = wt
         return wt
 
     async def changed_files(self, wt: Worktree) -> tuple[list[str], list[str], list[str]]:

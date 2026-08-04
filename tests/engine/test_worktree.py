@@ -186,6 +186,64 @@ async def test_parallel_subagents_isolated_then_merged(engine):
     assert concurrency["peak"] >= 2  # ran in parallel
 
 
+async def test_create_untracked_is_not_removable(tmp_path):
+    """track=False keeps the manager from ever owning (and deleting) it."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    mgr = WorktreeManager(tmp_path / "worktrees")
+
+    wt = await mgr.create(
+        "sess1234abcd", repo, project_key="p",
+        track=False, branch="bytebarn/session-sess1234",
+    )
+    assert wt is not None
+    assert wt.branch == "bytebarn/session-sess1234"
+    assert wt.path.is_dir()
+    assert (wt.path / "README.md").is_file()
+
+    # the manager does not know about it, so cleanup calls are no-ops
+    assert mgr.get("sess1234abcd") is None
+    await mgr.remove("sess1234abcd")
+    assert await mgr.apply_and_remove("sess1234abcd") is None
+    assert wt.path.is_dir()
+
+
+async def test_create_tracked_still_default(tmp_path):
+    """Subagent behaviour is unchanged: tracked, default branch name."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    mgr = WorktreeManager(tmp_path / "worktrees")
+
+    wt = await mgr.create("abcdefghijklmnop", repo, project_key="p")
+    assert wt is not None
+    assert wt.branch == "bytebarn/abcdefghijkl"
+    assert mgr.get("abcdefghijklmnop") is wt
+
+    await mgr.remove("abcdefghijklmnop")
+    assert not wt.path.exists()
+
+
+async def test_dirty_files_reports_modified_and_untracked(tmp_path):
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    from bytebarn.engine.worktree import dirty_files
+
+    assert await dirty_files(repo) == []
+
+    (repo / "README.md").write_text("changed\n")
+    (repo / "brand_new.txt").write_text("new\n")
+    found = set(await dirty_files(repo))
+    assert found == {"README.md", "brand_new.txt"}
+
+
+async def test_dirty_files_on_non_git_dir(tmp_path):
+    from bytebarn.engine.worktree import dirty_files
+
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert await dirty_files(plain) == []
+
+
 async def test_worktree_can_be_disabled(engine):
     engine.config.model_extra["worktree"] = {"enabled": False}
     _install(engine, [
