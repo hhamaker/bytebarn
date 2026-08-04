@@ -364,6 +364,56 @@ async def test_isolate_session_store_failure_survives_cleanup_failure(engine, mo
         await engine.new_session(isolated=True)
 
 
+def _tree_snapshot(root: Path) -> dict[str, bytes]:
+    """Every tracked-ish file under root, excluding .git, for byte comparison."""
+    out: dict[str, bytes] = {}
+    for p in sorted(root.rglob("*")):
+        if p.is_file() and ".git" not in p.parts:
+            out[str(p.relative_to(root))] = p.read_bytes()
+    return out
+
+
+async def test_subagent_of_isolated_session_never_touches_live_tree(engine):
+    """The whole point: a /goal-style delegation writes only in the worktree."""
+    before = _tree_snapshot(engine.project_dir)
+    assert before  # guard against a broken glob making this comparison vacuous
+
+    session = await engine.new_session(isolated=True)
+    assert session.worktree_branch  # isolation actually happened
+    worktree = Path(session.directory)
+
+    # Script mirrors the existing subagent tests in this file: it dispatches
+    # on a call counter, since the same FakeProvider serves both the parent
+    # and the child session. tool_turn's signature is (call_id, name, input).
+    calls = {"n": 0}
+
+    def script(req):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return tool_turn("c1", "task", {
+                "agent": "general",
+                "description": "write a file",
+                "prompt": "create hello.txt",
+            })
+        if calls["n"] == 2:
+            return tool_turn("c2", "write", {"path": "hello.txt", "content": "hi\n"})
+        return text_turn("done")
+
+    _install(engine, script)
+    await _run_and_wait(engine, session, "delegate this")
+
+    # the subagent's file reached the session worktree...
+    assert (worktree / "hello.txt").read_text() == "hi\n"
+    # ...and the live checkout is byte-identical to before the run
+    assert _tree_snapshot(engine.project_dir) == before
+    assert not (engine.project_dir / "hello.txt").exists()
+
+    # the session worktree itself survived the child's apply_and_remove
+    assert worktree.is_dir()
+    still = await engine.store.get_session(session.id)
+    assert still.directory == str(worktree)
+
+
 async def test_worktree_can_be_disabled(engine):
     engine.config.model_extra["worktree"] = {"enabled": False}
     _install(engine, [
