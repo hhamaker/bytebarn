@@ -40,17 +40,36 @@ Out of scope, with reasons:
 ## Deciding what "merged" means
 
 Not a comparison against `main`. The question that matters is *would deleting
-this branch lose commits*, which is reachability from any other ref:
+this branch lose commits*, which is reachability from any other ref.
+
+The obvious spelling is **wrong**, and was in an earlier draft of this spec:
 
 ```
+# WRONG — returns 0 for every isolated session
 git rev-list --count refs/heads/<branch> --not --exclude=refs/heads/<branch> --all
 ```
 
-`--exclude` applies to the following `--all`, so this counts commits reachable
-only from this branch. It is correct regardless of what the default branch is
-called and regardless of whether the work landed via merge, rebase, squash, or
-cherry-pick — all of which leave the original commits unreachable only if
-nothing else references them.
+`--all` means "all refs in refs/, **along with HEAD**", and `--exclude` filters
+refs by glob without touching HEAD. An isolated session's branch is checked out
+in its worktree, so a HEAD somewhere still points at it and every commit looks
+reachable. Verified against a real repo: with the branch checked out in a linked
+worktree and two commits on it, this returns `0` — it would report "nothing to
+lose" in exactly the case the dialog exists for.
+
+Enumerate the other refs explicitly instead:
+
+```
+git for-each-ref --format='%(refname)'          # then drop refs/heads/<branch>
+git rev-list --count refs/heads/<branch> --not <every other ref>
+```
+
+No glob semantics and no HEAD surprises. When the branch is the repository's
+only ref the `--not` list is empty, which git accepts and which correctly counts
+every commit on the branch.
+
+This is right regardless of what the default branch is called and regardless of
+whether the work landed by merge, rebase, squash, or cherry-pick — all of which
+leave the original commits unreachable only if nothing else references them.
 
 A count of zero means removal is lossless. A non-zero count is exactly the
 number of commits that would become unreachable.
@@ -99,6 +118,16 @@ The dialog opens through the existing `_ask_yes_no` pattern — via
 as an asyncio task and a modal opened directly inside one makes qasync warn
 about task re-entry. Three buttons rather than two, so this needs a sibling
 helper rather than reuse.
+
+**Deleting an isolated session therefore shows two dialogs in sequence.** The
+existing "permanently delete?" confirmation lives in
+`SessionList._confirm_delete`, which runs synchronously from the context-menu
+handler and has no engine access, so it cannot learn anything about worktrees.
+Merging the two would mean either pushing engine access into a dumb widget or
+moving the delete confirmation into `MainWindow` — a larger change than this
+feature justifies. They are also genuinely different questions: whether to
+destroy the conversation, and whether to destroy the code. The second dialog
+appears only for isolated sessions, so ordinary deletes are unchanged.
 
 ## Error handling
 
