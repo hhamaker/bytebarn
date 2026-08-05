@@ -1,6 +1,6 @@
 [project]
 name = "bytebarn"
-version = "0.1.0"
+version = "0.2.0"
 description = "ByteBarn — a local desktop harness for AI coding agents (a barn full of pixel farmhands)"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -66,4 +66,6 @@ build-backend = "setuptools.build_meta"
 include = ["bytebarn*"]
 
 [tool.setuptools.package-data]
-bytebarn = ["assets/prompts/*.txt"]
+# glob everything: a non-.txt asset silently vanished from the
+# 0.1.0 wheel because this was scoped to *.txt
+bytebarn = ["assets/prompts/*"]
