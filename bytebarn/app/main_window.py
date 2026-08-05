@@ -36,6 +36,9 @@ from ..engine.events import (
     TaskFinished,
     TaskStarted,
     TaskUpdated,
+    TerminalChunk,
+    TerminalClosed,
+    TerminalOpened,
     TodoUpdated,
 )
 from ..engine.facade import Engine
@@ -201,6 +204,21 @@ class MainWindow(QMainWindow):
         self.content_split.setCollapsible(0, False)
         self.content_split.setHandleWidth(2)
 
+        # Terminal manager — bottom pane (backend tees + local shells)
+        from .terminal_panel import TerminalPanel
+
+        self.terminal_panel = TerminalPanel(engine)
+        self.terminal_panel.setVisible(False)
+        self.terminal_panel.closed.connect(self._on_terminal_closed)
+        self.mid_split = QSplitter(Qt.Vertical)
+        self.mid_split.addWidget(self.content_split)
+        self.mid_split.addWidget(self.terminal_panel)
+        self.mid_split.setStretchFactor(0, 1)
+        self.mid_split.setStretchFactor(1, 0)
+        self.mid_split.setCollapsible(0, False)
+        self.mid_split.setHandleWidth(6)
+        self.mid_split.setSizes([700, 0])
+
         right = QWidget()
         right.setMinimumWidth(280)
         right_layout = QVBoxLayout(right)
@@ -208,7 +226,7 @@ class MainWindow(QMainWindow):
         right_layout.setSpacing(2)
         right_layout.addWidget(header)
         right_layout.addWidget(self.search_bar)
-        right_layout.addWidget(self.content_split, 1)
+        right_layout.addWidget(self.mid_split, 1)
         right_layout.addWidget(self.todo_strip)
         right_layout.addWidget(self.prompt_bar)
 
@@ -218,13 +236,16 @@ class MainWindow(QMainWindow):
         self.sidebar = QStackedWidget()
         self.sidebar.addWidget(self.session_list)
         self.sidebar.addWidget(self.workspace)
-        # Don't let either page's large sizeHint pin the splitter handle.
-        self.sidebar.setMinimumWidth(160)
+        # Floor keeps Chats/Goals/Memory/Agents tabs readable (scroll, not
+        # "Ch…"). Soft enough that the main splitter still drags freely.
+        self.sidebar.setMinimumWidth(200)
 
         splitter = QSplitter()
         splitter.addWidget(self.sidebar)
         splitter.addWidget(right)
-        splitter.setSizes([240, 960])
+        # Default wide enough for the four workspace tab labels without
+        # crowding; users can still drag narrower (scroll buttons appear).
+        splitter.setSizes([320, 880])
         splitter.setCollapsible(0, False)
         # Allow the user to drag the session picker narrower/wider freely.
         splitter.setStretchFactor(0, 0)
@@ -460,6 +481,11 @@ class MainWindow(QMainWindow):
         preview_action = QAction("Preview Panel", self)
         preview_action.setShortcut(QKeySequence("Ctrl+Shift+V"))
         preview_action.triggered.connect(self._toggle_preview)
+        terminal_action = QAction("Terminals", self)
+        terminal_action.setShortcut(QKeySequence("Ctrl+`"))
+        terminal_action.setToolTip(
+            "Show Claude Code process output and open local shells")
+        terminal_action.triggered.connect(self._toggle_terminal)
         settings_action = QAction("Settings…", self)
         settings_action.setShortcut(QKeySequence.Preferences)
         settings_action.setMenuRole(QAction.PreferencesRole)  # macOS app menu
@@ -469,6 +495,7 @@ class MainWindow(QMainWindow):
         tools_menu.addAction(skills_action)
         tools_menu.addAction(mcp_action)
         tools_menu.addAction(preview_action)
+        tools_menu.addAction(terminal_action)
         tools_menu.addSeparator()
         tools_menu.addAction(settings_action)
 
@@ -744,6 +771,16 @@ class MainWindow(QMainWindow):
                 elif isinstance(event, QueueUpdated):
                     if event.session_id == self.current_session_id:
                         self.prompt_bar.set_queue_depth(event.depth)
+                elif isinstance(event, (TerminalOpened, TerminalChunk, TerminalClosed)):
+                    panel = getattr(self, "terminal_panel", None)
+                    if panel is not None:
+                        panel.handle_event(event)
+                        # Auto-open the pane when a backend terminal starts so
+                        # Claude Code output is visible without hunting menus.
+                        if (isinstance(event, TerminalOpened)
+                                and event.kind == "claude-code"
+                                and not panel.isVisible()):
+                            self._show_terminal()
                 elif isinstance(event, PermissionAsked):
                     if self.engine.session_mode == FULL_AUTO:
                         # switched to Full-auto after the ask was queued
@@ -1496,6 +1533,25 @@ class MainWindow(QMainWindow):
             self.preview.setVisible(True)
             self.content_split.setSizes([3, 2])
 
+    def _toggle_terminal(self) -> None:
+        show = not self.terminal_panel.isVisible()
+        if show:
+            self._show_terminal()
+        else:
+            self.terminal_panel.setVisible(False)
+            self.mid_split.setSizes([1, 0])
+
+    def _show_terminal(self) -> None:
+        self.terminal_panel.setVisible(True)
+        self.terminal_panel.refresh_from_hub()
+        sizes = self.mid_split.sizes()
+        total = sum(sizes) or max(self.mid_split.height(), 600)
+        term_h = max(180, min(280, total // 3))
+        self.mid_split.setSizes([max(200, total - term_h), term_h])
+
+    def _on_terminal_closed(self) -> None:
+        self.mid_split.setSizes([1, 0])
+
     def _preview_file(self, path: str) -> None:
         self._show_preview()
         self.preview.show_file(path)
@@ -2093,12 +2149,19 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
 
+        # Close user PTYs before engine stop
+        panel = getattr(self, "terminal_panel", None)
+        if panel is not None:
+            try:
+                await panel.shutdown()
+            except Exception:
+                pass
+
         # Engine stop drains runs/MCP/providers/store
         try:
             await asyncio.wait_for(self.engine.stop(), timeout=8.0)
         except Exception:
             pass
-
         from PySide6.QtWidgets import QApplication
 
         app = QApplication.instance()

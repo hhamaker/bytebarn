@@ -118,6 +118,33 @@ class SessionActivity(EngineEvent):
     name: str = "session.activity"
 
 
+@dataclass
+class TerminalOpened(EngineEvent):
+    terminal_id: str = ""
+    kind: str = ""  # claude-code | user | bash
+    session_id: str = ""
+    title: str = ""
+    cwd: str = ""
+    pid: int = -1
+    interactive: bool = False
+    name: str = "terminal.opened"
+
+
+@dataclass
+class TerminalChunk(EngineEvent):
+    terminal_id: str = ""
+    text: str = ""
+    stream: str = "stdout"
+    name: str = "terminal.chunk"
+
+
+@dataclass
+class TerminalClosed(EngineEvent):
+    terminal_id: str = ""
+    exit_code: int = -1
+    name: str = "terminal.closed"
+
+
 class EventBus:
     """Fan-out async event bus; each subscriber gets every event."""
 

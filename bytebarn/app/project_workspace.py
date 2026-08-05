@@ -59,9 +59,13 @@ class ProjectWorkspace(QWidget):
         header.addWidget(self.title, 1)
 
         self.tabs = QTabWidget()
-        # elide when the sidebar is too narrow rather than forcing window growth
-        self.tabs.tabBar().setElideMode(Qt.ElideRight)
-        self.tabs.tabBar().setUsesScrollButtons(True)
+        # Never elide tab titles to "Ch…/Go…/Mem…/Age…" — that makes the bar
+        # unreadable. Prefer full labels; when the sidebar is narrow, scroll
+        # the tab bar instead of chopping words.
+        bar = self.tabs.tabBar()
+        bar.setElideMode(Qt.ElideNone)
+        bar.setUsesScrollButtons(True)
+        bar.setExpanding(False)
         self.tabs.addTab(self._chats_tab(), "Chats")
         self.tabs.addTab(self._goals_tab(), "Goals")
         self.tabs.addTab(self._memory_tab(), "Memory")

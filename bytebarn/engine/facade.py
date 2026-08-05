@@ -55,6 +55,8 @@ class Engine:
         self.mcp = MCPManager()
         from .worktree import WorktreeManager
         self.worktrees = WorktreeManager(self.global_dir / "worktrees")
+        from .terminals import ProcessHub
+        self.terminals = ProcessHub(self.bus)
 
         self._runs: dict[str, RunHandle] = {}
         self._new_session_lock = asyncio.Lock()
@@ -120,6 +122,12 @@ class Engine:
             await asyncio.gather(*run_tasks, return_exceptions=True)
 
         await self.mcp.stop()
+
+        # Drop terminal ring buffers / open markers
+        try:
+            self.terminals.clear()
+        except Exception:
+            pass
 
         # Close HTTP clients so connection pools don't delay process exit
         close = getattr(self.providers, "close", None)

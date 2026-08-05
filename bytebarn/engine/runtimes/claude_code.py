@@ -535,11 +535,37 @@ class ClaudeCodeRuntime:
             raise asyncio.CancelledError
 
         proc = await self._spawn(argv, cwd)
+        # Tee process I/O into the terminal hub so the UI can show the
+        # underlying Claude Code stream without stealing stdout.
+        hub = getattr(engine, "terminals", None)
+        term_id = f"cc:{live.id}"
+        if hub is not None:
+            try:
+                hub.open(
+                    kind="claude-code",
+                    title=f"Claude Code · {(live.title or live.id[:8])}",
+                    session_id=live.id,
+                    cwd=str(cwd),
+                    pid=getattr(proc, "pid", None),
+                    interactive=False,
+                    terminal_id=term_id,
+                )
+                hub.append(
+                    term_id,
+                    f"$ {' '.join(argv[:6])}{'…' if len(argv) > 6 else ''}\n",
+                )
+            except Exception:
+                log.debug("terminal hub open failed", exc_info=True)
+                term_id = ""
+        else:
+            term_id = ""
+
         state = ProjectionState()
         stdout_task = asyncio.create_task(
-            self._read_and_project(proc, engine, live, message.id, state, handle),
+            self._read_and_project(
+                proc, engine, live, message.id, state, handle, term_id),
         )
-        stderr_task = asyncio.create_task(self._drain_stderr(proc))
+        stderr_task = asyncio.create_task(self._drain_stderr(proc, engine, term_id))
         abort_task = asyncio.create_task(self._watch_abort(proc, handle))
 
         try:
@@ -561,6 +587,11 @@ class ClaudeCodeRuntime:
                 await stderr_task
             except asyncio.CancelledError:
                 pass
+            if hub is not None and term_id:
+                try:
+                    hub.close(term_id, exit_code=proc.returncode)
+                except Exception:
+                    pass
 
         if handle.abort.is_set():
             raise asyncio.CancelledError
@@ -622,8 +653,10 @@ class ClaudeCodeRuntime:
         message_id: str,
         state: ProjectionState,
         handle: RunHandle,
+        term_id: str = "",
     ) -> None:
         assert proc.stdout is not None
+        hub = getattr(engine, "terminals", None)
         while True:
             if handle.abort.is_set():
                 break
@@ -633,7 +666,13 @@ class ClaudeCodeRuntime:
                 break
             if not line_b:
                 break
-            line = line_b.decode("utf-8", errors="replace").strip()
+            raw = line_b.decode("utf-8", errors="replace")
+            if hub is not None and term_id:
+                try:
+                    hub.append(term_id, raw if raw.endswith("\n") else raw + "\n")
+                except Exception:
+                    pass
+            line = raw.strip()
             if not line:
                 continue
             try:
@@ -645,18 +684,33 @@ class ClaudeCodeRuntime:
                 continue
             await project_claude_event(engine, session, message_id, event, state)
 
-    async def _drain_stderr(self, proc: asyncio.subprocess.Process) -> None:
+    async def _drain_stderr(
+        self,
+        proc: asyncio.subprocess.Process,
+        engine: "Engine | None" = None,
+        term_id: str = "",
+    ) -> None:
         if proc.stderr is None:
             return
+        hub = getattr(engine, "terminals", None) if engine is not None else None
         try:
             while True:
                 line = await proc.stderr.readline()
                 if not line:
                     break
-                log.debug("claude-code stderr: %s", line.decode(errors="replace").rstrip())
+                text = line.decode(errors="replace")
+                log.debug("claude-code stderr: %s", text.rstrip())
+                if hub is not None and term_id:
+                    try:
+                        hub.append(
+                            term_id,
+                            text if text.endswith("\n") else text + "\n",
+                            stream="stderr",
+                        )
+                    except Exception:
+                        pass
         except (asyncio.CancelledError, ConnectionResetError, BrokenPipeError):
             return
-
     async def _watch_abort(
         self, proc: asyncio.subprocess.Process, handle: RunHandle,
     ) -> None:
