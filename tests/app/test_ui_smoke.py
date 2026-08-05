@@ -775,16 +775,21 @@ def test_prompt_bar_includes_claude_code_sentinel(qapp):
     from bytebarn.app.prompt_bar import PromptBar
 
     bar = PromptBar()
-    bar.set_providers(["groq", "claude-code"], "claude-code")
+    # friendly label + stable id (how MainWindow fills the combo)
+    bar.set_providers(
+        [("claude-code", "Claude Code"), ("groq", "groq")],
+        "claude-code",
+    )
     bar.set_models(["default", "sonnet", "opus", "haiku"], "default")
-    assert bar.provider_combo.currentText() == "claude-code"
+    assert bar.provider_combo.currentText() == "Claude Code"
+    assert bar.current_provider() == "claude-code"
     assert bar.current_model() == "claude-code/default"
     bar.model_combo.setCurrentText("sonnet")
     assert bar.current_model() == "claude-code/sonnet"
 
 
 async def test_provider_picker_toggles_claude_code_runtime(qapp, tmp_path, monkeypatch):
-    """Picking claude-code in the provider combo flips Engine runtime."""
+    """Picking Claude Code in the provider combo flips Engine runtime."""
     import json
 
     from bytebarn.app.main_window import (
@@ -804,19 +809,26 @@ async def test_provider_picker_toggles_claude_code_runtime(qapp, tmp_path, monke
     await engine.start()
     try:
         window = MainWindow(engine)
-        # sentinel always offered next to connected providers
+        # sentinel always offered — first, with a human label
         window._refresh_pickers()
-        providers = [
+        labels = [
             window.prompt_bar.provider_combo.itemText(i)
             for i in range(window.prompt_bar.provider_combo.count())
         ]
-        assert CLAUDE_CODE_PROVIDER in providers
+        ids = [
+            window.prompt_bar.provider_combo.itemData(i)
+            for i in range(window.prompt_bar.provider_combo.count())
+        ]
+        assert "Claude Code" in labels
+        assert CLAUDE_CODE_PROVIDER in ids
+        assert labels[0] == "Claude Code"  # not buried at the bottom
         assert engine.runtime_name() == "native"
         assert window.status_runtime.text() == ""
 
         # pick Claude Code → runtime + sticky model
         window._provider_changed(CLAUDE_CODE_PROVIDER)
         assert engine.runtime_name() == CLAUDE_CODE_PROVIDER
+        assert window.prompt_bar.current_provider() == CLAUDE_CODE_PROVIDER
         assert window.prompt_bar.current_model() == CLAUDE_CODE_DEFAULT_MODEL
         assert "Claude Code" in window.status_runtime.text()
         cfg = json.loads((gdir / "config.json").read_text())
@@ -830,11 +842,13 @@ async def test_provider_picker_toggles_claude_code_runtime(qapp, tmp_path, monke
         assert window.status_runtime.text() == ""
         cfg = json.loads((gdir / "config.json").read_text())
         assert cfg.get("runtime") == "native"
+
         # restore from config on a fresh window
         window._set_runtime(CLAUDE_CODE_PROVIDER)
         window2 = MainWindow(engine)
         window2._refresh_pickers()
-        assert window2.prompt_bar.provider_combo.currentText() == CLAUDE_CODE_PROVIDER
+        assert window2.prompt_bar.current_provider() == CLAUDE_CODE_PROVIDER
+        assert window2.prompt_bar.provider_combo.currentText() == "Claude Code"
         assert window2.prompt_bar.current_model().startswith("claude-code/")
     finally:
         await engine.stop()

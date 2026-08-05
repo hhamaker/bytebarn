@@ -66,10 +66,10 @@ _AGENT_INTERNAL = {v: k for k, v in _AGENT_DISPLAY.items()}
 # Synthetic provider in the prompt-bar picker. Selecting it flips Engine
 # runtime to claude-code (local `claude` CLI); it is not an API Provider.
 CLAUDE_CODE_PROVIDER = "claude-code"
+CLAUDE_CODE_LABEL = "Claude Code"  # what the user sees in the dropdown
 CLAUDE_CODE_DEFAULT_MODEL = f"{CLAUDE_CODE_PROVIDER}/default"
 # Curated Claude Code --model aliases (CLI accepts these; "default" = omit flag)
 CLAUDE_CODE_MODELS = ["default", "sonnet", "opus", "haiku"]
-
 
 class MainWindow(QMainWindow):
     def __init__(self, engine: Engine):
@@ -1584,16 +1584,30 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ pickers & status
 
-    def _picker_providers(self, preferred: str = "") -> list[str]:
-        """Connected API providers plus the Claude Code runtime sentinel."""
-        providers = list(
+    def _picker_providers(
+        self, preferred: str = "",
+    ) -> list[tuple[str, str]]:
+        """Connected API providers plus Claude Code — id/label pairs for the combo.
+
+        Claude Code is listed **first** with a human label so it is obvious in
+        the dropdown (not buried as a trailing ``claude-code`` slug).
+        """
+        connected = list(
             connected_providers(self.engine.config, self.engine.providers.auth))
-        # Always offer local Claude Code CLI as a "provider" in the picker.
-        if CLAUDE_CODE_PROVIDER not in providers:
-            providers.append(CLAUDE_CODE_PROVIDER)
-        if preferred and preferred not in providers:
-            providers = [preferred] + providers
-        return providers
+        # Claude Code always first so users can find it without scrolling.
+        items: list[tuple[str, str]] = [
+            (CLAUDE_CODE_PROVIDER, CLAUDE_CODE_LABEL),
+        ]
+        seen = {CLAUDE_CODE_PROVIDER}
+        for pid in connected:
+            if pid in seen:
+                continue
+            items.append((pid, pid))
+            seen.add(pid)
+        if preferred and preferred not in seen:
+            # Keep preferred available, but never above Claude Code.
+            items.insert(1, (preferred, preferred))
+        return items
 
     def _refresh_pickers(self, agent: str = "", model: str = "") -> None:
         agents = [_AGENT_DISPLAY.get(a.name, a.name) for a in self.engine.agents.primaries()]
@@ -1607,34 +1621,34 @@ class MainWindow(QMainWindow):
         model = model or self._default_model()
         if model and "/" not in model:
             # bare model id (e.g. from model_combo.currentText) — keep current provider
-            provider = self.prompt_bar.provider_combo.currentText()
+            provider = self.prompt_bar.current_provider()
             if not provider or provider.startswith("⚡"):
                 default = self._default_model()
                 provider = default.partition("/")[0] if default else ""
             model_id = model
         else:
             provider, _, model_id = model.partition("/")
-
         providers = self._picker_providers(provider)
-        if provider and provider not in providers:
+        provider_ids = [pid for pid, _ in providers]
+        if provider and provider not in provider_ids:
             if model_id:
-                providers = [provider] + [p for p in providers if p != provider]
+                providers = [(provider, provider)] + [
+                    p for p in providers if p[0] != provider]
             else:
                 provider = next(
-                    (p for p in providers if p != CLAUDE_CODE_PROVIDER),
-                    providers[0] if providers else "",
+                    (pid for pid, _ in providers if pid != CLAUDE_CODE_PROVIDER),
+                    providers[0][0] if providers else "",
                 )
                 model_id = ""
         elif not provider:
             provider = next(
-                (p for p in providers if p != CLAUDE_CODE_PROVIDER),
-                providers[0] if providers else "",
+                (pid for pid, _ in providers if pid != CLAUDE_CODE_PROVIDER),
+                providers[0][0] if providers else "",
             )
             model_id = model_id or ""
         self.prompt_bar.set_providers(providers, provider)
         self._set_provider_models(provider, model_id)
         self._update_runtime_status()
-
     def _set_provider_models(self, provider: str, current_id: str = "") -> None:
         """Cached/curated list immediately; always refresh live from the provider."""
         if not provider:
@@ -1653,7 +1667,7 @@ class MainWindow(QMainWindow):
         # Otherwise preserve an existing selection for the provider, else leave empty.
         if current_id:
             select = current_id
-        elif self.prompt_bar.provider_combo.currentText() == provider:
+        elif self.prompt_bar.current_provider() == provider:
             keep = self.prompt_bar.model_combo.currentText().strip()
             select = keep if keep in models else ""
         else:
@@ -1665,7 +1679,7 @@ class MainWindow(QMainWindow):
         if provider == CLAUDE_CODE_PROVIDER:
             return
         live = await self.engine.list_models(provider, force=True)
-        if self.prompt_bar.provider_combo.currentText() != provider:
+        if self.prompt_bar.current_provider() != provider:
             return  # provider changed meanwhile
         if not live:
             return  # leave cache/curated placeholder on fetch failure
@@ -1680,7 +1694,9 @@ class MainWindow(QMainWindow):
     def _provider_changed(self, provider: str) -> None:
         if not provider or provider.startswith("⚡"):
             return
-        if provider == CLAUDE_CODE_PROVIDER:
+        # Accept either the stable id or the friendly label from older paths.
+        if provider in (CLAUDE_CODE_PROVIDER, CLAUDE_CODE_LABEL):
+            provider = CLAUDE_CODE_PROVIDER
             # Local Claude Code CLI — flip runtime and seed a valid model string
             # so Send works immediately without a second click.
             # Keep the combo selection in sync when this is invoked programmatically
@@ -1698,6 +1714,7 @@ class MainWindow(QMainWindow):
         # the list and let the user choose. The model_changed handler will
         # persist once they actually pick one.
         self._set_provider_models(provider, current_id="")
+
     async def _refresh_cost(self) -> None:
         if not self.current_session_id:
             self.context_meter.setVisible(False)

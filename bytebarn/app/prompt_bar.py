@@ -19,6 +19,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+# Qt.UserRole holds the stable provider id when the combo shows a friendlier label
+_PROVIDER_ID_ROLE = Qt.UserRole
+
 _MAX_LINES = 4
 
 
@@ -121,9 +124,10 @@ class PromptBar(QWidget):
         # two-stage model picker: provider first, then that provider's models
         self.provider_combo = QComboBox()
         self.provider_combo.setToolTip(
-            "Provider — pick an API backend, or claude-code to run your local "
-            "Claude Code CLI. Connect more APIs via ⚡ providers.")
-        self.provider_combo.currentTextChanged.connect(self.provider_changed)
+            "Provider — pick an API backend, or Claude Code to run your local "
+            "`claude` CLI (subscription). Connect more APIs via ⚡ providers.")
+        # Emit the stable provider id (UserRole), not only the display label.
+        self.provider_combo.currentIndexChanged.connect(self._emit_provider_changed)
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
         self.model_combo.setToolTip(
@@ -381,14 +385,36 @@ class PromptBar(QWidget):
             self.agent_combo.setCurrentText(current)
         self.agent_combo.blockSignals(False)
 
-    def set_providers(self, providers: list[str], current: str) -> None:
+    def set_providers(
+        self,
+        providers: list[str] | list[tuple[str, str]],
+        current: str,
+    ) -> None:
+        """Fill the provider combo.
+
+        ``providers`` entries are either bare ids (``"groq"``) or
+        ``(id, label)`` pairs so runtimes can show a friendly name while
+        still emitting a stable id on ``provider_changed``.
+        """
         self.provider_combo.blockSignals(True)
         self.provider_combo.clear()
-        self.provider_combo.addItems(providers)
+        ids: list[str] = []
+        for entry in providers:
+            if isinstance(entry, tuple):
+                pid, label = entry[0], entry[1]
+            else:
+                pid = label = str(entry)
+            self.provider_combo.addItem(label, pid)
+            ids.append(pid)
         if not providers:
-            self.provider_combo.addItem("⚡ connect a provider")
-        elif current in providers:
-            self.provider_combo.setCurrentText(current)
+            self.provider_combo.addItem("⚡ connect a provider", "")
+        elif current:
+            # match by id (UserRole) first, then by visible label
+            idx = self.provider_combo.findData(current)
+            if idx < 0:
+                idx = self.provider_combo.findText(current)
+            if idx >= 0:
+                self.provider_combo.setCurrentIndex(idx)
         self.provider_combo.blockSignals(False)
 
     def set_models(self, models: list[str], current: str) -> None:
@@ -411,14 +437,29 @@ class PromptBar(QWidget):
             self.model_combo.setCurrentText("")
         self.model_combo.blockSignals(False)
 
+    def current_provider(self) -> str:
+        """Stable provider id for the selected row (not the display label)."""
+        idx = self.provider_combo.currentIndex()
+        if idx < 0:
+            return ""
+        data = self.provider_combo.itemData(idx)
+        if data:
+            return str(data)
+        text = self.provider_combo.currentText()
+        return "" if text.startswith("⚡") else text
+
+    def _emit_provider_changed(self, _index: int = 0) -> None:
+        pid = self.current_provider()
+        if pid:
+            self.provider_changed.emit(pid)
+
     def current_model(self) -> str:
         """Full "provider/model-id" string, or "" when incomplete."""
-        provider = self.provider_combo.currentText()
+        provider = self.current_provider()
         model_id = self.model_combo.currentText().strip()
         if not provider or provider.startswith("⚡") or not model_id:
             return ""
         return f"{provider}/{model_id}"
-
     def set_queue_depth(self, depth: int) -> None:
         if depth <= 0:
             self.queue_label.clear()
