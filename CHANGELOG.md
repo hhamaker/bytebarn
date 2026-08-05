@@ -5,6 +5,14 @@ All notable changes to ByteBarn are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] — 2026-08-05
+
+### Fixed
+
+- **Claude Code is obvious in the provider picker.** Listed **first** as
+  **Claude Code** (not a trailing `claude-code` slug). The combo stores the
+  stable id `claude-code` while showing the friendly label.
+
 ## [0.3.1] — 2026-08-05
 
 Claude Code is selectable from the **provider** dropdown — no JSON edit required.
