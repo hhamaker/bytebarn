@@ -1,6 +1,13 @@
-"""In-app agent editor (spec §7.3): edits persist as config overrides."""
+"""In-app agent editor (spec §7.3).
+
+Built-ins are edited as config overrides. Custom agents are created as
+``.bytebarn/agent/<name>.md`` files (project-scoped by default).
+"""
 
 from __future__ import annotations
+
+import re
+from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -11,10 +18,12 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QSpinBox,
@@ -28,6 +37,24 @@ from ..engine.events import AgentRegistryChanged
 from ..engine.facade import Engine
 from .sprites import critter_pixmap
 
+_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
+
+
+def _starter_agent_md(name: str, mode: str) -> str:
+    """Default markdown body for a newly created custom agent."""
+    role = "subagent on the crew" if mode == "subagent" else "primary chat agent"
+    # Keep description a non-null string — empty YAML values become None and
+    # fail AgentDef validation.
+    return (
+        f"---\n"
+        f'description: "{name}"\n'
+        f"mode: {mode}\n"
+        f'color: "#98c379"\n'
+        f"---\n"
+        f"You are **{name}**, a {role}.\n"
+        f"\n"
+        f"Be concrete, use tools when they help, and report what you did.\n"
+    )
 
 class AgentEditor(QDialog):
     def __init__(self, engine: Engine, parent=None):
@@ -43,7 +70,27 @@ class AgentEditor(QDialog):
         self.show_hidden = QCheckBox("show hidden")
         self.show_hidden.stateChanged.connect(self._reload_list)
 
+        btn_new_primary = QPushButton("+ Primary")
+        btn_new_primary.setToolTip(
+            "New primary agent — appears in the prompt-bar agent picker")
+        btn_new_primary.clicked.connect(lambda: self._new_agent("primary"))
+        btn_new_sub = QPushButton("+ Subagent")
+        btn_new_sub.setToolTip(
+            "New subagent — orchestrator can delegate to it on /goal runs")
+        btn_new_sub.clicked.connect(lambda: self._new_agent("subagent"))
+        btn_delete = QPushButton("Delete")
+        btn_delete.setToolTip("Delete a custom agent file (built-ins cannot be removed)")
+        btn_delete.clicked.connect(self._delete_agent)
+        self._delete_btn = btn_delete
+
+        new_row = QHBoxLayout()
+        new_row.setContentsMargins(0, 0, 0, 0)
+        new_row.addWidget(btn_new_primary)
+        new_row.addWidget(btn_new_sub)
+        new_row.addWidget(btn_delete)
+
         left = QVBoxLayout()
+        left.addLayout(new_row)
         left.addWidget(self.agent_list)
         left.addWidget(self.show_hidden)
 
@@ -89,9 +136,13 @@ class AgentEditor(QDialog):
         self.color_button.clicked.connect(self._pick_color)
         self.description.textChanged.connect(self._update_preview)
         self.hidden = QCheckBox("hidden")
-        save = QPushButton("Save overrides")
+        save = QPushButton("Save")
+        save.setToolTip(
+            "Save changes — config overrides for built-ins, "
+            ".bytebarn/agent/*.md for custom agents")
         save.clicked.connect(self._save)
         reset = QPushButton("Reset overrides")
+        reset.setToolTip("Drop project config overrides for this agent (built-ins / overlays)")
         reset.clicked.connect(self._reset)
 
         form = QFormLayout()
@@ -321,6 +372,115 @@ class AgentEditor(QDialog):
         self._style_color_button()
         self._update_preview()
         self.hidden.setChecked(agent.hidden)
+        self._delete_btn.setEnabled(self._can_delete(agent))
+
+    def _can_delete(self, agent: AgentDef | None) -> bool:
+        """Only custom file-backed agents (not built-ins) can be deleted."""
+        if agent is None or agent.builtin:
+            return False
+        return self._agent_md_path(agent.name) is not None
+
+    def _agent_dir(self, scope: str = "project") -> Path:
+        if scope == "global":
+            return Path(self.engine.global_dir) / "agent"
+        return Path(self.engine.project_dir) / ".bytebarn" / "agent"
+
+    def _agent_md_path(self, name: str) -> Path | None:
+        """Return the on-disk .md for a custom agent, preferring project over global."""
+        for scope in ("project", "global"):
+            path = self._agent_dir(scope) / f"{name}.md"
+            if path.is_file():
+                return path
+        return None
+
+    def _select_agent(self, name: str) -> None:
+        for i in range(self.agent_list.count()):
+            item = self.agent_list.item(i)
+            if item is not None and item.data(Qt.UserRole) == name:
+                self.agent_list.setCurrentRow(i)
+                return
+
+    def _new_agent(self, mode: str = "subagent") -> None:
+        """Create a project-scoped agent .md and select it for editing."""
+        title = "New primary agent" if mode == "primary" else "New subagent"
+        hint = (
+            "Name (letters, numbers, _ -):"
+            if mode == "primary"
+            else "Name — orchestrator will see this in the crew roster:"
+        )
+        name, ok = QInputDialog.getText(self, title, hint)
+        if not ok:
+            return
+        name = name.strip()
+        if not name:
+            return
+        if not _NAME_RE.match(name):
+            QMessageBox.warning(
+                self, "Invalid name",
+                "Use a short id starting with a letter "
+                "(letters, numbers, underscore, hyphen; max 64 chars).")
+            return
+        if name in self.engine.agents.agents and self.engine.agents.get(name).builtin:
+            QMessageBox.warning(
+                self, "Name taken",
+                f"“{name}” is a built-in agent. Choose another name.")
+            return
+        path = self._agent_dir("project") / f"{name}.md"
+        if path.exists():
+            confirm = QMessageBox.question(
+                self, "Replace agent?",
+                f"“{name}” already exists in this project. Overwrite its file?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if confirm != QMessageBox.Yes:
+                return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(_starter_agent_md(name, mode), encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.warning(self, "Could not create agent", str(exc))
+            return
+        self.engine.reload_config()
+        self.engine.bus.emit(AgentRegistryChanged())
+        self._reload_list()
+        self._select_agent(name)
+
+    def _delete_agent(self) -> None:
+        agent = self._current
+        if not self._can_delete(agent):
+            QMessageBox.information(
+                self, "Cannot delete",
+                "Built-in agents cannot be deleted. Hide them instead, or "
+                "reset overrides to restore defaults.")
+            return
+        assert agent is not None
+        path = self._agent_md_path(agent.name)
+        if path is None:
+            return
+        confirm = QMessageBox.question(
+            self, "Delete agent?",
+            f"Delete custom agent “{agent.name}”?\n\n{path}",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if confirm != QMessageBox.Yes:
+            return
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            QMessageBox.warning(self, "Could not delete", str(exc))
+            return
+        # Drop any leftover config overrides for this name
+        if agent.name in self.engine.config.agent:
+            cfg = self.engine.project_dir / ".bytebarn" / "config.json"
+            try:
+                patch_config_file(cfg, {f"agent.{agent.name}": DELETE})
+            except Exception:
+                pass
+        self._current = None
+        self.engine.reload_config()
+        self.engine.bus.emit(AgentRegistryChanged())
+        self._reload_list()
+        self.badge.setText("")
+        self.preview.clear()
+        self._delete_btn.setEnabled(False)
 
     def _pick_color(self) -> None:
         color = QColorDialog.getColor()
@@ -344,10 +504,68 @@ class AgentEditor(QDialog):
     # ------------------------------------------------------------------
 
     def _save(self) -> None:
-        """Write only changed fields to agent.<name> in project config (spec §7.3)."""
+        """Persist edits: rewrite .md for custom agents; config for built-ins."""
         agent = self._current
         if agent is None:
             return
+        md_path = None if agent.builtin else self._agent_md_path(agent.name)
+        if md_path is not None:
+            self._save_agent_file(agent, md_path)
+        else:
+            self._save_config_overrides(agent)
+        self.engine.reload_config()
+        self.engine.bus.emit(AgentRegistryChanged())
+        name = agent.name
+        self._reload_list()
+        self._select_agent(name)
+
+    def _save_agent_file(self, agent: AgentDef, path: Path) -> None:
+        """Rewrite a custom agent's .md from the form fields."""
+        import yaml
+
+        front: dict = {}
+        desc = self.description.text().strip()
+        if desc:
+            front["description"] = desc
+        mode = self.mode.currentText() or agent.mode or "subagent"
+        front["mode"] = mode
+        model = self._selected_model()
+        if model:
+            front["model"] = model
+        if self.temperature.value() > 0:
+            front["temperature"] = round(self.temperature.value(), 2)
+        if self.top_p.value() > 0:
+            front["top_p"] = round(self.top_p.value(), 2)
+        thinking = self.thinking.currentText()
+        if thinking and thinking != "(default)":
+            front["thinking"] = thinking
+        # Always persist steps so reload matches the form.
+        front["steps"] = int(self.steps.value())
+        if self._color:
+            front["color"] = self._color
+        if self.hidden.isChecked():
+            front["hidden"] = True
+        # Preserve tools/permission from the existing file if present
+        if path.is_file():
+            try:
+                from ..engine.agents import parse_agent_file
+
+                old_front, _ = parse_agent_file(path)
+                for key in ("tools", "permission"):
+                    if key in old_front and key not in front:
+                        front[key] = old_front[key]
+            except Exception:
+                pass
+        body = self.prompt.toPlainText().strip()
+        dumped = yaml.safe_dump(front, sort_keys=False, allow_unicode=True).strip()
+        text = f"---\n{dumped}\n---\n{body}\n"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.warning(self, "Could not save agent", str(exc))
+    def _save_config_overrides(self, agent: AgentDef) -> None:
+        """Write only changed fields to agent.<name> in project config (spec §7.3)."""
         updates: dict = {}
 
         def diff(key: str, new, old) -> None:
@@ -375,9 +593,6 @@ class AgentEditor(QDialog):
             return
         path = self.engine.project_dir / ".bytebarn" / "config.json"
         patch_config_file(path, updates)
-        self.engine.reload_config()
-        self.engine.bus.emit(AgentRegistryChanged())
-        self._reload_list()
 
     def _reset(self) -> None:
         agent = self._current
@@ -387,4 +602,6 @@ class AgentEditor(QDialog):
         patch_config_file(path, {f"agent.{agent.name}": DELETE})
         self.engine.reload_config()
         self.engine.bus.emit(AgentRegistryChanged())
+        name = agent.name
         self._reload_list()
+        self._select_agent(name)

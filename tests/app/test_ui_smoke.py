@@ -657,6 +657,77 @@ def test_agent_list_grouped_by_mode(qapp, tmp_path):
     assert names.index("build") < names.index("explore")
 
 
+def test_agent_editor_creates_primary_and_subagent(qapp, tmp_path, monkeypatch):
+    """+ Primary / + Subagent write project agent/*.md and appear in the list."""
+    from PySide6.QtCore import Qt
+
+    from bytebarn.app.agent_editor import AgentEditor
+    from bytebarn.engine.facade import Engine
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=tmp_path / "g")
+    editor = AgentEditor(engine)
+
+    # create a subagent
+    monkeypatch.setattr(
+        "bytebarn.app.agent_editor.QInputDialog.getText",
+        lambda *a, **k: ("my_tester", True),
+    )
+    editor._new_agent("subagent")
+    path = proj / ".bytebarn" / "agent" / "my_tester.md"
+    assert path.is_file()
+    text = path.read_text()
+    assert "mode: subagent" in text
+    assert "my_tester" in engine.agents.agents
+    assert engine.agents.get("my_tester").mode == "subagent"
+    names = [
+        editor.agent_list.item(i).data(Qt.UserRole)
+        for i in range(editor.agent_list.count())
+    ]
+    assert "my_tester" in names
+    # selected after create
+    cur = editor.agent_list.currentItem()
+    assert cur is not None and cur.data(Qt.UserRole) == "my_tester"
+
+    # create a primary
+    monkeypatch.setattr(
+        "bytebarn.app.agent_editor.QInputDialog.getText",
+        lambda *a, **k: ("shipper", True),
+    )
+    editor._new_agent("primary")
+    ppath = proj / ".bytebarn" / "agent" / "shipper.md"
+    assert ppath.is_file()
+    assert "mode: primary" in ppath.read_text()
+    assert engine.agents.get("shipper").mode == "primary"
+    assert "shipper" in [a.name for a in engine.agents.primaries()]
+
+    # save edits to the custom agent file
+    editor._select_agent("my_tester")
+    editor.description.setText("Runs the test suite")
+    editor.prompt.setPlainText("You write and run tests.")
+    editor.mode.setCurrentText("subagent")
+    editor._color = "#61afef"
+    editor._save()
+    saved = path.read_text()
+    assert "Runs the test suite" in saved
+    assert "You write and run tests." in saved
+    assert engine.agents.get("my_tester").description == "Runs the test suite"
+
+    # delete custom agent
+    editor._select_agent("my_tester")
+    monkeypatch.setattr(
+        "bytebarn.app.agent_editor.QMessageBox.question",
+        lambda *a, **k: __import__("PySide6.QtWidgets", fromlist=["QMessageBox"]).QMessageBox.Yes,
+    )
+    editor._delete_agent()
+    assert not path.exists()
+    assert "my_tester" not in engine.agents.agents
+
+    # cannot delete builtins
+    editor._select_agent("build")
+    assert not editor._can_delete(engine.agents.get("build"))
+
 def test_menu_bar_has_menus(qapp, tmp_path):
     from bytebarn.app.main_window import MainWindow
     from bytebarn.engine.facade import Engine
