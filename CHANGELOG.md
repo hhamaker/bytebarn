@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Claude Code model when they have no override of their own.
 - Settings / agent-editor model pickers offer **Claude Code** alongside API
   providers.
+- **Create agents in the UI.** Agents dialog: **+ Primary**, **+ Subagent**,
+  and **Delete** for custom `.bytebarn/agent/*.md` files.
+- **Terminal Manager.** Tools → Terminals (⌘\`) — view Claude Code process
+  streams and open local interactive shells.
+
+### Fixed
+
+- Project workspace tabs no longer elide to "Ch…/Go…/Mem…/Age…"; full labels
+  with scroll when the sidebar is narrow.
 
 ### Notes
 
