@@ -5,6 +5,47 @@ All notable changes to ByteBarn are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-08-05
+
+Optional **Claude Code runtime** plus layout fixes so splitters and snap tools
+stop fighting the window.
+
+### Added
+
+- **Claude Code CLI runtime.** Set `"runtime": "claude-code"` in config to drive
+  sessions through headless Claude Code (`claude -p --output-format stream-json`)
+  instead of the native Runner+Provider loop. One process per run; stream-json
+  events project into the same transcript parts and `RunFinished` contract the UI
+  already uses. Follow-up turns resume via `--resume` and a small session-id map
+  under `<project>/.bytebarn/claude_code_sessions.json`.
+
+  Optional `claude_code` block: `command`, `permission_mode`, `allowed_tools`,
+  `include_partial_messages`, `bare`, `model`, `extra_args`, `max_turns`.
+
+  Default remains `"runtime": "native"`. Tests inject `FakeClaudeCodeRuntime` so
+  CI never needs the `claude` binary.
+
+### Fixed
+
+- **Session-picker splitter snap.** `ModelPicker`, `ProjectWorkspace`, and the
+  prompt-bar combos advertised large minimum widths (~380px sidebar / ~580px
+  transcript), so dragging the session list handle immediately snapped back.
+  Soft floors and wrap-friendly labels let the handle track 160px through a wide
+  range without growing the window.
+- **Crew-stage height restore** no longer applies an absurd saved `stage_height`
+  in a way that can grow the main window past the splitter total.
+- **Graceful shutdown.** Closing the window cancels UI tasks, awaits
+  `engine.stop()`, and drains in-flight work before quitting (including
+  subprocess groups for bash/sandbox and provider clients).
+- Provider / MCP / hooks teardown paths that could hang or leave tasks running
+  on quit.
+
+### Notes
+
+- Under `claude-code` mode, Claude Code owns its tool loop; ByteBarn’s native
+  `run_subagent` path is unchanged. Subagent stream events with
+  `parent_tool_use_id` are not projected yet.
+
 ## [0.2.0] — 2026-08-05
 
 The headline is **isolated sessions**: run ByteBarn against a repository —
