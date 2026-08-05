@@ -189,6 +189,7 @@ class MainWindow(QMainWindow):
         self.content_split.setHandleWidth(2)
 
         right = QWidget()
+        right.setMinimumWidth(280)
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(2)
@@ -204,16 +205,20 @@ class MainWindow(QMainWindow):
         self.sidebar = QStackedWidget()
         self.sidebar.addWidget(self.session_list)
         self.sidebar.addWidget(self.workspace)
+        # Don't let either page's large sizeHint pin the splitter handle.
+        self.sidebar.setMinimumWidth(160)
 
         splitter = QSplitter()
         splitter.addWidget(self.sidebar)
         splitter.addWidget(right)
         splitter.setSizes([240, 960])
         splitter.setCollapsible(0, False)
+        # Allow the user to drag the session picker narrower/wider freely.
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setHandleWidth(2)
+        splitter.setHandleWidth(6)
         self.setCentralWidget(splitter)
+        self._main_split = splitter
 
         # status bar
         self.status_project = QLabel(str(engine.project_dir))

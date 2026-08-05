@@ -11,7 +11,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QColor, QIcon
 from PySide6.QtWidgets import (
     QComboBox,
@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSizePolicy,
     QSplitter,
     QTabWidget,
     QVBoxLayout,
@@ -60,12 +61,14 @@ class ProjectWorkspace(QWidget):
         self.tabs = QTabWidget()
         # elide when the sidebar is too narrow rather than forcing window growth
         self.tabs.tabBar().setElideMode(Qt.ElideRight)
+        self.tabs.tabBar().setUsesScrollButtons(True)
         self.tabs.addTab(self._chats_tab(), "Chats")
         self.tabs.addTab(self._goals_tab(), "Goals")
         self.tabs.addTab(self._memory_tab(), "Memory")
         self.tabs.addTab(self._agents_tab(), "Agents")
 
         settings = QPushButton("Project settings…")
+        settings.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         settings.clicked.connect(lambda: self.open_settings.emit(self.project_id))
 
         layout = QVBoxLayout(self)
@@ -73,6 +76,13 @@ class ProjectWorkspace(QWidget):
         layout.addLayout(header)
         layout.addWidget(self.tabs, 1)
         layout.addWidget(settings)
+        # QStackedWidget (sidebar) takes max(page minima). Keep this low so the
+        # main splitter handle can move freely instead of snapping at ~380px.
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(160, 200)
 
     # -- tabs ----------------------------------------------------------------
 
@@ -101,8 +111,10 @@ class ProjectWorkspace(QWidget):
         layout = QVBoxLayout(w)
         layout.setContentsMargins(0, 4, 0, 0)
 
-        layout.addWidget(QLabel("<b>Queue</b> — goals run one after another;"
-                                " walk away, get notified"))
+        q_label = QLabel("<b>Queue</b> — goals run one after another;"
+                         " walk away, get notified")
+        q_label.setWordWrap(True)
+        layout.addWidget(q_label)
         row = QHBoxLayout()
         self.goal_input = QLineEdit()
         self.goal_input.setPlaceholderText("Describe a goal to queue…")
@@ -128,12 +140,17 @@ class ProjectWorkspace(QWidget):
         layout.addWidget(self.goal_list, 1)
 
         # routines: recurring goals on a schedule (app must be running)
-        layout.addWidget(QLabel("<b>Routines</b> — run a goal on a schedule"
-                                " while ByteBarn is open"))
+        r_label = QLabel("<b>Routines</b> — run a goal on a schedule"
+                         " while ByteBarn is open")
+        r_label.setWordWrap(True)
+        layout.addWidget(r_label)
         routine_row = QHBoxLayout()
         self.routine_input = QLineEdit()
         self.routine_input.setPlaceholderText("Prompt to run repeatedly…")
         self.routine_interval = QComboBox()
+        self.routine_interval.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.routine_interval.setMinimumContentsLength(8)
         for label in ("every 30 min", "every hour", "every 3 hours",
                       "every 6 hours", "daily"):
             self.routine_interval.addItem(label)
@@ -269,9 +286,14 @@ class ProjectWorkspace(QWidget):
         layout = QVBoxLayout(w)
         layout.setContentsMargins(0, 4, 0, 0)
 
-        layout.addWidget(QLabel("<b>Project defaults</b> — applied to new chats"
-                                " in this project"))
+        defaults = QLabel("<b>Project defaults</b> — applied to new chats"
+                          " in this project")
+        defaults.setWordWrap(True)
+        layout.addWidget(defaults)
         self.default_agent = QComboBox()
+        self.default_agent.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.default_agent.setMinimumContentsLength(8)
         self.default_agent.addItem("(default)")
         self.default_agent.addItems(sorted(self.engine.agents.agents.keys()))
         row = QHBoxLayout()
@@ -284,6 +306,7 @@ class ProjectWorkspace(QWidget):
         layout.addWidget(self.default_model)
 
         save = QPushButton("Save defaults")
+        save.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         save.clicked.connect(self._save_defaults)
         layout.addWidget(save)
 
@@ -295,6 +318,7 @@ class ProjectWorkspace(QWidget):
         layout.addWidget(per_session)
 
         edit = QPushButton("Edit agents (prompts, tools, colors)…")
+        edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         edit.clicked.connect(self._open_agent_editor)
         layout.addWidget(edit)
         layout.addStretch(1)

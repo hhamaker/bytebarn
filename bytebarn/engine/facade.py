@@ -66,6 +66,7 @@ class Engine:
         self._live_models: dict[str, list[str]] = {}
         self._live_model_fetches: dict[str, asyncio.Task] = {}
         self._stopped = False
+        self._claude_runtime = None  # test seam / lazy ClaudeCodeRuntime
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -665,6 +666,19 @@ class Engine:
             return format_skill_prompt(skill, rest), command.agent, command.model
         return command.render(args.strip()), command.agent, command.model
 
+    def runtime_name(self) -> str:
+        """Active agent runtime: ``native`` (default) or ``claude-code``."""
+        extra = self.config.model_extra or {}
+        return str(extra.get("runtime") or "native")
+
+    def claude_runtime(self):
+        """Lazy Claude Code runtime (inject via ``_claude_runtime`` in tests)."""
+        if self._claude_runtime is None:
+            from .runtimes.claude_code import ClaudeCodeRuntime
+
+            self._claude_runtime = ClaudeCodeRuntime(self)
+        return self._claude_runtime
+
     def _start_run(self, session: Session, agent_override: str | None = None) -> None:
         if getattr(self, "_stopped", False):
             return
@@ -672,7 +686,12 @@ class Engine:
         handle.abort = asyncio.Event()
         handle.agent_override = agent_override
         self._runs[session.id] = handle
-        handle.task = asyncio.ensure_future(self.runner.run(session, handle))
+        if self.runtime_name() == "claude-code":
+            handle.task = asyncio.ensure_future(
+                self.claude_runtime().run(session, handle)
+            )
+        else:
+            handle.task = asyncio.ensure_future(self.runner.run(session, handle))
 
     async def on_run_finished(self, session_id: str) -> None:
         """Promote a queued prompt, if any; else advance the goal queue."""

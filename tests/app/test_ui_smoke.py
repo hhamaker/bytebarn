@@ -1366,6 +1366,41 @@ async def test_initial_geometry_fits_available_screen(qapp, tmp_path):
         await engine.stop()
 
 
+async def test_session_picker_splitter_drags_freely(qapp, tmp_path):
+    """Sidebar handle must track the drag — not snap at ModelPicker minima."""
+    from bytebarn.app.main_window import MainWindow
+    from bytebarn.engine.facade import Engine
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    gdir = tmp_path / "g"
+    gdir.mkdir()
+    (gdir / "config.json").write_text(json.dumps({"model": "fake/m"}))
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=gdir)
+    await engine.start()
+    try:
+        window = MainWindow(engine)
+        window.resize(1200, 800)
+        window.show()
+        qapp.processEvents()
+        split = window.centralWidget()
+        win_w = window.width()
+        # ProjectWorkspace used to pin this near 380px via ModelPicker mins.
+        assert window.sidebar.minimumSizeHint().width() <= 180
+        assert window.workspace.minimumSizeHint().width() <= 180
+        for target in (160, 200, 280, 360, 480, 640, 320, 180):
+            split.setSizes([target, max(200, win_w - target)])
+            qapp.processEvents()
+            got = split.sizes()[0]
+            # floor 160 (sidebar min), ceiling leaves ~280 for transcript
+            lo, hi = 160, win_w - 280
+            expect = min(max(target, lo), hi)
+            assert abs(got - expect) <= 12, (target, got, expect, split.sizes())
+            assert window.width() == win_w  # drag must not grow the window
+    finally:
+        await engine.stop()
+
+
 def test_welcome_minimum_height_fits_short_screens(qapp):
     from bytebarn.app.transcript import _Welcome
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, Signal
 from PySide6.QtGui import QFontMetrics, QKeyEvent
 from PySide6.QtWidgets import (
     QComboBox,
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPlainTextEdit,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -111,7 +112,10 @@ class PromptBar(QWidget):
         self.editor.image_added.connect(self._add_pasted_image)
         self.editor.files_added.connect(self.add_attachments)
         self.agent_combo = QComboBox()
-        self.agent_combo.setMinimumWidth(85)
+        self.agent_combo.setMinimumWidth(70)
+        self.agent_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.agent_combo.setMinimumContentsLength(5)
         self.agent_combo.setToolTip("Agent for this session — /agents to edit them")
         self.agent_combo.currentTextChanged.connect(self.agent_changed)
         # two-stage model picker: provider first, then that provider's models
@@ -121,9 +125,17 @@ class PromptBar(QWidget):
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
         self.model_combo.setToolTip("Model — list is fetched live from the provider")
-        self.model_combo.setMinimumWidth(240)
-        self.model_combo.view().setMinimumWidth(380)
-        self.provider_combo.setMinimumWidth(110)
+        # Soft floors: popup can be wide; the bar itself must not pin the
+        # main splitter when the user drags the session picker wider.
+        self.model_combo.setMinimumWidth(120)
+        self.model_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.model_combo.setMinimumContentsLength(10)
+        self.model_combo.view().setMinimumWidth(280)
+        self.provider_combo.setMinimumWidth(80)
+        self.provider_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.provider_combo.setMinimumContentsLength(6)
         self.model_combo.currentTextChanged.connect(
             lambda _: self.model_changed.emit(self.current_model()))
         self.send_button = QPushButton("Send")
@@ -145,7 +157,7 @@ class PromptBar(QWidget):
         controls.setSpacing(4)
         controls.addWidget(self.agent_combo)
         controls.addWidget(self.provider_combo)
-        controls.addWidget(self.model_combo)
+        controls.addWidget(self.model_combo, 1)
         controls.addWidget(self.queue_label)
         controls.addStretch(1)
         controls.addWidget(self.send_button)
@@ -163,10 +175,16 @@ class PromptBar(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 4, 16, 12)
         layout.addWidget(composer)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setMinimumWidth(0)
 
         self._popup = _Popup(self)
         self._popup.picked.connect(self._apply_completion)
         self._resize_editor()
+
+    def minimumSizeHint(self) -> QSize:
+        # Combo popup mins must not force the transcript column / splitter.
+        return QSize(280, super().minimumSizeHint().height())
 
     # -- sizing ------------------------------------------------------------
 

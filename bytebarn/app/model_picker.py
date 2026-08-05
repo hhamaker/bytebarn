@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import asyncio
 
-from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QWidget
+from PySide6.QtCore import QSize, Signal
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QSizePolicy, QWidget
 
 DEFAULT_SENTINEL = "(default)"
 
@@ -26,14 +26,22 @@ class ModelPicker(QWidget):
         self._allow_default = allow_default
 
         self.provider_combo = QComboBox()
-        self.provider_combo.setMinimumWidth(120)
+        # Low floors so the project sidebar can shrink; popup stays readable.
+        self.provider_combo.setMinimumWidth(72)
+        self.provider_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.provider_combo.setMinimumContentsLength(6)
         self.provider_combo.setToolTip("Provider — connect more via ⚡ providers")
         self.provider_combo.currentTextChanged.connect(self._on_provider_changed)
 
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
-        self.model_combo.setMinimumWidth(240)
-        self.model_combo.view().setMinimumWidth(380)
+        self.model_combo.setMinimumWidth(96)
+        self.model_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.model_combo.setMinimumContentsLength(8)
+        # Popup list only — must not raise this widget's minimumSizeHint.
+        self.model_combo.view().setMinimumWidth(280)
         self.model_combo.setToolTip("Model — list is fetched live from the provider")
         self.model_combo.currentTextChanged.connect(
             lambda _: self.model_changed.emit(self.value()))
@@ -42,6 +50,12 @@ class ModelPicker(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.provider_combo)
         layout.addWidget(self.model_combo, 1)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.setMinimumWidth(0)
+
+    def minimumSizeHint(self) -> QSize:
+        # QComboBox popup view mins must not pin the sidebar splitter.
+        return QSize(140, super().minimumSizeHint().height())
 
     # -- public API ---------------------------------------------------------
 
