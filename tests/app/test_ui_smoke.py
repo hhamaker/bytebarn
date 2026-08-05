@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -1986,5 +1987,289 @@ async def test_remember_project_refuses_worktree_paths(qapp, tmp_path):
         # and a worktree path already persisted by an older build is ignored
         engine.config.model_extra["last_project"] = iso.directory
         assert window._last_project() == ""
+    finally:
+        await engine.stop()
+
+
+async def test_deleting_an_isolated_session_offers_to_remove_the_worktree(
+    qapp, tmp_path
+):
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        session = await engine.new_session(isolated=True)
+        worktree = Path(session.directory)
+        asked: list = []
+
+        def _fake(title, text, keep_label, remove_label):
+            asked.append(text)
+            fut = asyncio.get_event_loop().create_future()
+            fut.set_result("remove")
+            return fut
+
+        window._ask_three_way = _fake
+        await window._delete_session(session.id)
+
+        assert asked, "no worktree dialog was shown"
+        assert session.worktree_branch in asked[0]
+        assert not worktree.exists()
+        assert await engine.store.get_session(session.id) is None
+    finally:
+        await engine.stop()
+
+
+async def test_keeping_the_worktree_still_deletes_the_session(qapp, tmp_path):
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        session = await engine.new_session(isolated=True)
+        worktree = Path(session.directory)
+
+        def _fake(title, text, keep_label, remove_label):
+            fut = asyncio.get_event_loop().create_future()
+            fut.set_result("keep")
+            return fut
+
+        window._ask_three_way = _fake
+        await window._delete_session(session.id)
+
+        assert worktree.is_dir()
+        assert await engine.store.get_session(session.id) is None
+    finally:
+        await engine.stop()
+
+
+async def test_cancelling_the_worktree_dialog_deletes_nothing(qapp, tmp_path):
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        session = await engine.new_session(isolated=True)
+        worktree = Path(session.directory)
+
+        def _fake(title, text, keep_label, remove_label):
+            fut = asyncio.get_event_loop().create_future()
+            fut.set_result(None)
+            return fut
+
+        window._ask_three_way = _fake
+        await window._delete_session(session.id)
+
+        assert worktree.is_dir()
+        assert await engine.store.get_session(session.id) is not None
+    finally:
+        await engine.stop()
+
+
+async def test_deleting_a_plain_session_shows_no_worktree_dialog(qapp, tmp_path):
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        session = await engine.new_session()
+        asked: list = []
+
+        def _fake(title, text, keep_label, remove_label):
+            asked.append(text)
+            fut = asyncio.get_event_loop().create_future()
+            fut.set_result("keep")
+            return fut
+
+        window._ask_three_way = _fake
+        await window._delete_session(session.id)
+
+        assert not asked
+        assert await engine.store.get_session(session.id) is None
+    finally:
+        await engine.stop()
+
+
+async def test_multi_delete_asks_once_and_lists_every_worktree(qapp, tmp_path):
+    """One dialog for the whole selection — a prompt per session is worse."""
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        first = await engine.new_session(isolated=True)
+        second = await engine.new_session(isolated=True)
+        plain = await engine.new_session()
+        asked: list = []
+
+        def _fake(title, text, keep_label, remove_label):
+            asked.append(text)
+            fut = asyncio.get_event_loop().create_future()
+            fut.set_result("remove")
+            return fut
+
+        window._ask_three_way = _fake
+        await window._delete_sessions([first.id, second.id, plain.id])
+
+        assert len(asked) == 1
+        assert first.worktree_branch in asked[0]
+        assert second.worktree_branch in asked[0]
+        assert not Path(first.directory).exists()
+        assert not Path(second.directory).exists()
+        for sid in (first.id, second.id, plain.id):
+            assert await engine.store.get_session(sid) is None
+    finally:
+        await engine.stop()
+
+
+async def test_worktree_dialog_wording_matches_the_isolated_count_not_the_selection(
+    qapp, tmp_path
+):
+    """Review finding 2: one isolated session plus any number of plain ones
+    must still read "this session", singular — the dialog is only ever
+    about the isolated sessions in the selection, not the whole selection.
+    """
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        iso = await engine.new_session(isolated=True)
+        plain_a = await engine.new_session()
+        plain_b = await engine.new_session()
+        asked: list = []
+
+        def _fake(title, text, keep_label, remove_label):
+            asked.append(text)
+            fut = asyncio.get_event_loop().create_future()
+            fut.set_result("keep")
+            return fut
+
+        window._ask_three_way = _fake
+        await window._delete_sessions([iso.id, plain_a.id, plain_b.id])
+
+        assert len(asked) == 1
+        assert "this session" in asked[0]
+        assert "these sessions" not in asked[0]
+    finally:
+        await engine.stop()
+
+
+async def test_ask_three_way_resolves_from_the_real_dialog_buttons(qapp, tmp_path):
+    """Review finding 1: every other test replaces `_ask_three_way` before it
+    runs, so the button-role -> verdict mapping inside it (main_window.py,
+    next to `_ask_yes_no`) was only correct by inspection. This drives the
+    real `QMessageBox`: `QMessageBox.exec` is patched to click a button
+    chosen by identity (the actual Remove/Keep/Cancel button, not merely a
+    role match) once its own nested event loop starts, then the dialog is
+    left to resolve `_ask_three_way`'s future for real.
+
+    Cancel is exercised by clicking the real Cancel button so the mapping is
+    proven to fall through to `None` by *not* matching either captured
+    button — not by matching a role that happens to coincide.
+
+    Both `QTimer.singleShot(0, ...)` calls here run on the Qt event
+    dispatcher, not the asyncio loop pytest-asyncio drives this test with
+    (there is no qasync integration in the test harness) — so nothing pumps
+    them on its own the way `await asyncio.sleep(0)` pumps a plain asyncio
+    task elsewhere in this file. `qapp.processEvents()` turns the Qt loop
+    directly instead.
+    """
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QMessageBox
+
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        async def ask_and_click(pick):
+            """``pick(box) -> QAbstractButton`` chooses the button to press."""
+            orig_exec = QMessageBox.exec
+
+            def patched_exec(self):
+                def _click():
+                    pick(self).click()
+
+                QTimer.singleShot(0, _click)
+                return orig_exec(self)
+
+            QMessageBox.exec = patched_exec
+            try:
+                fut = window._ask_three_way(
+                    "Delete worktrees", "body text",
+                    "Keep worktrees", "Remove worktrees")
+                for _ in range(200):
+                    if fut.done():
+                        break
+                    qapp.processEvents()
+                    await asyncio.sleep(0)
+                else:
+                    raise AssertionError("dialog never resolved its future")
+                return fut.result()
+            finally:
+                QMessageBox.exec = orig_exec
+
+        remove_answer = await ask_and_click(
+            lambda box: next(
+                b for b in box.buttons()
+                if box.buttonRole(b) == QMessageBox.DestructiveRole))
+        assert remove_answer == "remove"
+
+        keep_answer = await ask_and_click(
+            lambda box: next(
+                b for b in box.buttons()
+                if box.buttonRole(b) == QMessageBox.AcceptRole))
+        assert keep_answer == "keep"
+
+        cancel_answer = await ask_and_click(
+            lambda box: box.button(QMessageBox.Cancel))
+        assert cancel_answer is None
+    finally:
+        await engine.stop()
+
+
+async def test_worktree_dialog_warns_about_uncommitted_work_and_names_the_path(
+    qapp, tmp_path
+):
+    """Findings 4/5 in the UI: the engine never commits, so the normal
+    isolated session has a clean commit graph and a dirty tree. "Remove"
+    force-removes the worktree and takes that with it, so the dialog must not
+    read as lossless — and must say where the checkout is, since Keep leaves
+    the user nothing else to find it by."""
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        session = await engine.new_session(isolated=True)
+        worktree = Path(session.directory)
+        (worktree / "generated.py").write_text("X = 1\n")
+        (worktree / "notes.md").write_text("notes\n")
+        asked: list = []
+
+        def _fake(title, text, keep_label, remove_label):
+            asked.append(text)
+            fut = asyncio.get_event_loop().create_future()
+            fut.set_result("keep")
+            return fut
+
+        window._ask_three_way = _fake
+        await window._delete_session(session.id)
+
+        assert asked
+        assert "2 uncommitted files" in asked[0], asked[0]
+        assert "nothing to lose" not in asked[0], asked[0]
+        assert str(worktree) in asked[0], asked[0]
+    finally:
+        await engine.stop()
+
+
+async def test_a_worktree_cleanup_failure_reaches_the_status_bar(qapp, tmp_path):
+    """Finding 4: a delete whose cleanup failed currently looks identical to
+    one that worked. The status bar is the only place this can surface, and
+    it has to carry the path so the user can finish by hand."""
+    window, engine = await _iso_window(tmp_path, qapp)
+    try:
+        session = await engine.new_session(isolated=True)
+        worktree = Path(session.directory)
+
+        async def _stuck(git_root, path, branch):
+            return f"could not remove worktree at {path}"
+
+        import bytebarn.engine.worktree as worktree_mod
+        original = worktree_mod.discard
+        worktree_mod.discard = _stuck
+
+        def _fake(title, text, keep_label, remove_label):
+            fut = asyncio.get_event_loop().create_future()
+            fut.set_result("remove")
+            return fut
+
+        window._ask_three_way = _fake
+        try:
+            await window._delete_session(session.id)
+        finally:
+            worktree_mod.discard = original
+
+        message = window.statusBar().currentMessage()
+        assert str(worktree) in message, message
+        assert await engine.store.get_session(session.id) is None
     finally:
         await engine.stop()

@@ -156,9 +156,19 @@ class Engine:
         """Give a top-level session its own git worktree.
 
         Returns the session unchanged when isolation is unavailable — a non-git
-        directory, a repo with no commits, or ``worktree.enabled=false``. The
-        worktree is created untracked so no subagent cleanup path can remove
-        it; the user merges the branch in git when the run is done.
+        directory, a repo with no commits, ``worktree.enabled=false``, or a
+        worktree git would only give us **detached**. The worktree is created
+        untracked so no subagent cleanup path can remove it; the user merges
+        the branch in git when the run is done.
+
+        A detached worktree cannot deliver what isolation promises: there is no
+        branch for the user to merge, and every later lookup keys off the
+        branch — cleanup identifies the session's worktree by the ref it is
+        checked out on, so a detached one is unrecognisable and would be
+        cleaned up by path instead, which is wrong whenever the project sits
+        below the git root. Better to hand back a plain session and say so
+        (the UI already shows "Isolation unavailable") than an isolated one
+        that is isolated in name only.
         """
         if not self.worktree_enabled():
             return session
@@ -170,6 +180,17 @@ class Engine:
         )
         if wt is None:
             return session
+        if wt.detached:
+            try:
+                from .worktree import discard
+
+                await discard(wt.git_root, wt.path, wt.branch)
+            except Exception:
+                # the session is going back un-isolated either way; a stray
+                # checkout under the worktree store is a far smaller problem
+                # than failing to create the session the user asked for
+                pass
+            return session
         session_dir = self._worktree_cwd(wt.path, wt.git_root, base)
         try:
             await self.store.update_session(
@@ -180,7 +201,9 @@ class Engine:
             # best-effort teardown, then let the *original* error propagate
             # so the caller never silently gets back a non-isolated session.
             try:
-                await self.worktrees._force_remove(wt.git_root, wt.path, wt.branch)
+                from .worktree import discard
+
+                await discard(wt.git_root, wt.path, wt.branch)
             except Exception:
                 # teardown is best-effort only: whatever went wrong here is
                 # strictly less informative than the store failure that
@@ -240,13 +263,110 @@ class Engine:
         await self.store.update_session(session_id, archived=1)
         self.bus.emit(SessionUpdated(session_id=session_id))
 
-    async def delete_session(self, session_id: str) -> None:
-        """Permanently remove a session, its children, and their history."""
+    async def session_worktree_info(self, session_id: str) -> dict | None:
+        """What deleting this session's worktree would cost, or None.
+
+        ``None`` means the session is not isolated and there is nothing to ask
+        the user about. ``path`` is the worktree root (not necessarily the
+        session's directory, which sits below it when the project was opened
+        below the git root). ``unmerged`` is the number of commits that exist
+        only on this branch. ``uncommitted`` is the number of files the
+        worktree has changed but never committed — **the engine never commits**,
+        so that is the normal end state of an isolated session, and
+        ``worktree remove --force`` destroys them by design; a dialog that
+        weighed only commits would say "nothing to lose" about a whole run's
+        output. ``exists`` is False when the directory has already been removed
+        by hand, in which case only the branch is left to clean up.
+
+        Everything is measured from the session's own checkout, so a session
+        living in another registered project is described from *its*
+        repository rather than the open one — asking the wrong repo about a
+        branch it has never heard of answers "fully merged" every time.
+        """
+        from .worktree import dirty_files, git_root, unmerged_count, worktree_roots
+
+        session = await self.store.get_session(session_id)
+        if session is None or not session.worktree_branch:
+            return None
+        directory = Path(session.directory) if session.directory else None
+        roots = await worktree_roots(directory, session.worktree_branch) if directory else None
+        if roots is not None:
+            wt_root, repo = roots
+        else:
+            # the checkout is gone: nothing records which repo owned it, so
+            # fall back to the open project — the branch is reported as
+            # unknown-cost rather than not reported at all
+            wt_root, repo = directory, await git_root(self.project_dir)
+        unmerged = await unmerged_count(repo, session.worktree_branch) if repo else 0
+        return {
+            "branch": session.worktree_branch,
+            "path": str(wt_root) if wt_root else "",
+            "unmerged": unmerged,
+            "uncommitted": len(await dirty_files(wt_root)) if roots else 0,
+            "exists": bool(wt_root and wt_root.is_dir()),
+        }
+
+    async def delete_session(
+        self, session_id: str, discard_worktree: bool = False
+    ) -> str:
+        """Permanently remove a session, its children, and their history.
+
+        ``discard_worktree`` also removes an isolated session's worktree and
+        branch. Opt-in, because that destroys any commits living only there.
+        Cleanup failure never blocks the delete: a worktree left behind can be
+        removed by hand, a session row cannot be brought back.
+
+        Returns "" normally, or a reason naming what cleanup could not remove
+        and where — the delete still happened, and the caller is expected to
+        show it, because the alternative is a delete that looks complete while
+        a full checkout of the repo stays on disk.
+        """
         await self.abort(session_id)
+        problem = ""
+        if discard_worktree:
+            problem = await self._discard_session_worktree(session_id)
         await self.store.delete_session(session_id)
         self._files_read.pop(session_id, None)
         self._runs.pop(session_id, None)
         self.bus.emit(SessionUpdated(session_id=session_id))
+        return problem
+
+    async def _discard_session_worktree(self, session_id: str) -> str:
+        """Best-effort worktree teardown — never raises into the delete path.
+
+        Returns "" or a reason naming the path, so the delete path can report
+        it. Failures are *returned*, never raised: the session row must go
+        even when the checkout will not.
+        """
+        from . import worktree as worktree_mod
+
+        where = ""
+        try:
+            session = await self.store.get_session(session_id)
+            if session is None or not session.worktree_branch or not session.directory:
+                return ""
+            where = session.directory
+            roots = await worktree_mod.worktree_roots(
+                Path(session.directory), session.worktree_branch)
+            if roots is None:
+                # directory already gone (or no longer a checkout): the branch
+                # may still be registered, so prune + delete it from the open
+                # project — the only repo left to ask
+                repo = await worktree_mod.git_root(self.project_dir)
+                if repo is None:
+                    # no repo left to ask. Only a worktree still sitting on
+                    # disk is worth reporting — when the directory is already
+                    # gone there was nothing to remove, and saying otherwise
+                    # is status-bar noise about a success.
+                    return (f"could not remove worktree at {where}"
+                            if Path(where).exists() else "")
+                return await worktree_mod.discard(
+                    repo, Path(session.directory), session.worktree_branch)
+            wt_root, repo = roots
+            return await worktree_mod.discard(
+                repo, wt_root, session.worktree_branch)
+        except Exception as exc:
+            return f"could not remove worktree at {where or '(unknown path)'}: {exc}"
 
     async def list_models(self, provider_name: str, *, force: bool = True) -> list[str]:
         """Live model ids for a connected provider ([] if unreachable).
