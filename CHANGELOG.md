@@ -5,6 +5,26 @@ All notable changes to ByteBarn are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] — 2026-08-05
+
+Claude Code is selectable from the **provider** dropdown — no JSON edit required.
+
+### Added
+
+- **`claude-code` in the provider picker.** Always listed next to connected API
+  providers. Choosing it sets `"runtime": "claude-code"` and seeds the model
+  list with CLI aliases (`default`, `sonnet`, `opus`, `haiku`). Choosing any
+  other provider restores `"runtime": "native"`.
+- Status-bar chip **◈ Claude Code** while that runtime is active.
+- `claude-code/default` omits the CLI `--model` flag so Claude Code picks its
+  own default; other ids pass through as `--model <id>`.
+
+### Notes
+
+- Sticky Claude Code is stored as `runtime`, not `last_model`, so it does not
+  poison new native sessions.
+- Still requires a local `claude` binary and CLI auth / subscription.
+
 ## [0.3.0] — 2026-08-05
 
 Optional **Claude Code runtime** plus layout fixes so splitters and snap tools
