@@ -120,11 +120,15 @@ class PromptBar(QWidget):
         self.agent_combo.currentTextChanged.connect(self.agent_changed)
         # two-stage model picker: provider first, then that provider's models
         self.provider_combo = QComboBox()
-        self.provider_combo.setToolTip("Provider — connect more via ⚡ providers")
+        self.provider_combo.setToolTip(
+            "Provider — pick an API backend, or claude-code to run your local "
+            "Claude Code CLI. Connect more APIs via ⚡ providers.")
         self.provider_combo.currentTextChanged.connect(self.provider_changed)
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
-        self.model_combo.setToolTip("Model — list is fetched live from the provider")
+        self.model_combo.setToolTip(
+            "Model — live list from the provider. Under claude-code: "
+            "default / sonnet / opus / haiku (CLI aliases).")
         # Soft floors: popup can be wide; the bar itself must not pin the
         # main splitter when the user drags the session picker wider.
         self.model_combo.setMinimumWidth(120)

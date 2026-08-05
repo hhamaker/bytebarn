@@ -63,6 +63,13 @@ from .transcript import Transcript
 _AGENT_DISPLAY = {"orchestrator": "goal"}
 _AGENT_INTERNAL = {v: k for k, v in _AGENT_DISPLAY.items()}
 
+# Synthetic provider in the prompt-bar picker. Selecting it flips Engine
+# runtime to claude-code (local `claude` CLI); it is not an API Provider.
+CLAUDE_CODE_PROVIDER = "claude-code"
+CLAUDE_CODE_DEFAULT_MODEL = f"{CLAUDE_CODE_PROVIDER}/default"
+# Curated Claude Code --model aliases (CLI accepts these; "default" = omit flag)
+CLAUDE_CODE_MODELS = ["default", "sonnet", "opus", "haiku"]
+
 
 class MainWindow(QMainWindow):
     def __init__(self, engine: Engine):
@@ -229,6 +236,13 @@ class MainWindow(QMainWindow):
         self.status_project.setToolTip(str(engine.project_dir))
         self.status_git = QLabel("")
         self.status_cost = QLabel("")
+        self.status_runtime = QLabel("")
+        self.status_runtime.setObjectName("pill")
+        self.status_runtime.setVisible(False)
+        self.status_runtime.setToolTip(
+            "Agent runtime — Claude Code uses your local `claude` CLI "
+            "(subscription / claude auth). Pick any other provider to return "
+            "to ByteBarn's native tool loop.")
         self.mode_combo = QComboBox()
         self.mode_combo.addItems([SESSION_MODE_LABELS[m] for m in SESSION_MODES])
         self.mode_combo.setMinimumWidth(90)
@@ -285,6 +299,7 @@ class MainWindow(QMainWindow):
         self.statusBar().addWidget(self.status_project)
         self.statusBar().addWidget(QLabel("·"))
         self.statusBar().addWidget(self.status_git)
+        self.statusBar().addWidget(self.status_runtime)
         self.statusBar().addPermanentWidget(self.update_button)
         self.statusBar().addPermanentWidget(self.context_meter)
         self.statusBar().addPermanentWidget(self.review_button)
@@ -294,6 +309,7 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self.mode_combo)
         self.statusBar().addPermanentWidget(self.ui_toggle)
         self.statusBar().addPermanentWidget(settings_button)
+        self._update_runtime_status()
 
         self._build_menus()
 
@@ -1521,9 +1537,15 @@ class MainWindow(QMainWindow):
     def _model_changed(self, model: str) -> None:
         if self.current_session_id and model:
             self._fire(self.engine.store.update_session(self.current_session_id, model=model))
-        if model:
-            # remember it so the next new session starts on this model
-            self._remember_setting("last_model", model)
+        if not model:
+            return
+        # Claude Code is a runtime, not a last_model for native sessions —
+        # sticky CC is stored via runtime=claude-code instead.
+        if model.startswith(f"{CLAUDE_CODE_PROVIDER}/"):
+            self._set_runtime(CLAUDE_CODE_PROVIDER)
+            return
+        # remember it so the next new session starts on this model
+        self._remember_setting("last_model", model)
 
     def _remember_setting(self, key: str, value) -> None:
         from ..engine.config import patch_config_file
@@ -1538,15 +1560,49 @@ class MainWindow(QMainWindow):
         if extra is not None:
             extra[key] = value
 
+    def _set_runtime(self, name: str) -> None:
+        """Flip Engine runtime (native | claude-code) without reload_config."""
+        name = (name or "native").strip() or "native"
+        self._remember_setting("runtime", name)
+        self._update_runtime_status()
+
+    def _update_runtime_status(self) -> None:
+        if not hasattr(self, "status_runtime"):
+            return
+        if self.engine.runtime_name() == CLAUDE_CODE_PROVIDER:
+            self.status_runtime.setText("◈ Claude Code")
+            self.status_runtime.setVisible(True)
+        else:
+            self.status_runtime.clear()
+            self.status_runtime.setVisible(False)
+
     def _default_model(self) -> str:
+        if self.engine.runtime_name() == CLAUDE_CODE_PROVIDER:
+            return CLAUDE_CODE_DEFAULT_MODEL
         return (self.engine.config.model_extra or {}).get("last_model") \
             or self.engine.config.model
 
     # ------------------------------------------------------------------ pickers & status
 
+    def _picker_providers(self, preferred: str = "") -> list[str]:
+        """Connected API providers plus the Claude Code runtime sentinel."""
+        providers = list(
+            connected_providers(self.engine.config, self.engine.providers.auth))
+        # Always offer local Claude Code CLI as a "provider" in the picker.
+        if CLAUDE_CODE_PROVIDER not in providers:
+            providers.append(CLAUDE_CODE_PROVIDER)
+        if preferred and preferred not in providers:
+            providers = [preferred] + providers
+        return providers
+
     def _refresh_pickers(self, agent: str = "", model: str = "") -> None:
         agents = [_AGENT_DISPLAY.get(a.name, a.name) for a in self.engine.agents.primaries()]
         self.prompt_bar.set_agents(agents, _AGENT_DISPLAY.get(agent, agent) or "build")
+
+        # Runtime wins for which backend is active; show the matching picker.
+        if self.engine.runtime_name() == CLAUDE_CODE_PROVIDER:
+            if not (model or "").startswith(f"{CLAUDE_CODE_PROVIDER}/"):
+                model = CLAUDE_CODE_DEFAULT_MODEL
 
         model = model or self._default_model()
         if model and "/" not in model:
@@ -1559,23 +1615,35 @@ class MainWindow(QMainWindow):
         else:
             provider, _, model_id = model.partition("/")
 
-        providers = connected_providers(self.engine.config, self.engine.providers.auth)
+        providers = self._picker_providers(provider)
         if provider and provider not in providers:
             if model_id:
                 providers = [provider] + [p for p in providers if p != provider]
             else:
-                provider = providers[0] if providers else ""
+                provider = next(
+                    (p for p in providers if p != CLAUDE_CODE_PROVIDER),
+                    providers[0] if providers else "",
+                )
                 model_id = ""
         elif not provider:
-            provider = providers[0] if providers else ""
+            provider = next(
+                (p for p in providers if p != CLAUDE_CODE_PROVIDER),
+                providers[0] if providers else "",
+            )
             model_id = model_id or ""
         self.prompt_bar.set_providers(providers, provider)
         self._set_provider_models(provider, model_id)
+        self._update_runtime_status()
 
     def _set_provider_models(self, provider: str, current_id: str = "") -> None:
         """Cached/curated list immediately; always refresh live from the provider."""
         if not provider:
             self.prompt_bar.set_models([], "")
+            return
+        if provider == CLAUDE_CODE_PROVIDER:
+            models = list(CLAUDE_CODE_MODELS)
+            select = current_id if current_id in models else "default"
+            self.prompt_bar.set_models(models, select)
             return
         cached = self.engine.cached_models(provider)
         models = list(cached) if cached is not None else curated_models(provider)
@@ -1594,6 +1662,8 @@ class MainWindow(QMainWindow):
         self._fire(self._load_live_models(provider))
 
     async def _load_live_models(self, provider: str) -> None:
+        if provider == CLAUDE_CODE_PROVIDER:
+            return
         live = await self.engine.list_models(provider, force=True)
         if self.prompt_bar.provider_combo.currentText() != provider:
             return  # provider changed meanwhile
@@ -1610,11 +1680,24 @@ class MainWindow(QMainWindow):
     def _provider_changed(self, provider: str) -> None:
         if not provider or provider.startswith("⚡"):
             return
+        if provider == CLAUDE_CODE_PROVIDER:
+            # Local Claude Code CLI — flip runtime and seed a valid model string
+            # so Send works immediately without a second click.
+            # Keep the combo selection in sync when this is invoked programmatically
+            # (tests / restore); the user path already changed the combo first.
+            self.prompt_bar.set_providers(
+                self._picker_providers(provider), provider)
+            self._set_runtime(CLAUDE_CODE_PROVIDER)
+            self._set_provider_models(provider, current_id="default")
+            self._model_changed(CLAUDE_CODE_DEFAULT_MODEL)
+            return
+        # Any real API provider restores the native Runner.
+        if self.engine.runtime_name() == CLAUDE_CODE_PROVIDER:
+            self._set_runtime("native")
         # provider dropdown changed — do not auto-pick a model; just populate
         # the list and let the user choose. The model_changed handler will
         # persist once they actually pick one.
         self._set_provider_models(provider, current_id="")
-
     async def _refresh_cost(self) -> None:
         if not self.current_session_id:
             self.context_meter.setVisible(False)

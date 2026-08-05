@@ -86,14 +86,20 @@ def claude_code_config_from_engine(config: Any) -> ClaudeCodeConfig:
 
 
 def model_for_cli(session_model: str, override: str | None = None) -> str | None:
-    """CLI ``--model`` value: strip ``provider/`` prefix when present."""
+    """CLI ``--model`` value: strip ``provider/`` prefix when present.
+
+    UI sentinel ``claude-code/default`` (and bare ``default``) means "let the
+    CLI pick" — omit ``--model``.
+    """
     raw = (override if override is not None else session_model) or ""
     raw = str(raw).strip()
     if not raw:
         return None
     if "/" in raw:
         raw = raw.rsplit("/", 1)[-1].strip()
-    return raw or None
+    if not raw or raw.lower() in {"default", "auto", "claude-code"}:
+        return None
+    return raw
 
 
 def build_claude_argv(

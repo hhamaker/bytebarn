@@ -771,6 +771,75 @@ async def test_last_model_persists_for_new_sessions(qapp, tmp_path, monkeypatch)
         await engine.stop()
 
 
+def test_prompt_bar_includes_claude_code_sentinel(qapp):
+    from bytebarn.app.prompt_bar import PromptBar
+
+    bar = PromptBar()
+    bar.set_providers(["groq", "claude-code"], "claude-code")
+    bar.set_models(["default", "sonnet", "opus", "haiku"], "default")
+    assert bar.provider_combo.currentText() == "claude-code"
+    assert bar.current_model() == "claude-code/default"
+    bar.model_combo.setCurrentText("sonnet")
+    assert bar.current_model() == "claude-code/sonnet"
+
+
+async def test_provider_picker_toggles_claude_code_runtime(qapp, tmp_path, monkeypatch):
+    """Picking claude-code in the provider combo flips Engine runtime."""
+    import json
+
+    from bytebarn.app.main_window import (
+        CLAUDE_CODE_DEFAULT_MODEL,
+        CLAUDE_CODE_PROVIDER,
+        MainWindow,
+    )
+    from bytebarn.engine.facade import Engine
+
+    proj = tmp_path / "cc-proj"
+    proj.mkdir()
+    gdir = tmp_path / "cc-g"
+    gdir.mkdir()
+    (gdir / "config.json").write_text(json.dumps({"model": "fake/m"}))
+    engine = Engine(proj, db_path=tmp_path / "cc.sqlite", global_dir=gdir)
+    engine.providers.auth.set("groq", {"type": "api", "key": "gsk-x"})
+    await engine.start()
+    try:
+        window = MainWindow(engine)
+        # sentinel always offered next to connected providers
+        window._refresh_pickers()
+        providers = [
+            window.prompt_bar.provider_combo.itemText(i)
+            for i in range(window.prompt_bar.provider_combo.count())
+        ]
+        assert CLAUDE_CODE_PROVIDER in providers
+        assert engine.runtime_name() == "native"
+        assert window.status_runtime.text() == ""
+
+        # pick Claude Code → runtime + sticky model
+        window._provider_changed(CLAUDE_CODE_PROVIDER)
+        assert engine.runtime_name() == CLAUDE_CODE_PROVIDER
+        assert window.prompt_bar.current_model() == CLAUDE_CODE_DEFAULT_MODEL
+        assert "Claude Code" in window.status_runtime.text()
+        cfg = json.loads((gdir / "config.json").read_text())
+        assert cfg.get("runtime") == CLAUDE_CODE_PROVIDER
+        # last_model must NOT become claude-code/default (native poison)
+        assert not str(cfg.get("last_model", "")).startswith("claude-code/")
+
+        # pick a real provider → native again
+        window._provider_changed("groq")
+        assert engine.runtime_name() == "native"
+        assert window.status_runtime.text() == ""
+        cfg = json.loads((gdir / "config.json").read_text())
+        assert cfg.get("runtime") == "native"
+        # restore from config on a fresh window
+        window._set_runtime(CLAUDE_CODE_PROVIDER)
+        window2 = MainWindow(engine)
+        window2._refresh_pickers()
+        assert window2.prompt_bar.provider_combo.currentText() == CLAUDE_CODE_PROVIDER
+        assert window2.prompt_bar.current_model().startswith("claude-code/")
+    finally:
+        await engine.stop()
+
+
 async def test_project_dialog_roundtrips_knowledge(qapp, tmp_path):
     from bytebarn.app.project_dialog import ProjectDialog
     from bytebarn.engine.facade import Engine

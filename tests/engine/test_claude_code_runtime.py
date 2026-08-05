@@ -215,6 +215,10 @@ def test_model_for_cli_strips_provider():
     assert model_for_cli("claude-opus-4") == "claude-opus-4"
     assert model_for_cli("") is None
     assert model_for_cli("x", override="anthropic/y") == "y"
+    # UI sentinel: omit --model so the CLI picks its default
+    assert model_for_cli("claude-code/default") is None
+    assert model_for_cli("default") is None
+    assert model_for_cli("claude-code/sonnet") == "sonnet"
 
 
 def test_build_claude_argv_basic():
