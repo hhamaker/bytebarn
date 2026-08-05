@@ -189,8 +189,16 @@ class Engine:
                 agent = project.default_agent
             if project and not model:
                 model = project.default_model
+            agent = agent or "build"
+            # agent-level default model (e.g. claude-code/default) when caller
+            # and project left model empty
+            if not model:
+                try:
+                    model = self.agents.get(agent).model or ""
+                except KeyError:
+                    model = ""
             session = await self.store.create_session(
-                pid, agent=agent or "build", model=model, directory=directory)
+                pid, agent=agent, model=model, directory=directory)
             if isolated:
                 session = await self._isolate_session(session, directory)
         self.bus.emit(SessionUpdated(session_id=session.id))
@@ -667,7 +675,11 @@ class Engine:
         return command.render(args.strip()), command.agent, command.model
 
     def runtime_name(self) -> str:
-        """Active agent runtime: ``native`` (default) or ``claude-code``."""
+        """Sticky global runtime preference: ``native`` (default) or ``claude-code``.
+
+        Per-session / per-agent routing also looks at the model string
+        (``claude-code/…``) — see :meth:`uses_claude_code`.
+        """
         extra = self.config.model_extra or {}
         return str(extra.get("runtime") or "native")
 
@@ -679,6 +691,44 @@ class Engine:
             self._claude_runtime = ClaudeCodeRuntime(self)
         return self._claude_runtime
 
+    def effective_model(self, session: Session, agent_name: str | None = None) -> str:
+        """Model string a run would use: session → agent default → config."""
+        if session.model:
+            return session.model
+        name = agent_name or session.agent
+        try:
+            agent_model = self.agents.get(name).model or ""
+        except KeyError:
+            agent_model = ""
+        return agent_model or self.config.model or ""
+
+    def uses_claude_code(
+        self, session: Session, agent_name: str | None = None,
+    ) -> bool:
+        """Whether this session/agent should run through Claude Code CLI.
+
+        True when the session or agent pins ``claude-code/…``, or when the
+        sticky global runtime is claude-code. An *explicit* session model on
+        another provider beats sticky CC (mixed crews). Config ``model`` alone
+        does not override sticky runtime — that default is for native sessions.
+        """
+        from .providers.known import CLAUDE_CODE_PROVIDER, is_claude_code_model
+
+        # Explicit session pin wins either way.
+        if session.model:
+            return is_claude_code_model(session.model)
+
+        name = agent_name or session.agent
+        try:
+            agent_model = self.agents.get(name).model or ""
+        except KeyError:
+            agent_model = ""
+        if agent_model:
+            return is_claude_code_model(agent_model)
+
+        # No session/agent pin — honor sticky global runtime.
+        return self.runtime_name() == CLAUDE_CODE_PROVIDER
+
     def _start_run(self, session: Session, agent_override: str | None = None) -> None:
         if getattr(self, "_stopped", False):
             return
@@ -686,7 +736,7 @@ class Engine:
         handle.abort = asyncio.Event()
         handle.agent_override = agent_override
         self._runs[session.id] = handle
-        if self.runtime_name() == "claude-code":
+        if self.uses_claude_code(session, agent_override or session.agent):
             handle.task = asyncio.ensure_future(
                 self.claude_runtime().run(session, handle)
             )
@@ -1090,6 +1140,18 @@ class Engine:
         """
         agent_def = self.agents.get(agent)  # raises KeyError for unknown agents
         parent_cwd = Path(parent.directory) if parent.directory else self.project_dir
+        # Subagent model: agent default, else inherit parent when parent is on
+        # Claude Code (so a CC parent keeps its crew on CC without every
+        # subagent needing its own override). Sticky-CC parents with an empty
+        # model still hand children `claude-code/default`.
+        from .providers.known import CLAUDE_CODE_PROVIDER
+
+        child_model = agent_def.model or ""
+        if not child_model and self.uses_claude_code(parent):
+            if parent.model and parent.model.startswith(f"{CLAUDE_CODE_PROVIDER}/"):
+                child_model = parent.model
+            else:
+                child_model = f"{CLAUDE_CODE_PROVIDER}/default"
         if task_id:
             child = await self.store.get_session(task_id)
             if child is None or child.parent_session_id != parent.id:
@@ -1098,7 +1160,7 @@ class Engine:
             child = await self.store.create_session(
                 self.project.id,
                 agent=agent,
-                model=agent_def.model or "",
+                model=child_model,
                 parent_session_id=parent.id,
                 title=description[:80],
                 directory=parent.directory or "",
@@ -1125,7 +1187,12 @@ class Engine:
 
         handle = RunHandle()
         self._runs[child.id] = handle
-        handle.task = asyncio.ensure_future(self.runner.run(child, handle))
+        if self.uses_claude_code(child, agent):
+            handle.task = asyncio.ensure_future(
+                self.claude_runtime().run(child, handle)
+            )
+        else:
+            handle.task = asyncio.ensure_future(self.runner.run(child, handle))
         try:
             await handle.task
         finally:

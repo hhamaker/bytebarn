@@ -70,6 +70,22 @@ async def probe_provider(name: str, config: Config, auth: AuthStore) -> tuple[bo
     spec = KNOWN_PROVIDERS.get(name)
     if spec and spec.planned:
         return False, f"{spec.label} is not connectable yet ({spec.note})"
+    if spec and spec.runtime:
+        # Claude Code etc.: "connected" means the CLI binary is on PATH.
+        import shutil
+
+        from ..runtimes.claude_code import claude_code_config_from_engine
+
+        cfg = claude_code_config_from_engine(config)
+        cmd = cfg.command or "claude"
+        path = shutil.which(cmd)
+        if path:
+            return True, f"found `{cmd}` at {path}"
+        return False, (
+            f"`{cmd}` not found on PATH — install Claude Code "
+            "(https://docs.anthropic.com/en/docs/claude-code) or set "
+            "claude_code.command in config"
+        )
     if name == "bedrock":
         from .bedrock import credentials_present, list_bedrock_models, resolve_region
 
@@ -157,6 +173,9 @@ async def fetch_models(name: str, config: Config, auth: AuthStore) -> list[str]:
     spec = KNOWN_PROVIDERS.get(name)
     if spec and spec.planned:
         return []
+    if spec and spec.runtime:
+        # Runtime backends have a fixed curated alias list (no HTTP catalog).
+        return list(spec.models)
     if name == "bedrock":
         from .bedrock import list_bedrock_models
 

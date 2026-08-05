@@ -5,6 +5,29 @@ All notable changes to ByteBarn are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] — 2026-08-05
+
+### Added
+
+- **Claude Code as a first-class provider.** Listed in `KNOWN_PROVIDERS` (and
+  the ⚡ providers manager) with curated CLI aliases (`default`, `sonnet`,
+  `opus`, `haiku`). Always "connected" as a local runtime — Test connection
+  checks that the `claude` binary is on PATH.
+- **Per-agent / per-subagent Claude Code defaults.** Set an agent's model to
+  `claude-code/…` in the agent editor (or `agent.<name>.model` in config).
+  Engine routes that session through the Claude Code CLI even when the sticky
+  global `"runtime"` is still `"native"`. Subagents inherit the parent's
+  Claude Code model when they have no override of their own.
+- Settings / agent-editor model pickers offer **Claude Code** alongside API
+  providers.
+
+### Notes
+
+- Sticky global runtime (`"runtime": "claude-code"`) still works from the
+  prompt-bar provider dropdown. Per-model routing is additive: a session with
+  `claude-code/sonnet` uses CC; an explicit API model under sticky CC runtime
+  uses the native Runner.
+
 ## [0.3.2] — 2026-08-05
 
 ### Fixed

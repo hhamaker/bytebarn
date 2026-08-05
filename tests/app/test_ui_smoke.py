@@ -163,6 +163,7 @@ def test_agent_editor_and_provider_manager_build(qapp, tmp_path):
     from bytebarn.app.agent_editor import AgentEditor
     from bytebarn.app.provider_manager import ProviderManager
     from bytebarn.engine.facade import Engine
+    from bytebarn.engine.providers.known import CLAUDE_CODE_PROVIDER
 
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -174,9 +175,22 @@ def test_agent_editor_and_provider_manager_build(qapp, tmp_path):
     # "(default)" always present; model combo disabled until a provider is picked
     assert editor.provider_combo.itemText(0) == "(default)"
     assert not editor.model_combo.isEnabled()
+    # Claude Code is always offered as an agent-default provider
+    cc_idxs = [
+        i for i in range(editor.provider_combo.count())
+        if editor.provider_combo.itemData(i) == CLAUDE_CODE_PROVIDER
+    ]
+    assert cc_idxs, "claude-code missing from agent editor providers"
+    assert editor.provider_combo.itemText(cc_idxs[0]) == "Claude Code"
 
     manager = ProviderManager(engine)
     assert manager.provider_list.count() >= 10
+    # Claude Code appears in the ⚡ providers list
+    labels = [
+        manager.provider_list.item(i).text()
+        for i in range(manager.provider_list.count())
+    ]
+    assert any("Claude Code" in t for t in labels)
     manager.provider_list.setCurrentRow(0)
     # connect a provider -> it appears in the picker with its curated models
     engine.providers.auth.set("groq", {"type": "api", "key": "gsk-test"})
@@ -184,6 +198,11 @@ def test_agent_editor_and_provider_manager_build(qapp, tmp_path):
     assert editor.provider_combo.currentText() == "groq"
     assert editor.model_combo.isEnabled()
     assert editor._selected_model() == "groq/llama-3.3-70b-versatile"
+
+    # agent can pin Claude Code as its default model
+    editor._reload_models("claude-code/sonnet")
+    assert editor._current_provider_id() == CLAUDE_CODE_PROVIDER
+    assert editor._selected_model() == "claude-code/sonnet"
 
 
 def test_skill_editor_builds(qapp, tmp_path):

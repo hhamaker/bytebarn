@@ -27,6 +27,16 @@ class ProviderRegistry:
     def provider(self, name: str) -> Provider:
         if name in self._providers:
             return self._providers[name]
+        # Runtime backends (Claude Code CLI) are not HTTP Providers — Engine
+        # routes those model strings to ClaudeCodeRuntime instead of resolve().
+        from .known import KNOWN_PROVIDERS
+
+        spec = KNOWN_PROVIDERS.get(name)
+        if spec is not None and spec.runtime:
+            raise KeyError(
+                f"provider '{name}' is a runtime backend, not an API provider "
+                f"(use Engine runtime routing for {name}/… model strings)"
+            )
         # providers with their own auth/transport get a dedicated factory —
         # adding one is a single entry here, not another if/elif branch
         factory = _SPECIAL_FACTORIES.get(name)
@@ -39,9 +49,7 @@ class ProviderRegistry:
         if pconf is None:
             # not configured by hand: fall back to the known-provider recipe
             from ..config import ProviderConfig
-            from .known import KNOWN_PROVIDERS
 
-            spec = KNOWN_PROVIDERS.get(name)
             if spec is None or spec.planned:
                 raise KeyError(f"unknown provider '{name}' (add it to config.provider)")
             pconf = ProviderConfig(

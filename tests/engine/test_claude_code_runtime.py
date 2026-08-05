@@ -377,6 +377,75 @@ async def test_native_runtime_still_default(native_engine):
     assert "run.finished" in names
 
 
+async def test_session_model_routes_to_claude_code(native_engine):
+    """``claude-code/…`` model strings use the CC runtime even when sticky
+    runtime is still ``native`` — agents can default to Claude Code per-agent.
+    """
+    engine = native_engine
+    assert engine.runtime_name() == "native"
+    fake = FakeClaudeCodeRuntime(engine, [_text_script("via model pin")])
+    engine._claude_runtime = fake
+
+    session = await engine.new_session(model="claude-code/sonnet")
+    assert engine.uses_claude_code(session)
+    await _run_and_wait(engine, session, "go")
+
+    history = await _collect(engine, session.id)
+    texts = [p.data.get("text", "") for p in history[1][1] if p.type == "text"]
+    assert any("via model pin" == t for t in texts)
+    assert fake.prompts == ["go"]
+
+
+async def test_agent_default_model_routes_to_claude_code(tmp_path):
+    """Agent config ``model: claude-code/default`` drives CC without sticky runtime."""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    gdir = tmp_path / "global"
+    gdir.mkdir()
+    (gdir / "config.json").write_text(json.dumps({
+        "model": "fake/model",
+        "agent": {"build": {"model": "claude-code/default"}},
+        "permission": {"bash": "allow", "edit": "allow", "write": "allow"},
+    }))
+    eng = Engine(proj, db_path=tmp_path / "crew.db", global_dir=gdir)
+    await eng.start()
+    try:
+        assert eng.runtime_name() == "native"
+        assert eng.agents.get("build").model == "claude-code/default"
+        fake = FakeClaudeCodeRuntime(eng, [_text_script("agent default cc")])
+        eng._claude_runtime = fake
+
+        session = await eng.new_session(agent="build", model="")
+        # empty session.model → agent default
+        assert eng.effective_model(session) == "claude-code/default"
+        assert eng.uses_claude_code(session)
+        await _run_and_wait(eng, session, "hello agent")
+        assert fake.prompts == ["hello agent"]
+    finally:
+        await eng.stop()
+
+
+async def test_subagent_inherits_claude_code_from_parent(native_engine):
+    """Subagents without their own model inherit CC when the parent is on CC."""
+    engine = native_engine
+    fake = FakeClaudeCodeRuntime(engine, [
+        _text_script("sub done", "cc-sub-1"),
+    ])
+    engine._claude_runtime = fake
+
+    parent = await engine.new_session(model="claude-code/default")
+    assert engine.uses_claude_code(parent)
+
+    out = await engine.run_subagent(
+        parent, "general", "do the thing", "sub task", task_id=None,
+    )
+    assert "sub done" in out
+    assert fake.prompts == ["do the thing"]
+    # child session should have been pinned to a CC model
+    children = await engine.store.child_sessions(parent.id)
+    assert children and children[0].model.startswith("claude-code/")
+
+
 async def test_project_stream_events_helper(engine):
     session = await engine.new_session()
     msg = await engine.store.add_message(session.id, "assistant", model="x")

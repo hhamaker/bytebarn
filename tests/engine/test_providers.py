@@ -415,7 +415,13 @@ def test_comparable_model_fallback(tmp_path, monkeypatch):
 
 def test_connected_providers_and_curated(tmp_path, monkeypatch):
     from bytebarn.engine.auth import AuthStore
-    from bytebarn.engine.providers.known import connected_providers, curated_models
+    from bytebarn.engine.providers.known import (
+        CLAUDE_CODE_PROVIDER,
+        connected_providers,
+        curated_models,
+        is_claude_code_model,
+        is_runtime_provider,
+    )
 
     for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY", "XAI_API_KEY"):
         monkeypatch.delenv(var, raising=False)
@@ -424,11 +430,17 @@ def test_connected_providers_and_curated(tmp_path, monkeypatch):
     providers = connected_providers(cfg, auth)
     # locals always reachable; keyed providers absent until connected
     assert "ollama" in providers and "lmstudio" in providers
+    assert CLAUDE_CODE_PROVIDER in providers  # Claude Code CLI runtime
     assert "groq" not in providers
     auth.set("groq", {"type": "api", "key": "g"})
     assert "groq" in connected_providers(cfg, auth)
     assert "llama-3.3-70b-versatile" in curated_models("groq")
     assert curated_models("ollama") == []
+    assert "default" in curated_models(CLAUDE_CODE_PROVIDER)
+    assert is_runtime_provider(CLAUDE_CODE_PROVIDER)
+    assert not is_runtime_provider("groq")
+    assert is_claude_code_model("claude-code/sonnet")
+    assert not is_claude_code_model("anthropic/claude-sonnet-4")
 
 
 async def test_fetch_models_parses_provider_shapes(tmp_path, monkeypatch):

@@ -42,9 +42,17 @@ def comparable_model(
     """
     if "/" not in model:
         return None
+    from .known import is_runtime_provider
+
+    # Claude Code (and other runtimes) are not HTTP providers — never fall
+    # back onto/from them mid native Runner turn.
+    if is_runtime_provider(model.split("/", 1)[0]):
+        return None
+
     excluded = set(exclude) | {model}
     candidates = [
-        m for m in available_models(config, auth, live=live) if m not in excluded
+        m for m in available_models(config, auth, live=live)
+        if m not in excluded and not is_runtime_provider(m.split("/", 1)[0])
     ]
     if not candidates:
         return None

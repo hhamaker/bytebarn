@@ -30,13 +30,31 @@ class ProviderSpec:
     oauth: bool = False          # supports an OAuth login flow
     oauth_kind: str = ""         # "loopback" (browser redirect) | "device" (enter a code)
     planned: bool = False        # listed but not connectable yet
+    runtime: bool = False        # full agent runtime (CLI), not an API Provider
     note: str = ""
     id_fields: tuple[str, ...] = ()
+
+
+# Synthetic provider id for the local Claude Code CLI runtime. Model strings
+# look like every other provider ("claude-code/sonnet") so agents/sessions can
+# pin it as their default; Engine routes those runs to ClaudeCodeRuntime.
+CLAUDE_CODE_PROVIDER = "claude-code"
+CLAUDE_CODE_MODELS: tuple[str, ...] = ("default", "sonnet", "opus", "haiku")
 
 
 KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
     spec.id: spec
     for spec in (
+        ProviderSpec(
+            id=CLAUDE_CODE_PROVIDER, label="Claude Code",
+            local=True, runtime=True,
+            models=CLAUDE_CODE_MODELS,
+            key_url="https://docs.anthropic.com/en/docs/claude-code",
+            note="Local `claude` CLI (Claude Pro/Max subscription). Not an API — "
+                 "ByteBarn drives headless Claude Code. Model \"default\" lets "
+                 "the CLI pick. Set as an agent default to run that agent (and "
+                 "its subagents) through Claude Code.",
+        ),
         ProviderSpec(
             id="anthropic", label="Anthropic (Claude)", api="anthropic",
             key_env="ANTHROPIC_API_KEY", key_url="https://console.anthropic.com/settings/keys",
@@ -198,6 +216,10 @@ def connection_status(spec: ProviderSpec, config: "Config", auth: "AuthStore") -
     """One of: connected-env | connected-key | connected-oauth | local | planned | disconnected."""
     if spec.planned:
         return "planned"
+    # Runtime backends (Claude Code CLI) are always "local" — connection is
+    # "is the binary on PATH", checked at run time rather than via API keys.
+    if spec.runtime:
+        return "local"
     record = auth.get(spec.id)
     if spec.id == "bedrock":
         # explicit Access Key ID + Secret Access Key saved here, else the
@@ -228,6 +250,19 @@ def connection_status(spec: ProviderSpec, config: "Config", auth: "AuthStore") -
 
 def is_connected(status: str) -> bool:
     return status.startswith("connected") or status == "local"
+
+
+def is_runtime_provider(provider_id: str) -> bool:
+    """True for full agent runtimes (Claude Code), not HTTP API providers."""
+    spec = KNOWN_PROVIDERS.get(provider_id)
+    return bool(spec and spec.runtime)
+
+
+def is_claude_code_model(model: str | None) -> bool:
+    """True when a model string routes through the Claude Code CLI runtime."""
+    if not model or "/" not in model:
+        return False
+    return model.split("/", 1)[0] == CLAUDE_CODE_PROVIDER
 
 
 def connected_providers(config: "Config", auth: "AuthStore") -> list[str]:

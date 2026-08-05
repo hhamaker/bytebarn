@@ -61,44 +61,79 @@ class ModelPicker(QWidget):
 
     def set_model(self, model: str = "") -> None:
         """Populate providers, then select the provider/model of ``model``."""
-        from ..engine.providers.known import connected_providers
+        from ..engine.providers.known import (
+            CLAUDE_CODE_PROVIDER,
+            KNOWN_PROVIDERS,
+            connected_providers,
+            is_runtime_provider,
+        )
 
         provider, _, model_id = model.partition("/")
-        providers = connected_providers(self.engine.config, self.engine.providers.auth)
+        providers = list(
+            connected_providers(self.engine.config, self.engine.providers.auth))
+        # Claude Code is always offered (local CLI runtime).
+        if CLAUDE_CODE_PROVIDER not in providers:
+            providers.insert(0, CLAUDE_CODE_PROVIDER)
+        elif providers[0] != CLAUDE_CODE_PROVIDER:
+            providers = [CLAUDE_CODE_PROVIDER] + [
+                p for p in providers if p != CLAUDE_CODE_PROVIDER
+            ]
 
         self.provider_combo.blockSignals(True)
         self.provider_combo.clear()
         if self._allow_default:
-            self.provider_combo.addItem(DEFAULT_SENTINEL)
-        self.provider_combo.addItems(providers)
+            self.provider_combo.addItem(DEFAULT_SENTINEL, "")
+        for pid in providers:
+            # Friendly label for runtimes; bare id for API providers (matches
+            # the prompt bar and existing settings tests).
+            if is_runtime_provider(pid):
+                label = KNOWN_PROVIDERS[pid].label
+            else:
+                label = pid
+            self.provider_combo.addItem(label, pid)
         if provider and provider in providers:
-            self.provider_combo.setCurrentText(provider)
+            idx = self.provider_combo.findData(provider)
+            if idx < 0:
+                idx = self.provider_combo.findText(provider)
+            if idx >= 0:
+                self.provider_combo.setCurrentIndex(idx)
+            else:
+                model_id = ""
         elif self._allow_default:
             self.provider_combo.setCurrentIndex(0)
             model_id = ""
         elif not providers:
-            self.provider_combo.addItem("⚡ connect a provider")
+            self.provider_combo.addItem("⚡ connect a provider", "")
             model_id = ""
         self.provider_combo.blockSignals(False)
 
-        self._set_provider_models(self.provider_combo.currentText(), model_id)
+        self._set_provider_models(self._current_provider_id(), model_id)
+
+    def _current_provider_id(self) -> str:
+        idx = self.provider_combo.currentIndex()
+        data = self.provider_combo.itemData(idx)
+        if data:
+            return str(data)
+        text = self.provider_combo.currentText()
+        if text == DEFAULT_SENTINEL or text.startswith("⚡"):
+            return ""
+        return text
 
     def value(self) -> str:
         """Full "provider/model-id", or "" when incomplete / default."""
-        provider = self.provider_combo.currentText()
+        provider = self._current_provider_id()
         model_id = self.model_combo.currentText().strip()
-        if (not provider or provider == DEFAULT_SENTINEL
-                or provider.startswith("⚡") or not model_id):
+        if not provider or not model_id:
             return ""
         return f"{provider}/{model_id}"
 
     # -- internals ----------------------------------------------------------
 
-    def _on_provider_changed(self, provider: str) -> None:
-        self._set_provider_models(provider)
+    def _on_provider_changed(self, _provider: str) -> None:
+        self._set_provider_models(self._current_provider_id())
 
     def _set_provider_models(self, provider: str, current_id: str = "") -> None:
-        from ..engine.providers.known import curated_models
+        from ..engine.providers.known import curated_models, is_runtime_provider
 
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
@@ -108,6 +143,19 @@ class ModelPicker(QWidget):
             self.model_changed.emit(self.value())
             return
         self.model_combo.setEnabled(True)
+        if is_runtime_provider(provider):
+            models = curated_models(provider)
+            if current_id and current_id not in models:
+                models.insert(0, current_id)
+            self.model_combo.addItems(models)
+            select = current_id if current_id in models else (
+                "default" if "default" in models else (models[0] if models else "")
+            )
+            if select:
+                self.model_combo.setCurrentText(select)
+            self.model_combo.blockSignals(False)
+            self.model_changed.emit(self.value())
+            return
         # prefer last live fetch; curated is only a placeholder until refresh lands
         cached = self.engine.cached_models(provider)
         models = list(cached) if cached is not None else curated_models(provider)
@@ -129,8 +177,12 @@ class ModelPicker(QWidget):
         loop.create_task(self._load_live_models(provider))
 
     async def _load_live_models(self, provider: str) -> None:
+        from ..engine.providers.known import is_runtime_provider
+
+        if is_runtime_provider(provider):
+            return
         live = await self.engine.list_models(provider, force=True)
-        if self.provider_combo.currentText() != provider:
+        if self._current_provider_id() != provider:
             return
         if not live:
             return

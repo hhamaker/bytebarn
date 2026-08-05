@@ -246,14 +246,18 @@ class ProviderManager(QDialog):
                             + (f" — env var {spec.key_env}" if state == "connected-env" and spec.key_env else ""))
         self.note.setText(spec.note)
         self.note.setVisible(bool(spec.note))
+        if spec.runtime:
+            link_label = "Claude Code docs ↗"
+        else:
+            link_label = "get an API key ↗"
         self.key_link.setText(
-            f'<a href="{spec.key_url}">get an API key ↗</a>' if spec.key_url else ""
+            f'<a href="{spec.key_url}">{link_label}</a>' if spec.key_url else ""
         )
         self.key_link.setVisible(bool(spec.key_url))
         self.key_edit.clear()
-        self.key_edit.setEnabled(not spec.planned and not spec.local)
+        self.key_edit.setEnabled(not spec.planned and not spec.local and not spec.runtime)
         record = self.engine.providers.auth.get(spec.id)
-        self.remove_key.setEnabled(bool(record))
+        self.remove_key.setEnabled(bool(record) and not spec.runtime)
         pconf = self.engine.config.provider.get(spec.id)
         self.base_url_edit.setText((pconf.base_url if pconf else None) or spec.base_url or "")
         self.oauth_button.setVisible(spec.oauth and not spec.planned)
@@ -267,7 +271,8 @@ class ProviderManager(QDialog):
 
         # AWS Bedrock: two-secret credential form instead of a single API key
         is_bedrock = spec.id == "bedrock"
-        self._form.setRowVisible(self.key_row_w, not is_bedrock)
+        is_runtime = bool(spec.runtime)
+        self._form.setRowVisible(self.key_row_w, not is_bedrock and not is_runtime)
         self.key_link.setVisible(bool(spec.key_url) and not is_bedrock)
         self._form.setRowVisible(self.aws_container, is_bedrock)
         if is_bedrock:
@@ -276,6 +281,10 @@ class ProviderManager(QDialog):
             self.aws_key_edit.setText(rec.get("client_id", ""))
             self.aws_secret_edit.clear()
             self.aws_region_edit.setText(rec.get("region", ""))
+            self._form.setRowVisible(self.ids_container, False)
+            self._form.setRowVisible(self.url_row_w, False)
+        elif is_runtime:
+            # Local CLI runtime — no key, no base URL.
             self._form.setRowVisible(self.ids_container, False)
             self._form.setRowVisible(self.url_row_w, False)
         else:

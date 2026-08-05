@@ -46,7 +46,13 @@ from ..engine.permissions import (
     SESSION_MODE_LABELS,
     SESSION_MODES,
 )
-from ..engine.providers.known import connected_providers, curated_models
+from ..engine.providers.known import (
+    CLAUDE_CODE_MODELS as _CC_MODELS,
+    CLAUDE_CODE_PROVIDER,
+    KNOWN_PROVIDERS,
+    connected_providers,
+    curated_models,
+)
 from .agent_editor import AgentEditor
 from .crew_stage import CrewStage
 from .permission_dialog import PermissionDialog
@@ -63,13 +69,13 @@ from .transcript import Transcript
 _AGENT_DISPLAY = {"orchestrator": "goal"}
 _AGENT_INTERNAL = {v: k for k, v in _AGENT_DISPLAY.items()}
 
-# Synthetic provider in the prompt-bar picker. Selecting it flips Engine
-# runtime to claude-code (local `claude` CLI); it is not an API Provider.
-CLAUDE_CODE_PROVIDER = "claude-code"
-CLAUDE_CODE_LABEL = "Claude Code"  # what the user sees in the dropdown
+# Claude Code appears in the prompt-bar picker like any other provider.
+# Selecting it flips sticky Engine runtime to claude-code (local `claude`
+# CLI). Per-agent defaults can also pin `claude-code/…` without the global
+# runtime switch — see Engine.uses_claude_code.
+CLAUDE_CODE_LABEL = KNOWN_PROVIDERS[CLAUDE_CODE_PROVIDER].label
 CLAUDE_CODE_DEFAULT_MODEL = f"{CLAUDE_CODE_PROVIDER}/default"
-# Curated Claude Code --model aliases (CLI accepts these; "default" = omit flag)
-CLAUDE_CODE_MODELS = ["default", "sonnet", "opus", "haiku"]
+CLAUDE_CODE_MODELS = list(_CC_MODELS)
 
 class MainWindow(QMainWindow):
     def __init__(self, engine: Engine):
@@ -848,8 +854,19 @@ class MainWindow(QMainWindow):
                 if not ok:
                     return
         self._remember_project(directory)
+        # Prefer the prompt-bar agent (and any model it pins, e.g. Claude Code).
+        agent_label = self.prompt_bar.agent_combo.currentText().strip()
+        agent = _AGENT_INTERNAL.get(agent_label, agent_label) or ""
+        model = self._default_model()
+        if agent:
+            try:
+                pinned = self.engine.agents.get(agent).model or ""
+            except KeyError:
+                pinned = ""
+            if pinned:
+                model = pinned
         session = await self.engine.new_session(
-            model=self._default_model(), directory=directory,
+            agent=agent, model=model, directory=directory,
             project_id=project_id, isolated=isolated)
         if isolated:
             if session.worktree_branch:
@@ -1533,6 +1550,15 @@ class MainWindow(QMainWindow):
         agent = _AGENT_INTERNAL.get(agent, agent)
         if self.current_session_id and agent:
             self._fire(self.engine.store.update_session(self.current_session_id, agent=agent))
+            # If this agent pins a default model (incl. Claude Code), apply it
+            # so the session actually runs on that provider.
+            try:
+                pinned = self.engine.agents.get(agent).model or ""
+            except KeyError:
+                pinned = ""
+            if pinned:
+                self._refresh_pickers(agent=agent, model=pinned)
+                self._model_changed(pinned)
 
     def _model_changed(self, model: str) -> None:
         if self.current_session_id and model:
@@ -1591,10 +1617,11 @@ class MainWindow(QMainWindow):
 
         Claude Code is listed **first** with a human label so it is obvious in
         the dropdown (not buried as a trailing ``claude-code`` slug).
+        ``connected_providers`` already includes Claude Code (runtime=local);
+        we still force it first for discoverability.
         """
         connected = list(
             connected_providers(self.engine.config, self.engine.providers.auth))
-        # Claude Code always first so users can find it without scrolling.
         items: list[tuple[str, str]] = [
             (CLAUDE_CODE_PROVIDER, CLAUDE_CODE_LABEL),
         ]
@@ -1602,7 +1629,13 @@ class MainWindow(QMainWindow):
         for pid in connected:
             if pid in seen:
                 continue
-            items.append((pid, pid))
+            # Runtimes get a friendly label; API providers keep bare ids.
+            label = (
+                KNOWN_PROVIDERS[pid].label
+                if pid in KNOWN_PROVIDERS and KNOWN_PROVIDERS[pid].runtime
+                else pid
+            )
+            items.append((pid, label))
             seen.add(pid)
         if preferred and preferred not in seen:
             # Keep preferred available, but never above Claude Code.
