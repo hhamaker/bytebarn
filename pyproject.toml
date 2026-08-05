@@ -1,6 +1,6 @@
 [project]
 name = "bytebarn"
-version = "0.3.3"
+version = "0.3.5"
 description = "ByteBarn — a local desktop harness for AI coding agents (a barn full of pixel farmhands)"
 readme = "README.md"
 license = { file = "LICENSE" }

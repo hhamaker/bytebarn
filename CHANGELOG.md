@@ -5,6 +5,23 @@ All notable changes to ByteBarn are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.5] — 2026-08-05
+
+Package version alignment: `pyproject.toml` now reports **0.3.5** so editable
+and wheel installs match the shipped feature set (tags had moved ahead of the
+version field).
+
+### Includes (since 0.3.2)
+
+- **Claude Code** as a first-class provider + per-agent / subagent model routing
+- **Create agents in the UI** (+ Primary / + Subagent / Delete)
+- **Terminal Manager** (Tools → Terminals / ⌘\`) — Claude Code streams + local shells
+- Workspace tabs show full **Chats / Goals / Memory / Agents** labels (no Ch…)
+
+## [0.3.4] — 2026-08-05
+
+- Create primary/subagent agents from the Agents dialog (`.bytebarn/agent/*.md`).
+
 ## [0.3.3] — 2026-08-05
 
 ### Added
@@ -20,15 +37,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Claude Code model when they have no override of their own.
 - Settings / agent-editor model pickers offer **Claude Code** alongside API
   providers.
-- **Create agents in the UI.** Agents dialog: **+ Primary**, **+ Subagent**,
-  and **Delete** for custom `.bytebarn/agent/*.md` files.
-- **Terminal Manager.** Tools → Terminals (⌘\`) — view Claude Code process
-  streams and open local interactive shells.
-
-### Fixed
-
-- Project workspace tabs no longer elide to "Ch…/Go…/Mem…/Age…"; full labels
-  with scroll when the sidebar is narrow.
 
 ### Notes
 
