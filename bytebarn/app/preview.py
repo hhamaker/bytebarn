@@ -100,3 +100,14 @@ class PreviewPanel(QWidget):
     def _close(self) -> None:
         self.hide()
         self.closed.emit()
+
+    def shutdown(self) -> None:
+        """Stop any in-flight page load so WebEngine doesn't outlive the app."""
+        view = self._view
+        if view is None:
+            return
+        try:
+            view.stop()
+            view.setUrl(QUrl("about:blank"))
+        except Exception:
+            pass

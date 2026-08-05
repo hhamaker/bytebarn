@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import encodings.idna  # noqa: F401 — preload: frozen apps can fail codec
+import signal
 import sys             # lookup ("unknown encoding: idna") when a network
 from pathlib import Path  # thread triggers the first import
 
@@ -106,6 +107,8 @@ def main() -> None:
 
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)
+    # Window owns graceful shutdown (closeEvent → await engine.stop → quit).
+    # aboutToQuit only stops the qasync loop after that work finishes.
     app.aboutToQuit.connect(loop.stop)
 
     engine = Engine(project_dir)
@@ -118,6 +121,17 @@ def main() -> None:
         or ("waifu" if _extra.get("waifu") else "farm"))
     window = MainWindow(engine)
     window.setWindowIcon(app_icon())
+
+    def _request_quit() -> None:
+        # Route Ctrl-C / SIGTERM through closeEvent so async engine.stop runs.
+        window.close()
+
+    try:
+        loop.add_signal_handler(signal.SIGINT, _request_quit)
+        loop.add_signal_handler(signal.SIGTERM, _request_quit)
+    except (NotImplementedError, RuntimeError):
+        # Windows / restricted environments: leave default SIGINT behaviour.
+        pass
 
     async def bootstrap() -> None:
         await engine.start()

@@ -105,6 +105,8 @@ class HookRunner:
         return result
 
     async def _side(self, command: str, cwd: str | None) -> None:
+        """Best-effort side command; always kill on timeout or cancel."""
+        proc = None
         try:
             proc = await asyncio.create_subprocess_shell(
                 command,
@@ -112,7 +114,27 @@ class HookRunner:
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
                 env=os.environ.copy(),
+                start_new_session=True,
             )
             await asyncio.wait_for(proc.wait(), timeout=30)
-        except (OSError, asyncio.TimeoutError):
+        except asyncio.TimeoutError:
+            if proc is not None and proc.returncode is None:
+                try:
+                    os.killpg(os.getpgid(proc.pid), 9)
+                except (ProcessLookupError, PermissionError, OSError):
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
+        except asyncio.CancelledError:
+            if proc is not None and proc.returncode is None:
+                try:
+                    os.killpg(os.getpgid(proc.pid), 9)
+                except (ProcessLookupError, PermissionError, OSError):
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
+            raise
+        except OSError:
             pass

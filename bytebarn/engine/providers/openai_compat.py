@@ -5,6 +5,7 @@ Covers OpenAI, LM Studio, Ollama, OpenRouter, Groq, ... via base_url.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any, AsyncIterator
 
@@ -78,6 +79,16 @@ class OpenAICompatProvider:
         self._client = client or openai.AsyncOpenAI(
             api_key=api_key or "not-needed", base_url=base_url, default_headers=headers
         )
+
+    async def close(self) -> None:
+        client = getattr(self, "_client", None)
+        if client is None:
+            return
+        aclose = getattr(client, "close", None) or getattr(client, "aclose", None)
+        if aclose is not None:
+            result = aclose()
+            if asyncio.iscoroutine(result):
+                await result
 
     async def stream(self, req: ModelRequest) -> AsyncIterator[Event]:
         kwargs: dict[str, Any] = dict(

@@ -1274,6 +1274,9 @@ async def test_crew_stage_resizable_and_persisted(qapp, tmp_path):
         window = MainWindow(engine)
         window.resize(1100, 800)
         window.show()
+        qapp.processEvents()
+        # known splitter total so restore can apply 240 without clamping
+        window.stage_split.setSizes([560, 240])
         # stage appears (goal starts) -> persisted height restored
         window.crew_stage.setVisible(True)
         window._restore_stage_height()
@@ -1286,9 +1289,89 @@ async def test_crew_stage_resizable_and_persisted(qapp, tmp_path):
         window.stage_split.setSizes([500, 300])
         window._save_stage_height()
         config = json.loads((gdir / "config.json").read_text())
-        assert config["stage_height"] == window.stage_split.sizes()[1] > 0
+        # 300 is within 60% of 800 → persisted as-is
+        assert config["stage_height"] == 300
     finally:
         await engine.stop()
+
+
+async def test_restore_stage_height_clamps_to_splitter_total(qapp, tmp_path):
+    """A huge saved stage_height must not grow the window past the splitter."""
+    from bytebarn.app.main_window import MainWindow
+    from bytebarn.engine.facade import Engine
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    gdir = tmp_path / "g"
+    gdir.mkdir()
+    (gdir / "config.json").write_text(json.dumps(
+        {"model": "fake/m", "stage_height": 5000}))
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=gdir)
+    await engine.start()
+    try:
+        window = MainWindow(engine)
+        window.resize(900, 700)
+        window.show()
+        qapp.processEvents()
+        window.crew_stage.setVisible(True)
+        # establish a known total; Qt may nudge for min sizes, so re-read
+        window.stage_split.setSizes([500, 100])
+        qapp.processEvents()
+        total_before = sum(window.stage_split.sizes())
+        assert total_before > 200
+
+        window._restore_stage_height()
+        sizes = window.stage_split.sizes()
+        # must not invent extra pixels that would grow the window
+        assert sum(sizes) <= total_before
+        assert sizes[1] <= total_before - 120
+        assert sizes[1] < 5000  # the absurd saved value was clamped
+
+        # save must also clamp absurd proportions
+        window.stage_split.setSizes([100, 500])
+        qapp.processEvents()
+        save_total = sum(window.stage_split.sizes())
+        window._save_stage_height()
+        config = json.loads((gdir / "config.json").read_text())
+        assert config["stage_height"] <= max(200, int(save_total * 0.6))
+        assert config["stage_height"] > 0
+    finally:
+        await engine.stop()
+
+
+async def test_initial_geometry_fits_available_screen(qapp, tmp_path):
+    from PySide6.QtWidgets import QApplication
+
+    from bytebarn.app.main_window import MainWindow
+    from bytebarn.engine.facade import Engine
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    gdir = tmp_path / "g"
+    gdir.mkdir()
+    (gdir / "config.json").write_text(json.dumps({"model": "fake/m"}))
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=gdir)
+    await engine.start()
+    try:
+        window = MainWindow(engine)
+        screen = window.screen() or QApplication.primaryScreen()
+        assert screen is not None
+        avail = screen.availableGeometry()
+        # initial size is clamped inside available geometry (with margin)
+        assert window.width() <= max(640, avail.width() - 40)
+        assert window.height() <= max(480, avail.height() - 40)
+        assert window.width() <= avail.width()
+        assert window.height() <= avail.height()
+    finally:
+        await engine.stop()
+
+
+def test_welcome_minimum_height_fits_short_screens(qapp):
+    from bytebarn.app.transcript import _Welcome
+
+    w = _Welcome()
+    assert w.minimumHeight() <= 220
+    w.close()
 
 
 async def test_load_live_models_preserves_selection(qapp, tmp_path):

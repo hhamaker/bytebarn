@@ -8,6 +8,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
@@ -16,6 +17,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -70,9 +72,12 @@ class MainWindow(QMainWindow):
         self._session_stack: list[str] = []  # for back-navigation into subagents
         self._running: set[str] = set()
         self._activity: str = ""  # live run detail for the open session
+        self._shutting_down = False
+        self._bg_tasks: set[asyncio.Task] = set()
+        self._tasks: list[asyncio.Task] = []
 
         self.setWindowTitle("ByteBarn")
-        self.resize(1200, 800)
+        self._clamp_initial_geometry(1200, 800)
 
         # widgets
         self.session_list = SessionList()
@@ -212,6 +217,11 @@ class MainWindow(QMainWindow):
 
         # status bar
         self.status_project = QLabel(str(engine.project_dir))
+        self.status_project.setMinimumWidth(0)
+        self.status_project.setMaximumWidth(400)
+        self.status_project.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.status_project.setToolTip(str(engine.project_dir))
         self.status_git = QLabel("")
         self.status_cost = QLabel("")
         self.mode_combo = QComboBox()
@@ -1191,6 +1201,7 @@ class MainWindow(QMainWindow):
         self.header_meta.setText(meta)
         directory = session.directory or str(self.engine.project_dir)
         self.status_project.setText(directory)
+        self.status_project.setToolTip(directory)
         # an isolated worktree's directory name is the raw session id, which
         # says nothing — show the branch short-name, as the sidebar row does
         branch = getattr(session, "worktree_branch", "") or ""
@@ -1662,11 +1673,48 @@ class MainWindow(QMainWindow):
         out, _ = await proc.communicate()
         self.status_git.setText(out.decode().strip() or "no git")
 
+    def _clamp_initial_geometry(self, width: int, height: int) -> None:
+        """Size and center the window within the current screen's available area."""
+        screen = None
+        try:
+            screen = self.screen()
+        except Exception:
+            screen = None
+        if screen is None:
+            app = QApplication.instance()
+            screen = app.primaryScreen() if app is not None else None
+        if screen is None:
+            self.resize(width, height)
+            return
+        avail = screen.availableGeometry()
+        max_w = max(640, avail.width() - 40)
+        max_h = max(480, avail.height() - 40)
+        w = min(width, max_w)
+        h = min(height, max_h)
+        self.resize(w, h)
+        x = avail.x() + max(0, (avail.width() - w) // 2)
+        y = avail.y() + max(0, (avail.height() - h) // 2)
+        self.move(x, y)
+
     def _restore_stage_height(self) -> None:
-        """Give the crew stage its remembered share when it appears."""
-        stage_h = int((self.engine.config.model_extra or {}).get("stage_height") or 164)
-        total = sum(self.stage_split.sizes()) or 800
-        self.stage_split.setSizes([max(120, total - stage_h), stage_h])
+        """Give the crew stage its remembered share when it appears.
+
+        Keep sizes within the current splitter total so Qt cannot grow the
+        main window past the screen (e.g. tall stage_height from another
+        display, or while maximized/fullscreen).
+        """
+        raw = int((self.engine.config.model_extra or {}).get("stage_height") or 164)
+        total = sum(self.stage_split.sizes())
+        if total <= 0:
+            total = max(self.stage_split.height(), 0)
+        if total <= 0:
+            return
+        stage_min = max(self.crew_stage.minimumHeight(), 80)
+        transcript_floor = 120
+        stage_h = max(stage_min, min(raw, total - transcript_floor))
+        if stage_h < stage_min:
+            stage_h = min(stage_min, max(0, total // 3))
+        self.stage_split.setSizes([max(0, total - stage_h), stage_h])
 
     def _stage_resized(self, _pos: int = 0, _index: int = 0) -> None:
         """Debounced persist of the crew-stage pane height."""
@@ -1682,12 +1730,17 @@ class MainWindow(QMainWindow):
         from ..engine.config import patch_config_file
 
         sizes = self.stage_split.sizes()
-        if len(sizes) == 2 and sizes[1] > 0:
-            try:
-                patch_config_file(self.engine.global_dir / "config.json",
-                                  {"stage_height": int(sizes[1])})
-            except Exception:
-                pass
+        if len(sizes) < 2 or sizes[1] <= 0:
+            return
+        total = sum(sizes)
+        stage_h = int(sizes[1])
+        if total > 0:
+            stage_h = min(stage_h, max(200, int(total * 0.6)))
+        try:
+            patch_config_file(self.engine.global_dir / "config.json",
+                              {"stage_height": stage_h})
+        except Exception:
+            pass
 
     def _mode_changed(self, index: int) -> None:
         # set_session_mode also releases permission prompts already waiting
@@ -1830,6 +1883,8 @@ class MainWindow(QMainWindow):
                 "ByteBarn was updated. Restart now?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
             if confirm == QMessageBox.Yes:
+                # stop is idempotent; flag so _fire drops any late UI work
+                self._shutting_down = True
                 await self.engine.stop()
                 updater.restart()
 
@@ -1843,20 +1898,71 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ util
 
-    @staticmethod
-    def _fire(coro) -> None:
+    def _fire(self, coro) -> None:
+        """Schedule a coroutine; track it so shutdown can cancel+drain."""
+        if getattr(self, "_shutting_down", False):
+            coro.close()
+            return
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:  # no loop (widget-only tests): drop silently
             coro.close()
             return
-        loop.create_task(coro)
+        task = loop.create_task(coro)
+        tasks = getattr(self, "_bg_tasks", None)
+        if tasks is None:
+            self._bg_tasks = set()
+            tasks = self._bg_tasks
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
 
     def closeEvent(self, event) -> None:
-        for task in getattr(self, "_tasks", []):
-            task.cancel()
-        asyncio.ensure_future(self.engine.stop())
+        if getattr(self, "_shutting_down", False):
+            # second close after shutdown finished — allow destroy
+            event.accept()
+            super().closeEvent(event)
+            return
+        event.ignore()  # keep window alive until async shutdown completes
+        self._shutting_down = True
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # no loop — best effort sync path
+            event.accept()
+            super().closeEvent(event)
+            return
+        loop.create_task(self._shutdown())
+
+    async def _shutdown(self) -> None:
+        """Cancel UI tasks, stop engine, then quit the app."""
+        # Cancel long-lived bootstrap tasks and fire-and-forget background work
+        tasks = list(getattr(self, "_tasks", []) or [])
+        tasks.extend(list(getattr(self, "_bg_tasks", set()) or set()))
+        for t in tasks:
+            if t is not None and not t.done():
+                t.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Best-effort tear-down of the lazy WebEngine preview (can hold the
+        # process open after the window is gone if left running).
+        preview = getattr(self, "preview", None)
+        if preview is not None:
+            shutdown = getattr(preview, "shutdown", None)
+            if callable(shutdown):
+                try:
+                    shutdown()
+                except Exception:
+                    pass
+
+        # Engine stop drains runs/MCP/providers/store
+        try:
+            await asyncio.wait_for(self.engine.stop(), timeout=8.0)
+        except Exception:
+            pass
+
         from PySide6.QtWidgets import QApplication
-        QApplication.instance().quit()
-        event.accept()
-        super().closeEvent(event)
+
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()

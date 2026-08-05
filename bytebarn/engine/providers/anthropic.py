@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, AsyncIterator
 
 import anthropic
@@ -60,6 +61,16 @@ class AnthropicProvider:
 
     def __init__(self, api_key: str | None = None, base_url: str | None = None, client: Any = None):
         self._client = client or anthropic.AsyncAnthropic(api_key=api_key, base_url=base_url)
+
+    async def close(self) -> None:
+        client = getattr(self, "_client", None)
+        if client is None:
+            return
+        aclose = getattr(client, "close", None) or getattr(client, "aclose", None)
+        if aclose is not None:
+            result = aclose()
+            if asyncio.iscoroutine(result):
+                await result
 
     async def stream(self, req: ModelRequest) -> AsyncIterator[Event]:
         tools = [

@@ -302,7 +302,7 @@ class _Welcome(QWidget):
         import random
 
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.setMinimumHeight(380)
+        self.setMinimumHeight(200)  # was 380 — keep short screens usable
         rng = random.Random(7)  # deterministic sky
         self._stars = [(rng.random(), rng.random() * 0.62, rng.choice((1, 1, 2)),
                         rng.random() * 6.28) for _ in range(70)]

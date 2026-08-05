@@ -157,6 +157,29 @@ def prepare_sandboxed_command(
     )
 
 
+async def _kill_process_group(proc: asyncio.subprocess.Process | None) -> None:
+    """SIGKILL the process group (or the process) if it is still running.
+
+    The kill itself is synchronous (runs even when a cancel is pending once we
+    enter this coroutine); waiting for exit is best-effort. ``CancelledError``
+    from the wait is re-raised so callers still observe cancellation — the
+    outer ``finally`` also killpg's as belt-and-suspenders.
+    """
+    if proc is None or proc.returncode is not None:
+        return
+    try:
+        os.killpg(os.getpgid(proc.pid), 9)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.kill()
+        except (ProcessLookupError, OSError):
+            pass
+    try:
+        await asyncio.wait_for(proc.wait(), 1.0)
+    except (asyncio.TimeoutError, ProcessLookupError, OSError):
+        pass
+
+
 async def run_command(
     command: str,
     cwd: Path,
@@ -170,9 +193,15 @@ async def run_command(
     """Run a shell command; optionally under OS sandbox.
 
     Returns (exit_code, output, backend_used).
+
+    The process group is always killed on timeout, abort, or cancellation so
+    long-running bash children cannot outlive the caller.
     """
     conf = conf or SandboxConfig()
     profile_path = None
+    proc: asyncio.subprocess.Process | None = None
+    wait_task: asyncio.Future[bytes] | None = None
+    abort_task: asyncio.Future[bool] | None = None
     try:
         if sandbox:
             prepared = prepare_sandboxed_command(command, cwd, conf)
@@ -198,28 +227,64 @@ async def run_command(
 
         wait_task = asyncio.ensure_future(_wait())
         abort_task = asyncio.ensure_future(abort.wait()) if abort else None
-        pending = {wait_task} | ({abort_task} if abort_task else set())
-        try:
-            done, _ = await asyncio.wait(
-                pending, timeout=timeout, return_when=asyncio.FIRST_COMPLETED,
-            )
-        finally:
-            if abort_task:
-                abort_task.cancel()
+        tasks: set[asyncio.Future] = {wait_task}
+        if abort_task is not None:
+            tasks.add(abort_task)
 
-        if wait_task not in done:
+        try:
+            done, _pending = await asyncio.wait(
+                tasks, timeout=timeout, return_when=asyncio.FIRST_COMPLETED,
+            )
+            timed_out = wait_task not in done and (
+                abort_task is None or abort_task not in done
+            )
+            aborted = bool(
+                abort_task is not None
+                and abort_task in done
+                and wait_task not in done
+            )
+            if timed_out or aborted:
+                await _kill_process_group(proc)
+                try:
+                    out = await asyncio.wait_for(
+                        asyncio.shield(wait_task), 1.0,
+                    )
+                except asyncio.TimeoutError:
+                    if not wait_task.done():
+                        wait_task.cancel()
+                    out = b""
+                except Exception:
+                    if not wait_task.done():
+                        wait_task.cancel()
+                    out = b""
+                reason = (
+                    "aborted" if aborted else f"timed out after {timeout}s"
+                )
+                text = out.decode(errors="replace") if out else ""
+                return 1, f"{text}\n[command {reason}]", backend
+
+            out = wait_task.result()
+            code = proc.returncode if proc.returncode is not None else 1
+            return code, out.decode(errors="replace"), backend
+        except asyncio.CancelledError:
+            # Propagate cancel after killing children — CancelledError is a
+            # BaseException on 3.12+, so it is not caught by `except Exception`.
+            await _kill_process_group(proc)
+            if wait_task is not None and not wait_task.done():
+                wait_task.cancel()
+            raise
+    finally:
+        if abort_task is not None and not abort_task.done():
+            abort_task.cancel()
+        # Belt-and-suspenders: never leave an orphan process group behind.
+        if proc is not None and proc.returncode is None:
             try:
                 os.killpg(os.getpgid(proc.pid), 9)
             except (ProcessLookupError, PermissionError, OSError):
-                pass
-            output = (await wait_task).decode(errors="replace")
-            reason = "aborted" if (abort_task and abort_task in done) else f"timed out after {timeout}s"
-            return 1, f"{output}\n[command {reason}]", backend
-
-        output = wait_task.result().decode(errors="replace")
-        code = proc.returncode if proc.returncode is not None else 1
-        return code, output, backend
-    finally:
+                try:
+                    proc.kill()
+                except (ProcessLookupError, OSError):
+                    pass
         if profile_path is not None:
             try:
                 profile_path.unlink(missing_ok=True)

@@ -65,6 +65,7 @@ class Engine:
         # prefer this over the static curated recipes in known.py
         self._live_models: dict[str, list[str]] = {}
         self._live_model_fetches: dict[str, asyncio.Task] = {}
+        self._stopped = False
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -80,16 +81,56 @@ class Engine:
             pass
 
     async def stop(self) -> None:
-        """Cancel all running sessions and close the store."""
-        for handle in self._runs.values():
+        """Abort all runs, drain background work, close MCP/providers/store.
+
+        Idempotent — safe to call more than once.
+        """
+        if getattr(self, "_stopped", False):
+            return
+        self._stopped = True
+
+        # Abort every run (sets abort Event so bash killpg fires) + drop queues
+        for session_id, handle in list(self._runs.items()):
+            handle.queued.clear()
+            handle.abort.set()
             if handle.task and not handle.task.done():
                 handle.task.cancel()
+
+        # Cancel live model fetches
+        for task in list(self._live_model_fetches.values()):
+            if not task.done():
+                task.cancel()
+        self._live_model_fetches.clear()
+
+        # Unblock anyone waiting on permission/question dialogs
+        for request_id, future in list(self._pending.items()):
+            if not future.done():
+                future.cancel()
+        self._pending.clear()
+        self._pending_permissions.clear()
+
+        # Drain run tasks so runner finally blocks (store writes) finish
+        # BEFORE we close the store.
+        run_tasks = [
+            h.task for h in self._runs.values()
+            if h.task is not None
+        ]
+        if run_tasks:
+            await asyncio.gather(*run_tasks, return_exceptions=True)
+
         await self.mcp.stop()
+
+        # Close HTTP clients so connection pools don't delay process exit
+        close = getattr(self.providers, "close", None)
+        if close is not None:
+            await close()
+
         await self.store.close()
 
     def reload_config(self) -> None:
         """Re-read config layers and rebuild providers/agents/commands."""
         self.config = load_config(self.project_dir, self.global_dir)
+        old_providers = self.providers
         self.providers = ProviderRegistry(self.config, self.global_dir)
         self.agents = AgentRegistry(self.config, self.project_dir, self.global_dir)
         self.commands.reload()
@@ -102,6 +143,8 @@ class Engine:
         self._live_model_fetches.clear()
         try:  # reconnect MCP servers with the fresh config
             loop = asyncio.get_running_loop()
+            # best-effort close of old HTTP clients
+            loop.create_task(old_providers.close())
             asyncio.ensure_future(self.mcp.restart(self.config))
             loop.create_task(self.refresh_all_models())
         except RuntimeError:
@@ -623,6 +666,8 @@ class Engine:
         return command.render(args.strip()), command.agent, command.model
 
     def _start_run(self, session: Session, agent_override: str | None = None) -> None:
+        if getattr(self, "_stopped", False):
+            return
         handle = self._runs.get(session.id) or RunHandle()
         handle.abort = asyncio.Event()
         handle.agent_override = agent_override
@@ -631,6 +676,8 @@ class Engine:
 
     async def on_run_finished(self, session_id: str) -> None:
         """Promote a queued prompt, if any; else advance the goal queue."""
+        if getattr(self, "_stopped", False):
+            return
         handle = self._runs.get(session_id)
         if not handle or not handle.queued:
             goal = await self.store.goal_for_session(session_id)
@@ -702,6 +749,8 @@ class Engine:
 
     async def _advance_goal_queue(self, project_id: str) -> None:
         """Start the next pending goal unless one is already running."""
+        if getattr(self, "_stopped", False):
+            return
         if await self.store.running_goal(project_id) is not None:
             return
         goal = await self.store.next_pending_goal(project_id)

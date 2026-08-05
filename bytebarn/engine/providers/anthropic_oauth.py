@@ -13,6 +13,7 @@ rejects OAuth inference without it.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import secrets
@@ -135,8 +136,6 @@ class AnthropicOAuthProvider:
             default_headers={"anthropic-beta": OAUTH_BETA_HEADER},
         )
         self._inner = AnthropicProvider(client=self._client)
-        import asyncio
-
         self._refresh_lock = asyncio.Lock()
 
     async def _ensure_token(self) -> None:
@@ -155,6 +154,13 @@ class AnthropicOAuthProvider:
                 self._auth_store.set(self.name, new_record)
                 record = new_record
             self._client.auth_token = record["access"]
+
+    async def close(self) -> None:
+        close = getattr(self._inner, "close", None)
+        if close is not None:
+            result = close()
+            if asyncio.iscoroutine(result):
+                await result
 
     async def stream(self, req):
         await self._ensure_token()

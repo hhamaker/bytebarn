@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from ..auth import AuthStore
@@ -117,6 +118,20 @@ class ProviderRegistry:
             raise ValueError(f"model must be 'provider/id', got {model!r}")
         provider_name, model_id = model.split("/", 1)
         return self.provider(provider_name), model_id, model_info(model_id, self.extra_catalog)
+
+    async def close(self) -> None:
+        """Close all cached provider clients (HTTP pools). Idempotent."""
+        for prov in list(self._providers.values()):
+            close = getattr(prov, "close", None)
+            if close is None:
+                continue
+            try:
+                result = close()
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception:
+                pass
+        self._providers.clear()
 
 
 def _make_bedrock(reg: "ProviderRegistry"):

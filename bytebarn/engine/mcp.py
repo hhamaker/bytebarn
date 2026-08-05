@@ -275,12 +275,17 @@ class MCPManager:
         for conn in self._connections:
             conn.stop_event.set()
         for conn in self._connections:
-            if conn.task is not None:
-                try:
-                    await asyncio.wait_for(conn.task, 5)
-                except (asyncio.TimeoutError, Exception):
-                    if conn.task and not conn.task.done():
-                        conn.task.cancel()
+            if conn.task is None:
+                continue
+            try:
+                await asyncio.wait_for(conn.task, 5)
+            except (asyncio.TimeoutError, Exception):
+                if conn.task and not conn.task.done():
+                    conn.task.cancel()
+                    try:
+                        await asyncio.wait_for(conn.task, 1.0)
+                    except (asyncio.TimeoutError, Exception):
+                        pass
         self._connections = []
 
     async def restart(self, config: Any) -> None:
