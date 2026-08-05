@@ -869,3 +869,34 @@ async def test_bedrock_converse_routes_non_claude_models():
     assert captured["system"] == [{"text": "be brief"}]
     assert captured["toolConfig"]["tools"][0]["toolSpec"]["name"] == "read"
     assert captured["inferenceConfig"]["maxTokens"] == 512
+
+
+async def test_refresh_all_models_warms_every_connected_provider(
+    tmp_path, real_refresh_all_models
+):
+    """Engine.start's warm-up is what keeps pickers off the curated lists.
+
+    tests/conftest.py patches the automatic call out so the suite makes no
+    network connections; the fixture hands back the original, which is the
+    only way this behaviour gets any coverage at all.
+    """
+    from bytebarn.engine.facade import Engine
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    eng = Engine(proj, db_path=tmp_path / "crew.db", global_dir=tmp_path / "g")
+    eng.providers.auth.set("groq", {"type": "api", "key": "g"})
+
+    asked: list[str] = []
+
+    async def _record(name, force=True):
+        asked.append(name)
+        return ["m"]
+
+    eng.list_models = _record
+    await real_refresh_all_models(eng)
+
+    assert "groq" in asked
+    # keyless local services count as connected, which is exactly why the
+    # automatic call had to be silenced in tests
+    assert {"ollama", "lmstudio"} <= set(asked)
