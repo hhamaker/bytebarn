@@ -21,6 +21,13 @@ def _default_shell() -> str:
     return os.environ.get("SHELL") or "/bin/zsh"
 
 
+def _set_winsize(fd: int, rows: int, cols: int) -> None:
+    rows = max(1, int(rows))
+    cols = max(1, int(cols))
+    winsize = struct.pack("HHHH", rows, cols, 0, 0)
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
+
+
 @dataclass
 class PtySession:
     """One interactive local shell attached to a PTY master fd."""
@@ -33,9 +40,12 @@ class PtySession:
     proc: asyncio.subprocess.Process
     status: str = "running"
     exit_code: int | None = None
+    rows: int = 24
+    cols: int = 80
     _reader_task: asyncio.Task | None = field(default=None, repr=False)
     _on_data: Callable[[str], None] | None = field(default=None, repr=False)
     _on_exit: Callable[[int | None], None] | None = field(default=None, repr=False)
+    _closed: bool = field(default=False, repr=False)
 
     async def start_reader(
         self,
@@ -44,28 +54,65 @@ class PtySession:
     ) -> None:
         self._on_data = on_data
         self._on_exit = on_exit
+        # Non-blocking master + asyncio reader avoids executor thrash and
+        # delivers bytes as soon as the kernel has them.
+        try:
+            flags = fcntl.fcntl(self.master_fd, fcntl.F_GETFL)
+            fcntl.fcntl(self.master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        except OSError:
+            pass
         loop = asyncio.get_running_loop()
         self._reader_task = loop.create_task(self._read_loop())
 
     async def _read_loop(self) -> None:
         loop = asyncio.get_running_loop()
+        fd = self.master_fd
         try:
-            while True:
+            while not self._closed:
                 try:
-                    data = await loop.run_in_executor(
-                        None, lambda: os.read(self.master_fd, 4096))
+                    data = os.read(fd, 8192)
+                except BlockingIOError:
+                    fut: asyncio.Future = loop.create_future()
+
+                    def _ready(f=fut) -> None:
+                        if not f.done():
+                            f.set_result(None)
+
+                    try:
+                        loop.add_reader(fd, _ready)
+                    except (OSError, ValueError):
+                        # fd gone
+                        break
+                    try:
+                        await f
+                    finally:
+                        try:
+                            loop.remove_reader(fd)
+                        except (OSError, ValueError):
+                            pass
+                    continue
                 except OSError as exc:
-                    if exc.errno in (errno.EIO, errno.EBADF):
+                    if exc.errno in (errno.EIO, errno.EBADF, errno.EAGAIN):
+                        if exc.errno == errno.EAGAIN:
+                            await asyncio.sleep(0.01)
+                            continue
                         break
                     raise
                 if not data:
                     break
                 text = data.decode("utf-8", errors="replace")
                 if self._on_data:
-                    self._on_data(text)
+                    try:
+                        self._on_data(text)
+                    except Exception:
+                        pass
         except asyncio.CancelledError:
             pass
         finally:
+            try:
+                loop.remove_reader(fd)
+            except (OSError, ValueError):
+                pass
             code = self.proc.returncode
             if code is None:
                 try:
@@ -81,25 +128,47 @@ class PtySession:
                     pass
 
     def write(self, data: str | bytes) -> None:
-        if self.status != "running":
+        if self.status != "running" or self._closed:
             return
         raw = data.encode("utf-8") if isinstance(data, str) else data
         try:
-            os.write(self.master_fd, raw)
+            # write may short; loop for large pastes
+            view = memoryview(raw)
+            while view:
+                n = os.write(self.master_fd, view)
+                if n <= 0:
+                    break
+                view = view[n:]
         except OSError:
             pass
 
     def resize(self, rows: int, cols: int) -> None:
-        if self.status != "running" or rows < 1 or cols < 1:
+        if self.status != "running" or self._closed:
             return
+        rows = max(1, int(rows))
+        cols = max(1, int(cols))
+        if rows == self.rows and cols == self.cols:
+            return
+        self.rows = rows
+        self.cols = cols
         try:
-            winsize = struct.pack("HHHH", rows, cols, 0, 0)
-            fcntl.ioctl(self.master_fd, termios.TIOCSWINSZ, winsize)
-            os.kill(self.pid, signal.SIGWINCH)
+            _set_winsize(self.master_fd, rows, cols)
+            try:
+                os.kill(self.pid, signal.SIGWINCH)
+            except (ProcessLookupError, OSError):
+                pass
         except (OSError, ProcessLookupError):
             pass
 
     async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        loop = asyncio.get_running_loop()
+        try:
+            loop.remove_reader(self.master_fd)
+        except (OSError, ValueError):
+            pass
         if self._reader_task and not self._reader_task.done():
             self._reader_task.cancel()
             try:
@@ -134,21 +203,46 @@ async def spawn_shell(
     cwd: str | Path | None = None,
     title: str = "",
     shell: str | None = None,
+    rows: int = 24,
+    cols: int = 80,
 ) -> PtySession:
-    """Open a PTY and spawn the user shell."""
+    """Open a PTY and spawn the user shell with a sensible winsize."""
     shell = shell or _default_shell()
     work = str(Path(cwd or Path.home()).expanduser())
+    rows = max(1, rows)
+    cols = max(1, cols)
     master, slave = os.openpty()
-    # Leave master blocking; reader uses executor.
     try:
+        _set_winsize(slave, rows, cols)
+        # Also set on master so readers agree.
+        try:
+            _set_winsize(master, rows, cols)
+        except OSError:
+            pass
+        env = {
+            **os.environ,
+            "TERM": "xterm-256color",
+            "COLORTERM": "truecolor",
+            "LINES": str(rows),
+            "COLUMNS": str(cols),
+        }
+        # Avoid nested-shell oddities if ByteBarn itself was launched from a
+        # weird TERM (e.g. dumb under some launchers).
+        env.pop("TERMINFO_DIRS", None)
+        # Login + interactive so PATH matches Terminal.app (.zprofile / .bash_profile).
+        base = os.path.basename(shell)
+        if base in ("bash", "zsh", "sh", "fish"):
+            argv = [shell, "-il"]
+        else:
+            argv = [shell]
         proc = await asyncio.create_subprocess_exec(
-            shell,
+            *argv,
             stdin=slave,
             stdout=slave,
             stderr=slave,
             cwd=work,
             start_new_session=True,
-            env={**os.environ, "TERM": "xterm-256color"},
+            env=env,
         )
     finally:
         try:
@@ -162,4 +256,6 @@ async def spawn_shell(
         pid=proc.pid or 0,
         master_fd=master,
         proc=proc,
+        rows=rows,
+        cols=cols,
     )

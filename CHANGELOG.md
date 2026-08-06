@@ -5,6 +5,17 @@ All notable changes to ByteBarn are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Terminal Manager actually works as a terminal.** Local shells now use a
+  real cell-grid VT emulator (colors, cursor addressing, clear, alt screen,
+  scrollback) instead of dumping stripped ANSI into a text edit. PTY winsize
+  tracks the widget, input covers arrows/Ctrl/function keys, and the reader
+  uses non-blocking `add_reader` instead of executor thrash. Backend tees
+  (Claude Code) stay on a plain log view.
+
 ## [0.3.5] — 2026-08-05
 
 Package version alignment: `pyproject.toml` now reports **0.3.5** so editable
