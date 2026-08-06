@@ -109,6 +109,9 @@ class MainWindow(QMainWindow):
         self.workspace.back_requested.connect(self._show_all_projects)
         self.workspace.session_selected.connect(self._open_session)
         self.workspace.new_chat.connect(self._prompt_new_session)
+        self.workspace.new_code_session.connect(
+            lambda pid: self._fire(self._new_session(
+                project_id=pid or None, agent="orchestrator")))
         self.workspace.rename_session.connect(self._rename_session)
         self.workspace.delete_session.connect(
             lambda sid: self._fire(self._delete_session(sid)))
@@ -137,8 +140,8 @@ class MainWindow(QMainWindow):
         self.dir_button.setFlat(True)
         self.dir_button.setToolTip("Working directory for this session — click to change")
         self.dir_button.clicked.connect(self._pick_directory)
-        header = QWidget()
-        header_layout = QHBoxLayout(header)
+        self.header = QWidget()
+        header_layout = QHBoxLayout(self.header)
         header_layout.setContentsMargins(16, 8, 16, 4)
         header_layout.setSpacing(8)
         header_layout.addWidget(self.back_button)
@@ -224,7 +227,7 @@ class MainWindow(QMainWindow):
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(2)
-        right_layout.addWidget(header)
+        right_layout.addWidget(self.header)
         right_layout.addWidget(self.search_bar)
         right_layout.addWidget(self.mid_split, 1)
         right_layout.addWidget(self.todo_strip)
@@ -251,8 +254,24 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setHandleWidth(6)
-        self.setCentralWidget(splitter)
         self._main_split = splitter
+
+        # nav rail: fixed icon column left of the sidebar/content splitter —
+        # the Projects / Chat / Code / Terminal spine of the shell
+        from .nav_rail import NavRail
+
+        self.nav_rail = NavRail()
+        self.nav_rail.view_selected.connect(self._set_view)
+        self.nav_rail.tool_selected.connect(self._open_tool)
+        self._current_view = "chat"
+        self._pre_terminal_state: dict | None = None
+        central = QWidget()
+        central_layout = QHBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(self.nav_rail)
+        central_layout.addWidget(splitter, 1)
+        self.setCentralWidget(central)
 
         # status bar
         self.status_project = QLabel(str(engine.project_dir))
@@ -288,18 +307,6 @@ class MainWindow(QMainWindow):
             "Ask: confirm risky tools · Full-auto: no prompts. /plan enters Plan.")
         # placeholder cue if we restored Plan from config
         self._update_plan_mode_chrome()
-        providers_button = QPushButton("⚡ providers")
-        providers_button.setFlat(True)
-        providers_button.setToolTip("Connect LLM providers (API keys, web login, local servers)")
-        providers_button.clicked.connect(self._open_providers)
-        agents_button = QPushButton("🐾 agents")
-        agents_button.setFlat(True)
-        agents_button.setToolTip("Manage agents: models, prompts, tools, colors")
-        agents_button.clicked.connect(self._open_agent_editor)
-        settings_button = QPushButton("⚙ settings")
-        settings_button.setFlat(True)
-        settings_button.setToolTip("Default models, permissions, theme")
-        settings_button.clicked.connect(self._open_settings)
         self.ui_toggle = QPushButton("✨ ui")
         self.ui_toggle.setFlat(True)
         self.ui_toggle.setToolTip(
@@ -331,11 +338,8 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self.context_meter)
         self.statusBar().addPermanentWidget(self.review_button)
         self.statusBar().addPermanentWidget(self.status_cost)
-        self.statusBar().addPermanentWidget(providers_button)
-        self.statusBar().addPermanentWidget(agents_button)
         self.statusBar().addPermanentWidget(self.mode_combo)
         self.statusBar().addPermanentWidget(self.ui_toggle)
-        self.statusBar().addPermanentWidget(settings_button)
         self._update_runtime_status()
 
         self._build_menus()
@@ -426,6 +430,18 @@ class MainWindow(QMainWindow):
         projects_menu.addSeparator()
         projects_menu.addAction(all_proj)
         projects_menu.addAction(this_proj)
+
+        view_menu = bar.addMenu("&View")
+        for label, key, view in (
+            ("Projects", "Ctrl+1", "projects"),
+            ("Chat", "Ctrl+2", "chat"),
+            ("Code", "Ctrl+3", "code"),
+            ("Terminal", "Ctrl+4", "terminal"),
+        ):
+            action = QAction(label, self)
+            action.setShortcut(QKeySequence(key))
+            action.triggered.connect(lambda _=False, v=view: self._set_view(v))
+            view_menu.addAction(action)
 
         session_menu = bar.addMenu("&Session")
         stop_action = QAction("Stop Run", self)
@@ -549,14 +565,92 @@ class MainWindow(QMainWindow):
         """Open a project's dedicated view (chats / goals / memory / agents)."""
         from . import theme
 
+        self._leave_terminal_view()
         theme.crossfade(self.sidebar, 1)
         self._fire(self.workspace.load(project_id))
+        if self._current_view not in ("chat", "code"):
+            self._current_view = "chat"
+        self.nav_rail.set_active(self._current_view)
 
     def _show_all_projects(self) -> None:
         from . import theme
 
+        self._leave_terminal_view()
+        self._current_view = "projects"
+        self.nav_rail.set_active("projects")
         theme.crossfade(self.sidebar, 0)
         self._fire(self._refresh_sessions())
+
+    # ------------------------------------------------------------------ views
+
+    def _set_view(self, view: str) -> None:
+        """Nav-rail navigation: Projects / Chat / Code / Terminal.
+
+        Chat and Code share the content column (transcript + prompt) and
+        differ in which workspace tab the sidebar leads with; Terminal
+        promotes the terminal manager to fill the content area."""
+        if view == "projects":
+            self._show_all_projects()
+            return
+
+        project_id = self.workspace.project_id or (
+            self.engine.project.id if self.engine.project else None)
+        if project_id is None:
+            self._show_all_projects()
+            return
+
+        if view == "terminal":
+            self._enter_terminal_view()
+            self._current_view = "terminal"
+            self.nav_rail.set_active("terminal")
+            return
+
+        self._leave_terminal_view()
+        self._current_view = view
+        self.nav_rail.set_active(view)
+        from . import theme
+
+        if self.sidebar.currentIndex() != 1 or self.workspace.project_id != project_id:
+            theme.crossfade(self.sidebar, 1)
+            self._fire(self.workspace.load(project_id))
+        # Chats tab fronts the chat view, Goals tab fronts the code view
+        self.workspace.tabs.setCurrentIndex(0 if view == "chat" else 1)
+
+    def _enter_terminal_view(self) -> None:
+        """Terminal fills the content column; chat chrome hides until we leave."""
+        if self._pre_terminal_state is not None:
+            return
+        self._pre_terminal_state = {
+            "sizes": self.mid_split.sizes(),
+            "panel_open": self.terminal_panel.isVisible(),
+            "prev_view": self._current_view,
+        }
+        for widget in (self.header, self.search_bar, self.content_split,
+                       self.todo_strip, self.prompt_bar):
+            widget.setVisible(False)
+        self.terminal_panel.setVisible(True)
+        self.terminal_panel.refresh_from_hub()
+
+    def _leave_terminal_view(self) -> None:
+        if self._pre_terminal_state is None:
+            return
+        state, self._pre_terminal_state = self._pre_terminal_state, None
+        for widget in (self.header, self.content_split,
+                       self.todo_strip, self.prompt_bar):
+            widget.setVisible(True)
+        self.terminal_panel.setVisible(state["panel_open"])
+        if state["panel_open"]:
+            self.mid_split.setSizes(state["sizes"])
+        else:
+            self.mid_split.setSizes([1, 0])
+
+    def _open_tool(self, tool: str) -> None:
+        if tool == "agents":
+            self._open_agent_editor()
+        elif tool == "providers":
+            self._open_providers()
+        elif tool == "settings":
+            self._open_settings()
 
     def _toggle_ui(self) -> None:
         """One-press switch: classic look <-> the Night Workshop overhaul."""
@@ -862,7 +956,7 @@ class MainWindow(QMainWindow):
 
     async def _new_session(
         self, directory: str | None = None, project_id: str | None = None,
-        isolated: bool = False,
+        isolated: bool = False, agent: str | None = None,
     ) -> None:
         """Create a session; with no explicit directory, inherit one from
         context: target project → current session → last used → project root.
@@ -891,9 +985,10 @@ class MainWindow(QMainWindow):
                 if not ok:
                     return
         self._remember_project(directory)
-        # Prefer the prompt-bar agent (and any model it pins, e.g. Claude Code).
-        agent_label = self.prompt_bar.agent_combo.currentText().strip()
-        agent = _AGENT_INTERNAL.get(agent_label, agent_label) or ""
+        if agent is None:
+            # Prefer the prompt-bar agent (and any model it pins, e.g. Claude Code).
+            agent_label = self.prompt_bar.agent_combo.currentText().strip()
+            agent = _AGENT_INTERNAL.get(agent_label, agent_label) or ""
         model = self._default_model()
         if agent:
             try:
@@ -1534,6 +1629,10 @@ class MainWindow(QMainWindow):
             self.content_split.setSizes([3, 2])
 
     def _toggle_terminal(self) -> None:
+        if self._pre_terminal_state is not None:
+            # full terminal view open — Ctrl+` returns to the previous view
+            self._set_view(self._pre_terminal_state.get("prev_view") or "chat")
+            return
         show = not self.terminal_panel.isVisible()
         if show:
             self._show_terminal()
@@ -1542,6 +1641,9 @@ class MainWindow(QMainWindow):
             self.mid_split.setSizes([1, 0])
 
     def _show_terminal(self) -> None:
+        if self._pre_terminal_state is not None:
+            self.terminal_panel.refresh_from_hub()
+            return  # already showing full-view
         self.terminal_panel.setVisible(True)
         self.terminal_panel.refresh_from_hub()
         sizes = self.mid_split.sizes()
@@ -1550,6 +1652,12 @@ class MainWindow(QMainWindow):
         self.mid_split.setSizes([max(200, total - term_h), term_h])
 
     def _on_terminal_closed(self) -> None:
+        if self._pre_terminal_state is not None:
+            # closing the full terminal view returns to the previous view
+            prev = self._pre_terminal_state.get("prev_view") or "chat"
+            self._pre_terminal_state["panel_open"] = False
+            self._set_view(prev)
+            return
         self.mid_split.setSizes([1, 0])
 
     def _preview_file(self, path: str) -> None:

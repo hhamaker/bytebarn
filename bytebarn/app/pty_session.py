@@ -84,7 +84,7 @@ class PtySession:
                         # fd gone
                         break
                     try:
-                        await f
+                        await fut
                     finally:
                         try:
                             loop.remove_reader(fd)

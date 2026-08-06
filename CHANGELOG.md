@@ -7,7 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Terminal splits, renames, and themes.** The Terminal Manager is now a
+  tiling surface: drag a terminal from the list (or a pane header) onto a
+  pane — edges split in that direction, the center swaps the pane's
+  terminal — or use the Split → / Split ↓ buttons to open a new shell in a
+  fresh pane. Terminals can be renamed (double-click, context menu, or pane
+  header), and each terminal can use its own color theme from ten built-ins
+  (Dark+, Night Barn, Solarized Dark/Light, Dracula, Nord, Gruvbox Dark,
+  Monokai, One Dark, Tokyo Night) via the pane's 🎨 menu; "Set current as
+  default" persists a default under the `terminal.theme` config key.
+- **Termius-style shell: a nav rail with Projects / Chat / Code / Terminal
+  views.** A fixed icon rail (⌘1–⌘4) now anchors navigation: pick a project,
+  then move between its chats, its goal runs (Code view, with a new
+  "+ New code session" button that starts an orchestrator session directly),
+  and a full-content Terminal view. Providers / agents / settings moved off
+  the status bar onto the rail; leaving the Terminal view restores the chat
+  layout exactly, including the bottom terminal pane state.
+
 ### Fixed
+
+- Icon buttons (pane ✕ / 🎨, panel close, search arrows, nav rail) were
+  invisible: the global button padding (14 px per side) exceeded their fixed
+  widths and clipped the glyph away. Flat buttons now use compact padding.
+- Moving a terminal between panes left an empty tile behind; the vacated
+  pane now closes, and Kill / Close (context menu or Delete key) remove the
+  terminal from the list and collapse its tile.
+- PTY read loop crashed with a `NameError` the moment a read would block,
+  killing interactive shells; it now awaits the readiness future it created.
 
 - **Terminal Manager actually works as a terminal.** Local shells now use a
   real cell-grid VT emulator (colors, cursor addressing, clear, alt screen,

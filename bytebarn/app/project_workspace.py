@@ -40,6 +40,7 @@ class ProjectWorkspace(QWidget):
     back_requested = Signal()
     session_selected = Signal(str)
     new_chat = Signal(str)          # project id
+    new_code_session = Signal(str)  # project id -> orchestrator session
     rename_session = Signal(str)
     delete_session = Signal(str)
     open_settings = Signal(str)     # project id -> ProjectDialog
@@ -114,6 +115,14 @@ class ProjectWorkspace(QWidget):
         w = QWidget()
         layout = QVBoxLayout(w)
         layout.setContentsMargins(0, 4, 0, 0)
+
+        new_code_btn = QPushButton("+ New code session")
+        new_code_btn.setToolTip(
+            "Start an orchestrator session now — it plans the goal and"
+            " delegates to the crew")
+        new_code_btn.clicked.connect(
+            lambda: self.new_code_session.emit(self.project_id))
+        layout.addWidget(new_code_btn)
 
         q_label = QLabel("<b>Queue</b> — goals run one after another;"
                          " walk away, get notified")

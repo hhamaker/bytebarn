@@ -24,6 +24,7 @@ MODERN_ACCENT = "#e5a458"       # lantern amber
 # -- token sets --------------------------------------------------------------
 
 _DARK_TOKENS = {
+    "rail": "#101217",          # nav rail — darkest of the three columns
     "bg": "#16181d",            # window canvas
     "surface": "#1b1e24",       # inputs, sidebar panels, composer
     "raised": "#232733",        # buttons, menus, hover surfaces
@@ -40,6 +41,7 @@ _DARK_TOKENS = {
 }
 
 _MODERN_TOKENS = {
+    "rail": "#100e12",          # nav rail — darkest of the three columns
     "bg": "#171519",            # warm charcoal room
     "surface": "#1d1a1f",
     "raised": "#272229",
@@ -56,6 +58,7 @@ _MODERN_TOKENS = {
 }
 
 _LIGHT_TOKENS = {
+    "rail": "#e9eaee",          # nav rail — one step darker than the canvas
     "bg": "#f7f7f8",
     "surface": "#ffffff",
     "raised": "#ececf0",
@@ -106,6 +109,31 @@ def _qss(t: dict[str, str]) -> str:
     return f"""
 QMainWindow, QDialog {{ background: {t['bg']}; }}
 
+/* -- nav rail ----------------------------------------------------------- */
+QWidget#navRail {{ background: {t['rail']}; border-right: 1px solid {t['border']}; }}
+QFrame#railRule {{ background: {t['border']}; border: none; }}
+QPushButton#railItem {{
+    background: transparent; border: none; border-radius: 11px;
+    color: {t['muted']}; font-size: 16px; padding: 0;
+    {mono}
+}}
+QPushButton#railItem:hover {{ background: {t['hover']}; color: {t['text']}; }}
+QPushButton#railItem:checked {{
+    background: {t['accent_soft']}; color: {t['text']};
+    border: 1px solid {t['accent']};
+}}
+QPushButton#railItem:focus {{ outline: none; background: {t['hover']}; }}
+QPushButton#railItem:checked:focus {{ background: {t['accent_soft']}; }}
+
+/* -- terminal panes ----------------------------------------------------- */
+QFrame#termPane {{ border: 1px solid {t['border']}; border-radius: 6px; }}
+QFrame#termPane[active="true"] {{ border-color: {t['accent']}; }}
+QWidget#paneHeader {{ background: {t['surface']}; }}
+QWidget#paneHeader QPushButton {{ padding: 0; color: {t['muted']}; }}
+QWidget#paneHeader QPushButton:hover {{ color: {t['text']}; }}
+QLabel#paneTitle {{ color: {t['muted']}; {mono} font-size: 11px; }}
+QFrame#termPane[active="true"] QLabel#paneTitle {{ color: {t['text']}; }}
+
 /* -- inputs & lists ---------------------------------------------------- */
 QPlainTextEdit, QLineEdit, QTreeWidget, QListWidget {{
     background: {t['surface']}; border: 1px solid {t['border']};
@@ -126,7 +154,8 @@ QPushButton {{
 }}
 QPushButton:hover {{ border-color: {t['accent']}; }}
 QPushButton:pressed {{ background: {t['hover']}; }}
-QPushButton:flat {{ background: transparent; border: none; color: {t['muted']}; }}
+QPushButton:flat {{ background: transparent; border: none; color: {t['muted']};
+    padding: 2px 4px; }}
 QPushButton:flat:hover {{ color: {t['accent']}; background: transparent; }}
 QPushButton#send {{
     background: {t['accent']}; border: none; color: {t['accent_ink']};

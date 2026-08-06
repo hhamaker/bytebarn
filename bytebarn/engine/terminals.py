@@ -11,7 +11,7 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .events import EventBus
@@ -158,6 +158,13 @@ class ProcessHub:
     def remove(self, terminal_id: str) -> None:
         """Forget a terminal entry (UI closed a finished backend)."""
         self._terms.pop(terminal_id, None)
+
+    def rename(self, terminal_id: str, title: str) -> None:
+        """User-facing rename; blank titles are ignored."""
+        buf = self._terms.get(terminal_id)
+        title = title.strip()
+        if buf is not None and title:
+            buf.info.title = title
 
     # -- internals -----------------------------------------------------------
 
