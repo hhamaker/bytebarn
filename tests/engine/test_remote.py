@@ -35,27 +35,19 @@ async def test_child_gets_a_controlling_terminal(tmp_path):
 
 
 async def test_password_read_from_dev_tty_is_answered(tmp_path):
-    """End-to-end shape of a real ssh login: prompt on /dev/tty, echo off."""
-    reader = tmp_path / "tty_ssh"
-    reader.write_text(
-        "#!/usr/bin/env python3\n"
-        "import sys, termios\n"
-        "tty = open('/dev/tty', 'r+')\n"
-        "tty.write(\"user@host's password: \"); tty.flush()\n"
-        "fd = tty.fileno()\n"
-        "old = termios.tcgetattr(fd); new = list(old)\n"
-        "new[3] &= ~termios.ECHO\n"
-        "termios.tcsetattr(fd, termios.TCSADRAIN, new)\n"
-        "line = tty.readline().rstrip('\\n')\n"
-        "termios.tcsetattr(fd, termios.TCSADRAIN, old)\n"
-        "tty.write('\\r\\nAUTH:' + ('ok' if line == 'hunter2' else 'bad') "
-        "+ '\\r\\n'); tty.flush()\n")
-    reader.chmod(reader.stat().st_mode | stat.S_IEXEC)
+    """The shape of a real ssh login: the prompt and the answer both go
+    through /dev/tty rather than stdin, which is what the missing
+    controlling terminal used to break."""
+    reader = _script(tmp_path, "tty_ssh", (
+        "printf \"user@host's password: \" > /dev/tty\n"
+        "read line < /dev/tty || exit 3\n"
+        'if [ "$line" = "hunter2" ]; then echo AUTH:ok; else echo AUTH:bad; fi\n'
+    ))
     code, output = await run_remote(
-        _host(PASSWORD_AUTH), "uptime", password="hunter2", argv=[str(reader)])
-    assert code == 0
+        _host(PASSWORD_AUTH), "uptime", password="hunter2", argv=[reader])
+    assert code == 0, output
     assert "AUTH:ok" in output
-    assert "hunter2" not in output
+    assert "hunter2" not in output   # redacted even when the tty echoes
 
 
 async def test_runs_and_captures_output(tmp_path):
