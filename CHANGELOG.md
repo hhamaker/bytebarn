@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Icon buttons (pane ✕ / 🎨, panel close, search arrows, nav rail) were
+  invisible: the global button padding (14 px per side) exceeded their fixed
+  widths and clipped the glyph away. Flat buttons now use compact padding.
+- Moving a terminal between panes left an empty tile behind; the vacated
+  pane now closes, and Kill / Close (context menu or Delete key) remove the
+  terminal from the list and collapse its tile.
 - PTY read loop crashed with a `NameError` the moment a read would block,
   killing interactive shells; it now awaits the readiness future it created.
 

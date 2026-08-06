@@ -450,6 +450,14 @@ AnyTermView = TerminalView | LogTerminalView
 class _TermList(QListWidget):
     """Terminal list that drags entries as terminal ids (drop on a pane)."""
 
+    delete_requested = Signal()
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
+            self.delete_requested.emit()
+            return
+        super().keyPressEvent(event)
+
     def startDrag(self, supported_actions) -> None:
         item = self.currentItem()
         tid = item.data(Qt.UserRole) if item else None
@@ -527,6 +535,7 @@ class TerminalPanel(QWidget):
         self.list = _TermList()
         self.list.setDragEnabled(True)
         self.list.setMaximumWidth(220)
+        self.list.delete_requested.connect(self._close_selected)
         self.list.currentItemChanged.connect(self._on_select)
         self.list.itemDoubleClicked.connect(
             lambda item: self._rename_terminal(item.data(Qt.UserRole)))
@@ -702,7 +711,9 @@ class TerminalPanel(QWidget):
             return
         source = self.pane_area.pane_for(tid)
         if source is not None and source is not pane:
-            source.set_view(None)  # move, not copy — the old tile empties
+            # move, not copy — and never leave an empty tile behind
+            source.set_view(None)
+            self.pane_area.close_pane(source)
         displaced = pane.set_view(view)
         if displaced is not None and displaced is not view:
             self._park_layout.addWidget(displaced)
@@ -827,6 +838,7 @@ class TerminalPanel(QWidget):
         rename = menu.addAction("Rename…")
         theme = menu.addAction("Theme…")
         kill = menu.addAction("Kill")
+        close = menu.addAction("Close (remove from list)")
         chosen = menu.exec(self.list.viewport().mapToGlobal(pos))
         if chosen is rename:
             self._rename_terminal(tid)
@@ -835,6 +847,9 @@ class TerminalPanel(QWidget):
         elif chosen is kill:
             self.list.setCurrentItem(item)
             self._kill_selected()
+        elif chosen is close:
+            self.list.setCurrentItem(item)
+            self._close_selected()
 
     def _new_shell(self) -> None:
         import asyncio
@@ -905,6 +920,7 @@ class TerminalPanel(QWidget):
             self._ptys[tid].status = "exited"
 
     def _kill_selected(self) -> None:
+        """Kill kills AND removes user shells; running backends only abort."""
         item = self.list.currentItem()
         if item is None:
             return
@@ -917,7 +933,7 @@ class TerminalPanel(QWidget):
                 loop = asyncio.get_running_loop()
             except RuntimeError:
                 return
-            loop.create_task(self._close_pty(tid))
+            loop.create_task(self._close_terminal(tid))
             return
         if kind == "claude-code" and self.engine is not None:
             info = self.engine.terminals.get(tid)
@@ -933,11 +949,29 @@ class TerminalPanel(QWidget):
                 return
         self._remove_item(tid)
 
-    async def _close_pty(self, tid: str) -> None:
+    def _close_selected(self) -> None:
+        """Delete key / context 'Close': drop the terminal from the list."""
+        item = self.list.currentItem()
+        if item is None:
+            return
+        tid = item.data(Qt.UserRole)
+        if tid in self._ptys:
+            import asyncio
+
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                return
+            loop.create_task(self._close_terminal(tid))
+        else:
+            self._remove_item(tid)
+
+    async def _close_terminal(self, tid: str) -> None:
+        """Kill the PTY (if any) and remove the terminal entirely."""
         pty = self._ptys.pop(tid, None)
         if pty is not None:
             await pty.close()
-        self._mark_status(tid, "exited", pty.exit_code if pty else None)
+        self._remove_item(tid)
 
     def _remove_item(self, tid: str) -> None:
         item = self._find_item(tid)
@@ -947,6 +981,7 @@ class TerminalPanel(QWidget):
         pane = self.pane_area.pane_for(tid)
         if pane is not None:
             pane.set_view(None)
+            self.pane_area.close_pane(pane)  # collapse the vacated tile
         view = self._views.pop(tid, None)
         if view is not None:
             view.setParent(None)

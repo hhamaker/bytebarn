@@ -114,7 +114,7 @@ QWidget#navRail {{ background: {t['rail']}; border-right: 1px solid {t['border']
 QFrame#railRule {{ background: {t['border']}; border: none; }}
 QPushButton#railItem {{
     background: transparent; border: none; border-radius: 11px;
-    color: {t['muted']}; font-size: 16px;
+    color: {t['muted']}; font-size: 16px; padding: 0;
     {mono}
 }}
 QPushButton#railItem:hover {{ background: {t['hover']}; color: {t['text']}; }}
@@ -129,6 +129,8 @@ QPushButton#railItem:checked:focus {{ background: {t['accent_soft']}; }}
 QFrame#termPane {{ border: 1px solid {t['border']}; border-radius: 6px; }}
 QFrame#termPane[active="true"] {{ border-color: {t['accent']}; }}
 QWidget#paneHeader {{ background: {t['surface']}; }}
+QWidget#paneHeader QPushButton {{ padding: 0; color: {t['muted']}; }}
+QWidget#paneHeader QPushButton:hover {{ color: {t['text']}; }}
 QLabel#paneTitle {{ color: {t['muted']}; {mono} font-size: 11px; }}
 QFrame#termPane[active="true"] QLabel#paneTitle {{ color: {t['text']}; }}
 
@@ -152,7 +154,8 @@ QPushButton {{
 }}
 QPushButton:hover {{ border-color: {t['accent']}; }}
 QPushButton:pressed {{ background: {t['hover']}; }}
-QPushButton:flat {{ background: transparent; border: none; color: {t['muted']}; }}
+QPushButton:flat {{ background: transparent; border: none; color: {t['muted']};
+    padding: 2px 4px; }}
 QPushButton:flat:hover {{ color: {t['accent']}; background: transparent; }}
 QPushButton#send {{
     background: {t['accent']}; border: none; color: {t['accent_ink']};

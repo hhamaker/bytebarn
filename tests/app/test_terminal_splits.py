@@ -194,17 +194,40 @@ async def test_drop_splits_and_moves(qapp, tmp_path):
         new_pane = panel.pane_area.pane_for(tid1)
         assert new_pane is not None and new_pane is not pane1
 
-        # drop tid2 onto tid1's pane center → moves tid2 there, old pane empties
+        # drop tid2 onto tid1's pane center → tid2 moves there and the
+        # vacated source pane closes (no empty tiles left behind)
         panel._terminal_dropped(new_pane, tid2, "center")
         assert new_pane.terminal_id == tid2
-        assert pane1.terminal_id is None
+        assert len(panel.pane_area.panes()) == 1
         assert panel.pane_area.pane_for(tid1) is None  # tid1 parked
         assert tid1 in panel._views
 
         # drop tid1 on top edge of tid2's pane → splits vertically, before
         panel._terminal_dropped(new_pane, tid1, "top")
-        assert len(panel.pane_area.panes()) == 3
+        assert len(panel.pane_area.panes()) == 2
         assert panel.pane_area.pane_for(tid1).terminal_id == tid1
+    finally:
+        await engine.stop()
+
+
+async def test_close_removes_terminal_and_collapses_pane(qapp, tmp_path):
+    from bytebarn.app.terminal_panel import TerminalPanel
+
+    engine = await _engine(tmp_path)
+    try:
+        panel = TerminalPanel(engine)
+        tid1 = _open_backend(engine, panel, "cc:s1", "one")
+        tid2 = _open_backend(engine, panel, "cc:s2", "two")
+        pane = panel.pane_area.pane_for(tid2) or panel.pane_area.active_pane()
+        panel._terminal_dropped(pane, tid1, "right")
+        assert len(panel.pane_area.panes()) == 2
+
+        panel.list.setCurrentItem(panel._find_item(tid1))
+        panel._close_selected()
+        assert panel._find_item(tid1) is None      # gone from the list
+        assert tid1 not in panel._views
+        assert len(panel.pane_area.panes()) == 1   # tile collapsed
+        assert engine.terminals.get(tid1) is None  # hub entry dropped
     finally:
         await engine.stop()
 
