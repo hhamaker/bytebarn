@@ -50,6 +50,14 @@ saved connections your agents can use.
 
 ### Fixed
 
+- **Rebuilding the app revoked its file permissions.** macOS keys privacy
+  grants to the code signature, and PyInstaller's ad-hoc signature changes
+  every build, so each rebuild looked like a new app: shells and agents then
+  failed with `Operation not permitted` for projects under ~/Documents.
+  `CODESIGN_IDENTITY` now signs with a stable identity (grants persist), and
+  an unsigned build says so instead of failing mysteriously later.
+- New terminals open in the current session's directory — an isolated
+  session's worktree included — rather than always at the project root.
 - **Terminals had no controlling terminal.** PTY children were spawned with
   `start_new_session=True`, which calls `setsid` but never claims the PTY, so
   `/dev/tty` failed with ENXIO. ssh reads passwords from `/dev/tty`, so it

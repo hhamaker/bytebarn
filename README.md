@@ -306,7 +306,22 @@ poisoned.
 
 ```bash
 ./scripts/build_macos_app.sh --install   # builds dist/ByteBarn.app, copies to /Applications
+
+# keep macOS file-access grants across rebuilds (see below)
+CODESIGN_IDENTITY="Your Code Signing Cert" ./scripts/build_macos_app.sh --install
 ```
+
+**Sign it, or you will re-grant permissions after every build.** macOS ties
+file-access grants (Documents, Desktop, Full Disk Access) to an app's code
+signature, and an ad-hoc signature changes on every build — so each rebuild
+looks like a different app and silently loses them, which shows up as
+`Operation not permitted` from shells and agents. Signing with any stable
+identity fixes it: a Developer ID, or a self-signed certificate you make in
+Keychain Access (Certificate Assistant → Create a Certificate → type *Code
+Signing*). List what you have with `security find-identity -v -p codesigning`.
+
+Projects under `~/Documents`, `~/Desktop` and `~/Downloads` are the ones
+macOS protects; a project elsewhere needs no grant at all.
 
 Uses PyInstaller; the app icon is rendered from the in-app sprite art, and
 the bundle is stamped with the version from `pyproject.toml` so About and
