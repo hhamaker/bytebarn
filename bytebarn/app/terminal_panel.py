@@ -32,32 +32,17 @@ from PySide6.QtWidgets import (
 )
 
 from .pty_session import PtySession, spawn_shell
-from .vt import Cell, Color, VtScreen
+from .term_themes import DEFAULT_THEME, TermTheme, get_theme
+from .vt import Cell, VtScreen
 
-# VS Code Dark+ style palette (default + 16 ANSI)
-_PALETTE = {
-    Color.DEFAULT: None,  # resolved against fg/bg defaults
-    Color.BLACK: QColor("#1e1e1e"),
-    Color.RED: QColor("#f44747"),
-    Color.GREEN: QColor("#6a9955"),
-    Color.YELLOW: QColor("#d7ba7d"),
-    Color.BLUE: QColor("#569cd6"),
-    Color.MAGENTA: QColor("#c586c0"),
-    Color.CYAN: QColor("#4ec9b0"),
-    Color.WHITE: QColor("#d4d4d4"),
-    Color.BRIGHT_BLACK: QColor("#808080"),
-    Color.BRIGHT_RED: QColor("#f44747"),
-    Color.BRIGHT_GREEN: QColor("#b5cea8"),
-    Color.BRIGHT_YELLOW: QColor("#dcdcaa"),
-    Color.BRIGHT_BLUE: QColor("#9cdcfe"),
-    Color.BRIGHT_MAGENTA: QColor("#c586c0"),
-    Color.BRIGHT_CYAN: QColor("#4ec9b0"),
-    Color.BRIGHT_WHITE: QColor("#ffffff"),
-}
-_DEFAULT_FG = QColor("#d4d4d4")
-_DEFAULT_BG = QColor("#1e1e1e")
-_CURSOR_COLOR = QColor("#aeafad")
-_SELECTION_BG = QColor(85, 85, 255, 80)
+
+def _rgba(spec: str) -> QColor:
+    """#RRGGBB or #RRGGBBAA → QColor (QColor's own parser reads AA first)."""
+    if len(spec) == 9:  # #RRGGBBAA
+        c = QColor(spec[:7])
+        c.setAlpha(int(spec[7:9], 16))
+        return c
+    return QColor(spec)
 
 
 def _mono_font(point_size: int = 12) -> QFont:
@@ -70,13 +55,6 @@ def _mono_font(point_size: int = 12) -> QFont:
     return font
 
 
-def _resolve(color_idx: int, *, is_fg: bool) -> QColor:
-    if color_idx == Color.DEFAULT or color_idx not in _PALETTE:
-        return _DEFAULT_FG if is_fg else _DEFAULT_BG
-    c = _PALETTE[color_idx]
-    return c if c is not None else (_DEFAULT_FG if is_fg else _DEFAULT_BG)
-
-
 class TerminalView(QWidget):
     """Painted cell-grid terminal backed by VtScreen + optional PtySession."""
 
@@ -85,6 +63,8 @@ class TerminalView(QWidget):
         self._interactive = interactive
         self._pty: PtySession | None = None
         self._screen = VtScreen(cols=80, rows=24)
+        self._theme_name = DEFAULT_THEME
+        self._apply_theme_colors(get_theme(DEFAULT_THEME))
         self._scroll_offset = 0  # lines into scrollback (0 = live)
         self._font = _mono_font(12)
         self._fm = QFontMetrics(self._font)
@@ -110,6 +90,26 @@ class TerminalView(QWidget):
         self.setCursor(Qt.IBeamCursor)
 
     # -- public --------------------------------------------------------------
+
+    def set_theme(self, theme: TermTheme) -> None:
+        self._theme_name = theme.name
+        self._apply_theme_colors(theme)
+        self.update()
+
+    def theme_name(self) -> str:
+        return self._theme_name
+
+    def _apply_theme_colors(self, theme: TermTheme) -> None:
+        self._fg = QColor(theme.fg)
+        self._bg = QColor(theme.bg)
+        self._cursor_color = QColor(theme.cursor)
+        self._selection_bg = _rgba(theme.selection)
+        self._palette = [QColor(c) for c in theme.ansi]
+
+    def _resolve(self, color_idx: int, *, is_fg: bool) -> QColor:
+        if 0 <= color_idx < len(self._palette):
+            return self._palette[color_idx]
+        return self._fg if is_fg else self._bg
 
     def set_pty(self, session: PtySession | None) -> None:
         self._pty = session
@@ -205,7 +205,7 @@ class TerminalView(QWidget):
 
     def paintEvent(self, event: QPaintEvent) -> None:
         p = QPainter(self)
-        p.fillRect(self.rect(), _DEFAULT_BG)
+        p.fillRect(self.rect(), self._bg)
         p.setFont(self._font)
         lines = self._screen.display_lines(scrollback_offset=self._scroll_offset)
         cw, ch = self._cell_w, self._cell_h
@@ -227,8 +227,8 @@ class TerminalView(QWidget):
                 while run_end < len(row) and self._same_style(row[run_end], cell):
                     run_end += 1
                 text = "".join(row[i].char for i in range(x, run_end))
-                fg = _resolve(cell.fg, is_fg=True)
-                bg = _resolve(cell.bg, is_fg=False)
+                fg = self._resolve(cell.fg, is_fg=True)
+                bg = self._resolve(cell.bg, is_fg=False)
                 if cell.inverse:
                     fg, bg = bg, fg
                 if cell.bold:
@@ -238,7 +238,7 @@ class TerminalView(QWidget):
                 else:
                     p.setFont(self._font)
                 rect = QRect(x * cw, y * ch, (run_end - x) * cw, ch)
-                if bg != _DEFAULT_BG:
+                if bg != self._bg:
                     p.fillRect(rect, bg)
                 p.setPen(fg)
                 # Draw per-cell so fixed pitch is exact even with bold.
@@ -259,11 +259,11 @@ class TerminalView(QWidget):
 
         if show_cursor and 0 <= cy < len(lines) and 0 <= cx < self._screen.cols:
             crect = QRect(cx * cw, cy * ch, cw, ch)
-            p.fillRect(crect, _CURSOR_COLOR)
+            p.fillRect(crect, self._cursor_color)
             # redraw glyph under cursor inverted
             if cy < len(lines) and cx < len(lines[cy]):
                 cell = lines[cy][cx]
-                p.setPen(_DEFAULT_BG)
+                p.setPen(self._bg)
                 if cell.char and cell.char != " ":
                     p.drawText(QPoint(cx * cw, cy * ch + self._baseline), cell.char)
 
@@ -410,9 +410,18 @@ class LogTerminalView(QPlainTextEdit):
         self.setReadOnly(True)
         self.setMaximumBlockCount(20_000)
         self.setFont(_mono_font(12))
-        self.setStyleSheet(
-            "QPlainTextEdit { background: #1e1e1e; color: #d4d4d4; border: none; }")
+        self._theme_name = DEFAULT_THEME
+        self.set_theme(get_theme(DEFAULT_THEME))
         self.setPlaceholderText("No output yet…")
+
+    def set_theme(self, theme: TermTheme) -> None:
+        self._theme_name = theme.name
+        self.setStyleSheet(
+            "QPlainTextEdit { background: %s; color: %s; border: none; }"
+            % (theme.bg, theme.fg))
+
+    def theme_name(self) -> str:
+        return self._theme_name
 
     def append_text(self, text: str) -> None:
         if not text:
@@ -438,6 +447,26 @@ class LogTerminalView(QPlainTextEdit):
 AnyTermView = TerminalView | LogTerminalView
 
 
+class _TermList(QListWidget):
+    """Terminal list that drags entries as terminal ids (drop on a pane)."""
+
+    def startDrag(self, supported_actions) -> None:
+        item = self.currentItem()
+        tid = item.data(Qt.UserRole) if item else None
+        if not tid:
+            return
+        from PySide6.QtCore import QMimeData
+        from PySide6.QtGui import QDrag
+
+        from .pane_area import TERMINAL_MIME
+
+        drag = QDrag(self)
+        mime = QMimeData()
+        mime.setData(TERMINAL_MIME, str(tid).encode())
+        drag.setMimeData(mime)
+        drag.exec(Qt.CopyAction)
+
+
 class TerminalPanel(QWidget):
     """Bottom/side manager: list of terminals + active view."""
 
@@ -449,6 +478,11 @@ class TerminalPanel(QWidget):
         self._views: dict[str, AnyTermView] = {}
         self._ptys: dict[str, PtySession] = {}
         self._kinds: dict[str, str] = {}
+        self._base_titles: dict[str, str] = {}   # hub / pty titles
+        self._custom_titles: dict[str, str] = {}  # user renames win
+        self._statuses: dict[str, str] = {}
+        self._exit_codes: dict[str, int | None] = {}
+        self._theme_names: dict[str, str] = {}
         self._active_id: str | None = None
 
         bar = QHBoxLayout()
@@ -459,6 +493,16 @@ class TerminalPanel(QWidget):
         self.new_btn.setFlat(True)
         self.new_btn.setToolTip("Open a new local shell in the project directory")
         self.new_btn.clicked.connect(self._new_shell)
+        self.split_h_btn = QPushButton("Split →")
+        self.split_h_btn.setFlat(True)
+        self.split_h_btn.setToolTip(
+            "Split the active pane side-by-side and open a new shell there")
+        self.split_h_btn.clicked.connect(lambda: self._split(Qt.Horizontal))
+        self.split_v_btn = QPushButton("Split ↓")
+        self.split_v_btn.setFlat(True)
+        self.split_v_btn.setToolTip(
+            "Split the active pane top/bottom and open a new shell there")
+        self.split_v_btn.clicked.connect(lambda: self._split(Qt.Vertical))
         self.kill_btn = QPushButton("Kill")
         self.kill_btn.setFlat(True)
         self.kill_btn.setToolTip(
@@ -474,27 +518,34 @@ class TerminalPanel(QWidget):
         bar.addWidget(title)
         bar.addStretch(1)
         bar.addWidget(self.new_btn)
+        bar.addWidget(self.split_h_btn)
+        bar.addWidget(self.split_v_btn)
         bar.addWidget(self.kill_btn)
         bar.addWidget(self.clear_btn)
         bar.addWidget(close)
 
-        self.list = QListWidget()
+        self.list = _TermList()
+        self.list.setDragEnabled(True)
         self.list.setMaximumWidth(220)
         self.list.currentItemChanged.connect(self._on_select)
-        self.stack_host = QWidget()
-        self.stack_layout = QVBoxLayout(self.stack_host)
-        self.stack_layout.setContentsMargins(0, 0, 0, 0)
-        self._empty = QLabel(
-            "No terminals yet.\n\n"
-            "• Claude Code runs appear here automatically.\n"
-            "• Click + Shell for a local interactive terminal.")
-        self._empty.setWordWrap(True)
-        self._empty.setAlignment(Qt.AlignCenter)
-        self.stack_layout.addWidget(self._empty)
+        self.list.itemDoubleClicked.connect(
+            lambda item: self._rename_terminal(item.data(Qt.UserRole)))
+        self.list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.list.customContextMenuRequested.connect(self._list_menu)
+
+        from .pane_area import PaneArea
+
+        self.pane_area = PaneArea()
+        self._wire_pane(self.pane_area.panes()[0])
+        # hidden parking lot for views not mounted in any pane
+        self._park = QWidget()
+        self._park.hide()
+        self._park_layout = QVBoxLayout(self._park)
+        self._park_layout.setContentsMargins(0, 0, 0, 0)
 
         split = QSplitter(Qt.Horizontal)
         split.addWidget(self.list)
-        split.addWidget(self.stack_host)
+        split.addWidget(self.pane_area)
         split.setStretchFactor(0, 0)
         split.setStretchFactor(1, 1)
         split.setSizes([180, 600])
@@ -561,6 +612,8 @@ class TerminalPanel(QWidget):
         self, tid: str, title: str, kind: str, status: str,
     ) -> None:
         self._kinds[tid] = kind
+        self._base_titles[tid] = title
+        self._statuses[tid] = status
         if tid not in self._views:
             # Backend tees (claude-code / bash) → plain log.
             # Interactive user shells get TerminalView (set in _spawn_shell).
@@ -568,25 +621,37 @@ class TerminalPanel(QWidget):
                 view: AnyTermView = TerminalView(interactive=True)
             else:
                 view = LogTerminalView()
-            view.hide()
-            self.stack_layout.addWidget(view)
-            self._views[tid] = view
+            self._adopt_view(tid, view)
             if self.engine is not None and kind != "user":
                 view.set_text(self.engine.terminals.snapshot(tid))
         item = self._find_item(tid)
-        label = self._format_label(title, kind, status)
         if item is None:
-            item = QListWidgetItem(label)
+            item = QListWidgetItem(self._label(tid))
             item.setData(Qt.UserRole, tid)
             item.setData(Qt.UserRole + 1, kind)
             self.list.addItem(item)
         else:
-            item.setText(label)
-        self._empty.hide()
+            item.setText(self._label(tid))
 
-    def _format_label(self, title: str, kind: str, status: str) -> str:
-        icon = {"claude-code": "◈", "user": "❯", "bash": "$"}.get(kind, "•")
-        suffix = "" if status == "running" else " (done)"
+    def _adopt_view(self, tid: str, view: AnyTermView) -> None:
+        """Register a new view, parked (hidden) until a pane mounts it."""
+        self._views[tid] = view
+        self._park_layout.addWidget(view)
+        view.hide()
+        view.set_theme(get_theme(self._default_theme_name()))
+        self._theme_names[tid] = view.theme_name()
+
+    def _display_title(self, tid: str) -> str:
+        return self._custom_titles.get(tid) or self._base_titles.get(tid, tid)
+
+    def _label(self, tid: str) -> str:
+        icon = {"claude-code": "◈", "user": "❯", "bash": "$"}.get(
+            self._kinds.get(tid, ""), "•")
+        title = self._display_title(tid)
+        code = self._exit_codes.get(tid)
+        if code not in (None, -1) and self._statuses.get(tid) == "exited":
+            title = f"{title} [{code}]"
+        suffix = "" if self._statuses.get(tid, "running") == "running" else " (done)"
         return f"{icon} {title}{suffix}"
 
     def _find_item(self, tid: str) -> QListWidgetItem | None:
@@ -607,13 +672,169 @@ class TerminalPanel(QWidget):
         tid = item.data(Qt.UserRole)
         self._show_view(tid)
 
+    # -- panes ----------------------------------------------------------------
+
+    def _wire_pane(self, pane) -> None:
+        pane.close_requested.connect(lambda p=pane: self._pane_closed(p))
+        pane.rename_requested.connect(
+            lambda p=pane: p.terminal_id and self._rename_terminal(p.terminal_id))
+        pane.theme_menu_requested.connect(
+            lambda pos, p=pane: self._theme_menu(p, pos))
+        pane.terminal_dropped.connect(
+            lambda tid, zone, p=pane: self._terminal_dropped(p, tid, zone))
+
     def _show_view(self, tid: str) -> None:
+        """Mount the terminal's view into the active pane."""
         self._active_id = tid
-        for vid, view in self._views.items():
-            view.setVisible(vid == tid)
         view = self._views.get(tid)
-        if view is not None:
+        if view is None:
+            return
+        existing = self.pane_area.pane_for(tid)
+        if existing is not None:  # already tiled — just focus its pane
+            self.pane_area.set_active(existing)
             view.setFocus()
+            return
+        self._mount_in_pane(self.pane_area.active_pane(), tid)
+
+    def _mount_in_pane(self, pane, tid: str) -> None:
+        view = self._views.get(tid)
+        if view is None:
+            return
+        source = self.pane_area.pane_for(tid)
+        if source is not None and source is not pane:
+            source.set_view(None)  # move, not copy — the old tile empties
+        displaced = pane.set_view(view)
+        if displaced is not None and displaced is not view:
+            self._park_layout.addWidget(displaced)
+            displaced.hide()
+        pane.terminal_id = tid
+        pane.set_title(self._display_title(tid))
+        view.setFocus()
+
+    def _terminal_dropped(self, pane, tid: str, zone: str) -> None:
+        """List/header drag landed on a pane: center swaps, edges split."""
+        if tid not in self._views:
+            return
+        if zone == "center":
+            if pane.terminal_id != tid:
+                self._mount_in_pane(pane, tid)
+            self.pane_area.set_active(pane)
+        else:
+            orientation = Qt.Horizontal if zone in ("left", "right") else Qt.Vertical
+            new_pane = self.pane_area.split(
+                pane, orientation, before=zone in ("left", "top"))
+            self._wire_pane(new_pane)
+            self._mount_in_pane(new_pane, tid)
+        self._active_id = tid
+        self._select_id(tid)
+
+    def _pane_closed(self, pane) -> None:
+        view = pane.set_view(None)
+        if view is not None:
+            self._park_layout.addWidget(view)
+            view.hide()
+        self.pane_area.close_pane(pane)
+
+    def _split(self, orientation) -> None:
+        pane = self.pane_area.active_pane()
+        new_pane = self.pane_area.split(pane, orientation)
+        self._wire_pane(new_pane)
+        self._new_shell()  # spawns async; lands in the (new) active pane
+
+    # -- rename / themes -------------------------------------------------------
+
+    def _rename_terminal(self, tid: str) -> None:
+        if not tid:
+            return
+        from PySide6.QtWidgets import QInputDialog
+
+        current = self._display_title(tid)
+        title, ok = QInputDialog.getText(
+            self, "Rename terminal", "Name:", text=current)
+        title = title.strip()
+        if not ok or not title or title == current:
+            return
+        self._custom_titles[tid] = title
+        if self.engine is not None:
+            self.engine.terminals.rename(tid, title)
+        item = self._find_item(tid)
+        if item is not None:
+            item.setText(self._label(tid))
+        pane = self.pane_area.pane_for(tid)
+        if pane is not None:
+            pane.set_title(title)
+
+    def _default_theme_name(self) -> str:
+        if self.engine is not None:
+            extra = self.engine.config.model_extra or {}
+            section = extra.get("terminal") or {}
+            if isinstance(section, dict) and section.get("theme"):
+                return str(section["theme"])
+        return DEFAULT_THEME
+
+    def _set_terminal_theme(self, tid: str, name: str) -> None:
+        view = self._views.get(tid)
+        if view is None:
+            return
+        view.set_theme(get_theme(name))
+        self._theme_names[tid] = name
+
+    def _save_default_theme(self, name: str) -> None:
+        if self.engine is None:
+            return
+        try:
+            from ..engine.config import patch_config_file
+
+            patch_config_file(self.engine.global_dir / "config.json",
+                              {"terminal.theme": name})
+            self.engine.reload_config()
+        except Exception:
+            pass
+
+    def _theme_menu(self, pane, global_pos) -> None:
+        tid = pane.terminal_id
+        if not tid:
+            return
+        self._show_theme_menu(tid, global_pos)
+
+    def _show_theme_menu(self, tid: str, global_pos) -> None:
+        from PySide6.QtWidgets import QMenu
+
+        from .term_themes import THEMES
+
+        menu = QMenu(self)
+        current = self._theme_names.get(tid, self._default_theme_name())
+        for name in THEMES:
+            action = menu.addAction(name)
+            action.setCheckable(True)
+            action.setChecked(name == current)
+            action.triggered.connect(
+                lambda _=False, n=name, t=tid: self._set_terminal_theme(t, n))
+        menu.addSeparator()
+        default = menu.addAction("Set current as default")
+        default.triggered.connect(
+            lambda: self._save_default_theme(self._theme_names.get(tid, current)))
+        menu.exec(global_pos)
+
+    def _list_menu(self, pos) -> None:
+        item = self.list.itemAt(pos)
+        if item is None:
+            return
+        tid = item.data(Qt.UserRole)
+        from PySide6.QtWidgets import QMenu
+
+        menu = QMenu(self)
+        rename = menu.addAction("Rename…")
+        theme = menu.addAction("Theme…")
+        kill = menu.addAction("Kill")
+        chosen = menu.exec(self.list.viewport().mapToGlobal(pos))
+        if chosen is rename:
+            self._rename_terminal(tid)
+        elif chosen is theme:
+            self._show_theme_menu(tid, self.list.viewport().mapToGlobal(pos))
+        elif chosen is kill:
+            self.list.setCurrentItem(item)
+            self._kill_selected()
 
     def _new_shell(self) -> None:
         import asyncio
@@ -630,8 +851,8 @@ class TerminalPanel(QWidget):
             cwd = Path(self.engine.project_dir)
         tid = f"user:{uuid.uuid4().hex[:8]}"
 
-        # Estimate size from stack host so the shell starts with a real winsize
-        host = self.stack_host
+        # Estimate size from the pane area so the shell starts with a real winsize
+        host = self.pane_area
         fm = QFontMetrics(_mono_font(12))
         cw = max(1, fm.horizontalAdvance("M"))
         ch = max(1, fm.height())
@@ -643,10 +864,8 @@ class TerminalPanel(QWidget):
                 terminal_id=tid, cwd=cwd, rows=rows, cols=cols)
         except Exception as exc:
             view: AnyTermView = LogTerminalView()
+            self._adopt_view(tid, view)
             view.set_text(f"Failed to open shell:\n{exc}\n")
-            view.hide()
-            self.stack_layout.addWidget(view)
-            self._views[tid] = view
             self._ensure_backend_item(tid, "Shell (failed)", "user", "exited")
             self._select_id(tid)
             return
@@ -657,11 +876,8 @@ class TerminalPanel(QWidget):
         # first paint isn't a 80×24 lie and set_pty won't shrink the PTY.
         view_t._screen.resize(rows, cols)
         view_t.set_pty(session)
-        view_t.hide()
-        self.stack_layout.addWidget(view_t)
-        self._views[tid] = view_t
+        self._adopt_view(tid, view_t)
         self._ensure_backend_item(tid, session.title, "user", "running")
-        self._empty.hide()
 
         def on_data(text: str, _tid=tid) -> None:
             v = self._views.get(_tid)
@@ -680,23 +896,11 @@ class TerminalPanel(QWidget):
             session.resize(r2, c2)
 
     def _mark_status(self, tid: str, status: str, exit_code=None) -> None:
+        self._statuses[tid] = status
+        self._exit_codes[tid] = exit_code
         item = self._find_item(tid)
-        if item is None:
-            return
-        kind = item.data(Qt.UserRole + 1) or ""
-        title = item.text()
-        raw = title
-        for prefix in ("◈ ", "❯ ", "$ ", "• "):
-            if raw.startswith(prefix):
-                raw = raw[len(prefix):]
-                break
-        raw = raw.replace(" (done)", "")
-        # strip prior exit code tag
-        if " [" in raw and raw.endswith("]"):
-            raw = raw.rsplit(" [", 1)[0]
-        if exit_code not in (None, -1) and status == "exited":
-            raw = f"{raw} [{exit_code}]"
-        item.setText(self._format_label(raw, kind, status))
+        if item is not None:
+            item.setText(self._label(tid))
         if tid in self._ptys and status == "exited":
             self._ptys[tid].status = "exited"
 
@@ -740,18 +944,21 @@ class TerminalPanel(QWidget):
         if item is not None:
             row = self.list.row(item)
             self.list.takeItem(row)
+        pane = self.pane_area.pane_for(tid)
+        if pane is not None:
+            pane.set_view(None)
         view = self._views.pop(tid, None)
         if view is not None:
             view.setParent(None)
             view.deleteLater()
-        self._kinds.pop(tid, None)
+        for d in (self._kinds, self._base_titles, self._custom_titles,
+                  self._statuses, self._exit_codes, self._theme_names):
+            d.pop(tid, None)
         if self.engine is not None:
             try:
                 self.engine.terminals.remove(tid)
             except Exception:
                 pass
-        if not self._views:
-            self._empty.show()
 
     def _clear_view(self) -> None:
         if self._active_id and self._active_id in self._views:

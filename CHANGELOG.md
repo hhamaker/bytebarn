@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Terminal splits, renames, and themes.** The Terminal Manager is now a
+  tiling surface: drag a terminal from the list (or a pane header) onto a
+  pane — edges split in that direction, the center swaps the pane's
+  terminal — or use the Split → / Split ↓ buttons to open a new shell in a
+  fresh pane. Terminals can be renamed (double-click, context menu, or pane
+  header), and each terminal can use its own color theme from ten built-ins
+  (Dark+, Night Barn, Solarized Dark/Light, Dracula, Nord, Gruvbox Dark,
+  Monokai, One Dark, Tokyo Night) via the pane's 🎨 menu; "Set current as
+  default" persists a default under the `terminal.theme` config key.
 - **Termius-style shell: a nav rail with Projects / Chat / Code / Terminal
   views.** A fixed icon rail (⌘1–⌘4) now anchors navigation: pick a project,
   then move between its chats, its goal runs (Code view, with a new

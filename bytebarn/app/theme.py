@@ -125,6 +125,13 @@ QPushButton#railItem:checked {{
 QPushButton#railItem:focus {{ outline: none; background: {t['hover']}; }}
 QPushButton#railItem:checked:focus {{ background: {t['accent_soft']}; }}
 
+/* -- terminal panes ----------------------------------------------------- */
+QFrame#termPane {{ border: 1px solid {t['border']}; border-radius: 6px; }}
+QFrame#termPane[active="true"] {{ border-color: {t['accent']}; }}
+QWidget#paneHeader {{ background: {t['surface']}; }}
+QLabel#paneTitle {{ color: {t['muted']}; {mono} font-size: 11px; }}
+QFrame#termPane[active="true"] QLabel#paneTitle {{ color: {t['text']}; }}
+
 /* -- inputs & lists ---------------------------------------------------- */
 QPlainTextEdit, QLineEdit, QTreeWidget, QListWidget {{
     background: {t['surface']}; border: 1px solid {t['border']};

@@ -52,6 +52,13 @@ unchanged until a theme is applied.
   (the pane's previous view is parked — its terminal keeps running).
 - Toolbar gains **Split →** and **Split ↓**: split the active pane and spawn
   a new local shell into the new pane.
+- **Drag & drop splitting** (primary interaction, per user request): drag a
+  terminal from the list or a pane header and drop it on a pane. Drop zones:
+  the left/right/top/bottom quarters split that pane in the matching
+  direction (new pane before or after), the center mounts the terminal into
+  that pane (displaced view parks). Dropping a terminal already tiled
+  elsewhere moves it. A translucent accent overlay previews the target zone
+  during the drag. Mime type: `application/x-bytebarn-terminal`.
 - Closing a pane parks its view; the terminal stays alive and stays in the
   list. Kill semantics are unchanged.
 
