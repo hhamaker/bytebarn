@@ -62,6 +62,14 @@ def main() -> None:
 
     import PySide6
 
+    # Launched from Finder/Dock we inherit launchd's bare PATH, so Homebrew,
+    # npm and cargo tooling (claude, node, rg…) is invisible to every
+    # subprocess we spawn. Ask the login shell once, here, before anything
+    # tries to run a command.
+    from .engine.shell_path import hydrate_path
+
+    hydrate_path()
+
     scrubbed = scrub_qt_env(os.environ, str(Path(PySide6.__file__).parent))
     if scrubbed:
         print(f"[crew] ignored foreign Qt environment: {', '.join(scrubbed)}",

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Iterable
@@ -82,6 +83,26 @@ def claude_code_config_from_engine(config: Any) -> ClaudeCodeConfig:
         include_partial_messages=bool(raw.get("include_partial_messages", True)),
         bare=bool(raw.get("bare", False)),
         model=model,
+    )
+
+
+def resolve_cli(command: str) -> str:
+    """Absolute path to the Claude Code CLI, or a message saying how to fix it.
+
+    Launched from Finder, the app inherits launchd's bare PATH, so a plain
+    "claude" cannot be found even though it works in a terminal."""
+    from ..shell_path import resolve_command
+
+    if os.path.sep in command:      # explicit path from config — use as given
+        return command
+    found = resolve_command(command)
+    if found:
+        return found
+    raise FileNotFoundError(
+        f"Claude Code CLI ({command!r}) is not on PATH. Install it "
+        "(`npm i -g @anthropic-ai/claude-code`, or Homebrew), or point "
+        'ByteBarn at it with {"claude_code": {"command": '
+        '"/full/path/to/claude"}} in ~/.bytebarn/config.json.'
     )
 
 
@@ -636,6 +657,7 @@ class ClaudeCodeRuntime:
     async def _spawn(self, argv: list[str], cwd: Path) -> asyncio.subprocess.Process:
         if self._spawn_fn is not None:
             return await self._spawn_fn(argv, cwd)
+        argv = [resolve_cli(argv[0]), *argv[1:]]
         return await asyncio.create_subprocess_exec(
             *argv,
             stdin=asyncio.subprocess.DEVNULL,
