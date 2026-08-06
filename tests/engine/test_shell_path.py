@@ -71,3 +71,16 @@ def test_claude_runtime_uses_an_explicit_path_as_given():
     from bytebarn.engine.runtimes.claude_code import resolve_cli
 
     assert resolve_cli("/custom/bin/claude") == "/custom/bin/claude"
+
+
+def test_privacy_hint_explains_eperm_in_protected_folders():
+    from bytebarn.engine.runtimes.claude_code import privacy_hint
+
+    hint = privacy_hint("error: An internal error occurred (EPERM)",
+                        "/Users/x/Documents/GitHub/proj")
+    assert "Privacy & Security" in hint and "ByteBarn" in hint
+
+    # a normal failure is not dressed up as a permissions problem
+    assert privacy_hint("claude: command failed", "/Users/x/Documents/p") == ""
+    # nor is EPERM outside the protected folders
+    assert privacy_hint("EPERM", "/Users/x/code/proj") == ""

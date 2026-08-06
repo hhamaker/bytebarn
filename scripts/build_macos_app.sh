@@ -33,6 +33,18 @@ PLIST=dist/ByteBarn.app/Contents/Info.plist
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$PLIST" 2>/dev/null \
   || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $VERSION" "$PLIST"
 
+# Without these, macOS denies access to protected folders instead of asking —
+# and tools we spawn (Claude Code, bash) inherit the denial as a bare EPERM.
+add_usage() {
+  /usr/libexec/PlistBuddy -c "Set :$1 $2" "$PLIST" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :$1 string $2" "$PLIST"
+}
+REASON="ByteBarn needs access to the folders your projects live in so agents can read and edit them."
+add_usage NSDocumentsFolderUsageDescription "$REASON"
+add_usage NSDesktopFolderUsageDescription "$REASON"
+add_usage NSDownloadsFolderUsageDescription "$REASON"
+add_usage NSRemovableVolumesUsageDescription "$REASON"
+
 echo
 echo "built dist/ByteBarn.app ($VERSION)"
 if [[ "${1:-}" == "--install" ]]; then

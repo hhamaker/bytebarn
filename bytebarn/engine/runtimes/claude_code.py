@@ -106,6 +106,29 @@ def resolve_cli(command: str) -> str:
     )
 
 
+def privacy_hint(text: str, cwd: str | Path = "") -> str:
+    """Explain an EPERM that is really macOS privacy protection.
+
+    A child process inherits its *responsible* app's privacy grants. Run from
+    a terminal, the CLI is covered by the terminal's grant; launched from
+    ByteBarn.app it is not, so reading a project under ~/Documents (or
+    Desktop / Downloads / iCloud Drive) fails with a bare EPERM."""
+    if not any(code in text for code in ("EPERM", "EACCES", "operation not permitted")):
+        return ""
+    protected = ("/Documents", "/Desktop", "/Downloads", "Mobile Documents")
+    where = str(cwd)
+    if where and not any(p in where for p in protected):
+        return ""
+    return (
+        "macOS privacy protection is blocking this. A tool launched by "
+        "ByteBarn inherits ByteBarn's permissions, and the app has not been "
+        "granted access to this folder. Give ByteBarn.app access under "
+        "System Settings → Privacy & Security → Files and Folders (or Full "
+        "Disk Access), then try again. Projects outside ~/Documents, "
+        "~/Desktop and ~/Downloads are unaffected."
+    )
+
+
 def model_for_cli(session_model: str, override: str | None = None) -> str | None:
     """CLI ``--model`` value: strip ``provider/`` prefix when present.
 
@@ -640,15 +663,21 @@ class ClaudeCodeRuntime:
         if state.result_is_error:
             # Surface error text if we have nothing useful yet
             if not (state.text_buf or "").strip():
+                detail = (state.result_text or state.result_subtype
+                          or "claude-code error")
+                hint = privacy_hint(detail, cwd)
                 await self._append_error_to_message(
                     live.id, message.id,
-                    state.result_text or state.result_subtype or "claude-code error",
+                    f"{detail}\n\n{hint}" if hint else detail,
                 )
             engine.bus.emit(SessionUpdated(session_id=live.id))
             engine.bus.emit(SessionActivity(session_id=live.id, detail=""))
             return "error"
         if rc not in (0, None) and not state.result_text and not state.text_buf:
-            raise RuntimeError(f"claude-code exited with code {rc}")
+            stderr_tail = getattr(self, "_stderr_tail", "")
+            hint = privacy_hint(stderr_tail, cwd)
+            message_text = f"claude-code exited with code {rc}"
+            raise RuntimeError(f"{message_text}\n\n{hint}" if hint else message_text)
 
         engine.bus.emit(SessionUpdated(session_id=live.id))
         engine.bus.emit(SessionActivity(session_id=live.id, detail=""))
@@ -712,6 +741,9 @@ class ClaudeCodeRuntime:
         engine: "Engine | None" = None,
         term_id: str = "",
     ) -> None:
+        # keep the tail so a failing exit can be explained: stderr otherwise
+        # only reaches the terminal pane, not the transcript
+        self._stderr_tail = ""
         if proc.stderr is None:
             return
         hub = getattr(engine, "terminals", None) if engine is not None else None
@@ -721,6 +753,7 @@ class ClaudeCodeRuntime:
                 if not line:
                     break
                 text = line.decode(errors="replace")
+                self._stderr_tail = (self._stderr_tail + text)[-2000:]
                 log.debug("claude-code stderr: %s", text.rstrip())
                 if hub is not None and term_id:
                     try:
