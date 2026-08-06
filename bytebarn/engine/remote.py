@@ -101,15 +101,19 @@ async def run_remote(
     if needs_password:
         # strip the echoed prompt line so the transcript stays clean
         output = PASSWORD_PROMPT.sub("", output, count=1)
+        # ssh turns echo off, but a stand-in (or a server-side prompt that
+        # doesn't) would put the secret straight into the agent transcript
+        if password:
+            output = output.replace(password, "•••")
     if code == 124:
         output += f"\n[timed out after {timeout:g}s]"
-    hint = host_key_hint(output, host)
+    hint = host_key_hint(output, host, answered if needs_password else None)
     if hint:
         output += "\n" + hint
     return code, output
 
 
-def host_key_hint(output: str, host: Host) -> str:
+def host_key_hint(output: str, host: Host, answered: bool | None = None) -> str:
     """Turn ssh's terse host-key refusals into something actionable.
 
     Unattended runs cannot answer ssh's "are you sure?" prompt, so an unknown
@@ -125,6 +129,23 @@ def host_key_hint(output: str, host: Host) -> str:
             "yourself. ByteBarn will not do it for you.]")
     if "Permission denied" in output:
         if host.auth_type == PASSWORD_AUTH:
+            # ssh overwrites its own prompt with \r before printing the
+            # refusal, so the transcript alone cannot say whether the password
+            # was ever typed. `answered` is what actually happened.
+            if answered is False:
+                return (
+                    f"[{host.name}: the server never asked for a password, so "
+                    "the saved one was never sent. It is refusing password "
+                    "logins for this user — check PasswordAuthentication and "
+                    "KbdInteractiveAuthentication in its sshd_config, or that "
+                    f"the username ({host.username or 'your local user'}) is "
+                    "right.]")
+            if answered:
+                return (
+                    f"[{host.name}: ByteBarn typed the saved password at the "
+                    "server's prompt and the server rejected it. The stored "
+                    "password is wrong or the account is locked — re-enter it "
+                    "with Edit… on the host.]")
             return (
                 f"[{host.name}: the server rejected the saved password. Check "
                 "it in the host editor, and confirm the server allows password "

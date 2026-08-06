@@ -44,7 +44,10 @@ async def test_password_prompt_is_answered(tmp_path):
     code, output = await run_remote(
         _host(PASSWORD_AUTH), "uptime", password="hunter2", argv=[fake])
     assert code == 0
-    assert "got:[hunter2]" in output
+    # echoed back only because the stand-in leaves echo on; redaction keeps
+    # the secret out of the transcript either way
+    assert "got:[•••]" in output
+    assert "hunter2" not in output
 
 
 async def test_no_password_supplied_leaves_prompt_unanswered(tmp_path):
@@ -69,17 +72,32 @@ async def test_prompt_split_across_reads_is_still_answered(tmp_path):
     code, output = await run_remote(
         _host(PASSWORD_AUTH), "uptime", password="hunter2", argv=[fake])
     assert code == 0
-    assert "got:[hunter2]" in output
+    assert "got:[•••]" in output   # split prompt still got answered
+    assert "hunter2" not in output
 
 
-async def test_permission_denied_explains_password_hosts(tmp_path):
+async def test_denied_without_a_prompt_says_the_password_was_never_sent(tmp_path):
+    """ssh overwrites its prompt with \\r, so the transcript can't tell us —
+    the hint must be based on whether we actually answered."""
     fake = _script(tmp_path, "denied_ssh", (
         'echo "hunter@10.0.0.1: Permission denied (publickey,password)." >&2\n'
         "exit 255\n"))
     _code, output = await run_remote(
-        _host(PASSWORD_AUTH), "uptime", password="wrong", argv=[fake])
-    assert "rejected the saved password" in output
-    assert "PasswordAuthentication yes" in output
+        _host(PASSWORD_AUTH), "uptime", password="hunter2", argv=[fake])
+    assert "never asked for a password" in output
+    assert "KbdInteractiveAuthentication" in output
+
+
+async def test_denied_after_answering_blames_the_stored_password(tmp_path):
+    fake = _script(tmp_path, "denied_pw_ssh", (
+        'printf "hunter@10.0.0.1\'s password: "\n'
+        "read secret\n"
+        'printf "\\rhunter@10.0.0.1: Permission denied (publickey,password).\\n"\n'
+        "exit 255\n"))
+    _code, output = await run_remote(
+        _host(PASSWORD_AUTH), "uptime", password="wrong-one", argv=[fake])
+    assert "typed the saved password" in output
+    assert "wrong-one" not in output  # never echo the secret back
 
 
 async def test_permission_denied_explains_key_hosts(tmp_path):

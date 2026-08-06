@@ -1051,7 +1051,7 @@ class TerminalPanel(QWidget):
         pending_password = {"value": password} if password else None
         # rolling tail: a PTY read can split the prompt anywhere, and neither
         # half matches on its own
-        watch = {"tail": "", "seen": ""}
+        watch = {"tail": "", "seen": "", "answered": False}
 
         def on_data(text: str, _tid=tid) -> None:
             v = self._views.get(_tid)
@@ -1065,6 +1065,7 @@ class TerminalPanel(QWidget):
                 if PASSWORD_PROMPT.search(watch["tail"].strip()):
                     secret = pending_password.pop("value")
                     watch["tail"] = ""
+                    watch["answered"] = True
                     session.write(secret + "\n")
 
         def on_exit(code, _tid=tid, _host=host_hint) -> None:
@@ -1072,7 +1073,9 @@ class TerminalPanel(QWidget):
             if _host is not None:
                 from ..engine.remote import host_key_hint
 
-                hint = host_key_hint(watch["seen"], _host)
+                hint = host_key_hint(
+                    watch["seen"], _host,
+                    watch["answered"] if password else None)
                 view = self._views.get(_tid)
                 if hint and view is not None:
                     view.append_text("\r\n" + hint + "\r\n")
