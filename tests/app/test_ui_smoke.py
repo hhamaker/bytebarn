@@ -737,7 +737,7 @@ def test_menu_bar_has_menus(qapp, tmp_path):
     engine = Engine(proj, db_path=tmp_path / "db2.sqlite", global_dir=tmp_path / "g2")
     window = MainWindow(engine)
     titles = [a.menu().title() for a in window.menuBar().actions() if a.menu()]
-    assert titles == ["&File", "&Projects", "&Session", "&Tools", "&Help"]
+    assert titles == ["&File", "&Projects", "&View", "&Session", "&Tools", "&Help"]
 
 
 async def test_new_session_instant_inherits_directory(qapp, tmp_path):
@@ -1556,8 +1556,9 @@ async def test_session_picker_splitter_drags_freely(qapp, tmp_path):
         window.resize(1200, 800)
         window.show()
         qapp.processEvents()
-        split = window.centralWidget()
+        split = window._main_split  # central widget wraps nav rail + splitter
         win_w = window.width()
+        total_w = split.width()
         # ProjectWorkspace used to pin this near 380px via ModelPicker mins.
         assert window.sidebar.minimumSizeHint().width() <= 220
         assert window.workspace.minimumSizeHint().width() <= 220
@@ -1569,11 +1570,11 @@ async def test_session_picker_splitter_drags_freely(qapp, tmp_path):
             assert "…" not in text and "..." not in text
             assert text in ("Chats", "Goals", "Memory", "Agents")
         for target in (200, 240, 280, 360, 480, 640, 320, 220):
-            split.setSizes([target, max(200, win_w - target)])
+            split.setSizes([target, max(200, total_w - target)])
             qapp.processEvents()
             got = split.sizes()[0]
             # floor 200 (sidebar min), ceiling leaves ~280 for transcript
-            lo, hi = 200, win_w - 280
+            lo, hi = 200, total_w - 280
             expect = min(max(target, lo), hi)
             assert abs(got - expect) <= 12, (target, got, expect, split.sizes())
             assert window.width() == win_w  # drag must not grow the window
