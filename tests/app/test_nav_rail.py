@@ -121,12 +121,15 @@ async def test_terminal_view_swaps_content_and_restores(qapp, tmp_path):
         assert not window.content_split.isVisible()
         assert not window.prompt_bar.isVisible()
         assert not window.header.isVisible()
+        # the terminal view owns the full width — no project/session sidebar
+        assert not window.sidebar.isVisible()
 
         window._set_view("chat")
         qapp.processEvents()
         assert window.content_split.isVisible()
         assert window.prompt_bar.isVisible()
         assert window.header.isVisible()
+        assert window.sidebar.isVisible()
         # bottom pane was closed before entering, so it stays closed
         assert not window.terminal_panel.isVisible()
     finally:

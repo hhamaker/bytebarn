@@ -628,10 +628,14 @@ class MainWindow(QMainWindow):
             "sizes": self.mid_split.sizes(),
             "panel_open": self.terminal_panel.isVisible(),
             "prev_view": self._current_view,
+            "main_sizes": self._main_split.sizes(),
         }
         for widget in (self.header, self.search_bar, self.content_split,
                        self.todo_strip, self.prompt_bar):
             widget.setVisible(False)
+        # the terminal view owns the whole width: its own Hosts/Terminals
+        # lists replace the project sidebar
+        self.sidebar.setVisible(False)
         self.terminal_panel.setVisible(True)
         self.terminal_panel.refresh_from_hub()
 
@@ -642,6 +646,9 @@ class MainWindow(QMainWindow):
         for widget in (self.header, self.content_split,
                        self.todo_strip, self.prompt_bar):
             widget.setVisible(True)
+        self.sidebar.setVisible(True)
+        if state.get("main_sizes"):
+            self._main_split.setSizes(state["main_sizes"])
         self.terminal_panel.setVisible(state["panel_open"])
         if state["panel_open"]:
             self.mid_split.setSizes(state["sizes"])

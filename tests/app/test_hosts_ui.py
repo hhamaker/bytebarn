@@ -49,7 +49,8 @@ async def test_panel_lists_hosts_and_connects(qapp, tmp_path, monkeypatch):
 
         spawned: dict = {}
 
-        async def fake_spawn(self, command=None, title="", password=None):
+        async def fake_spawn(self, command=None, title="", password=None,
+                             host_hint=None):
             spawned["command"] = command
             spawned["title"] = title
             spawned["password"] = password
@@ -63,6 +64,36 @@ async def test_panel_lists_hosts_and_connects(qapp, tmp_path, monkeypatch):
         engine.hosts.remove(host.id)
         panel._reload_hosts()
         assert panel.host_list.count() == 0
+    finally:
+        await engine.stop()
+
+
+async def test_password_host_without_password_warns_instead_of_failing(
+        qapp, tmp_path, monkeypatch):
+    """Otherwise ssh just says 'Permission denied' and the reason is hidden."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from bytebarn.app import terminal_panel as tp
+    from bytebarn.engine.hosts import PASSWORD_AUTH
+
+    engine = await _engine(tmp_path)
+    try:
+        host = engine.hosts.add(name="legacy", hostname="10.0.0.9",
+                                username="root", auth_type=PASSWORD_AUTH)
+        panel = tp.TerminalPanel(engine)
+        warned: list[str] = []
+        monkeypatch.setattr(QMessageBox, "warning",
+                            lambda *a, **k: warned.append(a[2]))
+        spawned: list = []
+
+        async def fake_spawn(self, **kwargs):
+            spawned.append(kwargs)
+
+        monkeypatch.setattr(tp.TerminalPanel, "_spawn_shell", fake_spawn)
+        panel._connect_host(host.id)
+        await asyncio.sleep(0)
+        assert not spawned  # never launches a doomed connection
+        assert warned and "no password is stored" in warned[0]
     finally:
         await engine.stop()
 

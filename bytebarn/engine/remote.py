@@ -50,8 +50,10 @@ async def run_remote(
     answered = False
     loop = asyncio.get_running_loop()
 
+    tail = ""
+
     async def _pump() -> None:
-        nonlocal total, answered
+        nonlocal total, answered, tail
         while True:
             try:
                 data = await loop.run_in_executor(None, os.read, master, 8192)
@@ -63,9 +65,15 @@ async def run_remote(
             total += len(text)
             if total <= _MAX_OUTPUT:
                 chunks.append(text)
-            if needs_password and not answered and PASSWORD_PROMPT.search(text.strip()):
-                answered = True
-                os.write(master, (password + "\n").encode())
+            if needs_password and not answered:
+                # match on a rolling tail: a PTY read can split the prompt
+                # anywhere ("…passwo" + "rd: "), and either half alone matches
+                # nothing
+                tail = (tail + text)[-256:]
+                if PASSWORD_PROMPT.search(tail.strip()):
+                    answered = True
+                    tail = ""
+                    os.write(master, (password + "\n").encode())
 
     pump = asyncio.ensure_future(_pump())
     code = 0
@@ -115,6 +123,16 @@ def host_key_hint(output: str, host: Host) -> str:
             "connection is being intercepted. Verify the new fingerprint out "
             "of band, then remove the old entry from ~/.ssh/known_hosts "
             "yourself. ByteBarn will not do it for you.]")
+    if "Permission denied" in output:
+        if host.auth_type == PASSWORD_AUTH:
+            return (
+                f"[{host.name}: the server rejected the saved password. Check "
+                "it in the host editor, and confirm the server allows password "
+                "logins (PasswordAuthentication yes in its sshd_config).]")
+        return (
+            f"[{host.name}: the server rejected key authentication. Either add "
+            "your public key to the server, or switch this host to Password "
+            "auth in the host editor.]")
     if "Host key verification failed" in output:
         return (
             f"[{host.name}: its host key is not in ~/.ssh/known_hosts yet, and "

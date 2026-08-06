@@ -950,8 +950,20 @@ class TerminalPanel(QWidget):
             return
         password = (self.engine.host_password(host_id)
                     if host.auth_type == PASSWORD_AUTH else None)
+        if host.auth_type == PASSWORD_AUTH and not password:
+            # otherwise ssh just says "Permission denied" and the reason is
+            # invisible: the host is set to password auth with none saved
+            from PySide6.QtWidgets import QMessageBox
+
+            QMessageBox.warning(
+                self, "No password saved",
+                f"{host.name} is set to password auth but no password is "
+                "stored. Add one with Edit… on the host, or switch it to "
+                "SSH key auth.")
+            return
         loop.create_task(self._spawn_shell(
-            command=ssh_argv(host), title=host.name, password=password))
+            command=ssh_argv(host), title=host.name, password=password,
+            host_hint=host))
 
     def _host_menu(self, pos) -> None:
         item = self.host_list.itemAt(pos)
@@ -986,7 +998,7 @@ class TerminalPanel(QWidget):
 
     async def _spawn_shell(
         self, command: list[str] | None = None, title: str = "",
-        password: str | None = None,
+        password: str | None = None, host_hint=None,
     ) -> None:
         cwd = Path.home()
         if self.engine is not None:
@@ -1037,20 +1049,33 @@ class TerminalPanel(QWidget):
         # Password hosts: answer ssh's prompt once, from memory. The password
         # never reaches argv (where ps would show it) or the scrollback.
         pending_password = {"value": password} if password else None
+        # rolling tail: a PTY read can split the prompt anywhere, and neither
+        # half matches on its own
+        watch = {"tail": "", "seen": ""}
 
         def on_data(text: str, _tid=tid) -> None:
             v = self._views.get(_tid)
             if v is not None:
                 v.append_text(text)
+            watch["seen"] = (watch["seen"] + text)[-2000:]
             if pending_password and pending_password.get("value"):
                 from ..engine.remote import PASSWORD_PROMPT
 
-                if PASSWORD_PROMPT.search(text.strip()):
+                watch["tail"] = (watch["tail"] + text)[-256:]
+                if PASSWORD_PROMPT.search(watch["tail"].strip()):
                     secret = pending_password.pop("value")
+                    watch["tail"] = ""
                     session.write(secret + "\n")
 
-        def on_exit(code, _tid=tid) -> None:
+        def on_exit(code, _tid=tid, _host=host_hint) -> None:
             self._mark_status(_tid, "exited", code)
+            if _host is not None:
+                from ..engine.remote import host_key_hint
+
+                hint = host_key_hint(watch["seen"], _host)
+                view = self._views.get(_tid)
+                if hint and view is not None:
+                    view.append_text("\r\n" + hint + "\r\n")
 
         await session.start_reader(on_data, on_exit)
         self._select_id(tid)

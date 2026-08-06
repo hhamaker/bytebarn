@@ -45,6 +45,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Silent ssh auth failures.** A password prompt split across two PTY reads
+  ("…passwo" + "rd: ") matched nothing, so the saved password was never
+  typed and ssh just said "Permission denied"; matching now runs over a
+  rolling tail. Connecting a password host with no password saved warns up
+  front instead of launching a doomed connection, and a rejected login
+  explains what to check (wrong saved password vs. the server refusing
+  password auth, or a key the server does not have).
+- The Terminal view no longer shows the project/session sidebar — its own
+  Hosts and Terminals lists replace it, and the panes get the full width.
 - **"Host key verification failed" on agent runs.** Unattended ssh ran with
   `BatchMode=yes`, which also disables host-key confirmation, so any server
   not already in `known_hosts` failed with ssh's terse message. Hosts now

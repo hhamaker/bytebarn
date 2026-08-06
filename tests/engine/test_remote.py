@@ -57,6 +57,38 @@ async def test_no_password_supplied_leaves_prompt_unanswered(tmp_path):
     assert code in (0, 124)
 
 
+async def test_prompt_split_across_reads_is_still_answered(tmp_path):
+    """PTY reads split anywhere — half a prompt must not defeat the matcher."""
+    fake = _script(tmp_path, "split_ssh", (
+        'printf "hunter@10.0.0.1\'s passwo"\n'
+        "sleep 0.2\n"
+        'printf "rd: "\n'
+        "read secret\n"
+        'echo "\\ngot:[$secret]"\n'
+    ))
+    code, output = await run_remote(
+        _host(PASSWORD_AUTH), "uptime", password="hunter2", argv=[fake])
+    assert code == 0
+    assert "got:[hunter2]" in output
+
+
+async def test_permission_denied_explains_password_hosts(tmp_path):
+    fake = _script(tmp_path, "denied_ssh", (
+        'echo "hunter@10.0.0.1: Permission denied (publickey,password)." >&2\n'
+        "exit 255\n"))
+    _code, output = await run_remote(
+        _host(PASSWORD_AUTH), "uptime", password="wrong", argv=[fake])
+    assert "rejected the saved password" in output
+    assert "PasswordAuthentication yes" in output
+
+
+async def test_permission_denied_explains_key_hosts(tmp_path):
+    fake = _script(tmp_path, "denied2_ssh", (
+        'echo "Permission denied (publickey)." >&2\nexit 255\n'))
+    _code, output = await run_remote(_host(KEY_AUTH), "uptime", argv=[fake])
+    assert "switch this host to Password" in output
+
+
 async def test_unknown_host_key_gets_actionable_hint(tmp_path):
     fake = _script(tmp_path, "hostkey_ssh", (
         'echo "Host key verification failed." >&2\nexit 255\n'))
