@@ -11,9 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Saved hosts.** The Terminal Manager sidebar keeps a Termius-style
   connection book (`~/.bytebarn/hosts.json`): name, host, user, port, and
-  SSH key per entry — never passwords; auth is keys/agent only.
-  Double-click (or Connect) opens `ssh` in a new terminal tile. + Host /
-  Edit… / Delete manage entries.
+  either an SSH key or a username/password. Double-click (or Connect) opens
+  `ssh` in a new terminal tile. + Host / Edit… / Delete manage entries.
+  Passwords are stored in the 0600 auth store beside provider keys, never in
+  `hosts.json` and never on an ssh command line — ByteBarn answers the
+  prompt on the PTY.
+- **Agents can use saved hosts.** A new `ssh` tool runs one command on a
+  saved host (`host`, `command`, `timeout`). It asks for confirmation by
+  default, is denied outright in Safe and Plan modes, and matches permission
+  rules on `"<host>: <command>"` so you can pre-allow narrow patterns like
+  `"staging: systemctl status*"`. Only agents whose tool map includes `ssh`
+  can see it.
 - **Slide-out nav rail.** The » toggle at the rail's foot expands it to show
   what each icon means (Projects / Chat / Code / Terminal, Agents /
   Providers / Settings); the choice persists in config as

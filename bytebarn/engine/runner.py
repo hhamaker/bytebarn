@@ -752,6 +752,8 @@ class Runner:
             sandbox_config=sconf,
             session_mode=engine.session_mode,
             use_sandbox=should_sandbox(engine.session_mode, sconf),
+            hosts=getattr(engine, "hosts", None),
+            host_password=getattr(engine, "host_password", None),
         )
 
     # ------------------------------------------------------------------

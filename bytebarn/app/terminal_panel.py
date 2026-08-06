@@ -915,7 +915,9 @@ class TerminalPanel(QWidget):
 
         dialog = HostDialog(parent=self)
         if dialog.exec():
-            self.engine.hosts.add(**dialog.values())
+            host = self.engine.hosts.add(**dialog.values())
+            if dialog.password():
+                self.engine.set_host_password(host.id, dialog.password())
             self._reload_hosts()
 
     def _edit_host(self, host_id: str) -> None:
@@ -926,15 +928,18 @@ class TerminalPanel(QWidget):
         host = self.engine.hosts.get(host_id) if self.engine else None
         if host is None:
             return
-        dialog = HostDialog(host, parent=self)
+        dialog = HostDialog(
+            host, has_password=bool(self.engine.host_password(host_id)), parent=self)
         if dialog.exec():
             self.engine.hosts.update(replace(host, **dialog.values()))
+            if dialog.password():  # blank keeps the stored one
+                self.engine.set_host_password(host_id, dialog.password())
             self._reload_hosts()
 
     def _connect_host(self, host_id: str) -> None:
         import asyncio
 
-        from ..engine.hosts import ssh_argv
+        from ..engine.hosts import PASSWORD_AUTH, ssh_argv
 
         host = self.engine.hosts.get(host_id) if self.engine else None
         if host is None:
@@ -943,8 +948,10 @@ class TerminalPanel(QWidget):
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
+        password = (self.engine.host_password(host_id)
+                    if host.auth_type == PASSWORD_AUTH else None)
         loop.create_task(self._spawn_shell(
-            command=ssh_argv(host), title=host.name))
+            command=ssh_argv(host), title=host.name, password=password))
 
     def _host_menu(self, pos) -> None:
         item = self.host_list.itemAt(pos)
@@ -963,7 +970,7 @@ class TerminalPanel(QWidget):
         elif chosen is edit:
             self._edit_host(host_id)
         elif chosen is delete and self.engine is not None:
-            self.engine.hosts.remove(host_id)
+            self.engine.forget_host(host_id)  # drops the stored password too
             self._reload_hosts()
 
     # -- shells ---------------------------------------------------------------
@@ -979,6 +986,7 @@ class TerminalPanel(QWidget):
 
     async def _spawn_shell(
         self, command: list[str] | None = None, title: str = "",
+        password: str | None = None,
     ) -> None:
         cwd = Path.home()
         if self.engine is not None:
@@ -1026,10 +1034,20 @@ class TerminalPanel(QWidget):
         self._mount_in_pane(pane, tid)
         self.pane_area.set_active(pane)
 
+        # Password hosts: answer ssh's prompt once, from memory. The password
+        # never reaches argv (where ps would show it) or the scrollback.
+        pending_password = {"value": password} if password else None
+
         def on_data(text: str, _tid=tid) -> None:
             v = self._views.get(_tid)
             if v is not None:
                 v.append_text(text)
+            if pending_password and pending_password.get("value"):
+                from ..engine.remote import PASSWORD_PROMPT
+
+                if PASSWORD_PROMPT.search(text.strip()):
+                    secret = pending_password.pop("value")
+                    session.write(secret + "\n")
 
         def on_exit(code, _tid=tid) -> None:
             self._mark_status(_tid, "exited", code)

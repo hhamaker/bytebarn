@@ -29,6 +29,7 @@ _DEFAULTS: dict[str, str] = {
     "write": ASK,
     "webfetch": ASK,
     "websearch": ASK,
+    "ssh": ASK,      # remote command on a saved host — always confirm
 }
 
 # Mutating tools blocked in Plan mode (and typically in Safe).

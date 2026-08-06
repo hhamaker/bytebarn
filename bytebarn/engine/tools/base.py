@@ -50,6 +50,10 @@ class ToolContext:
     sandbox_config: Any = None
     session_mode: str | None = None
     use_sandbox: bool | None = None
+    # saved connections (ssh tool); password lookup stays a callable so the
+    # secret is fetched on use, never carried around in the context
+    hosts: Any = None
+    host_password: Callable[[str], str | None] | None = None
 
     def resolve_path(self, path: str) -> Path:
         p = Path(path).expanduser()

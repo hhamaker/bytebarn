@@ -1,0 +1,17 @@
+Run a single shell command on one of the user's saved hosts over ssh.
+
+Use this when a task needs something that only exists on a remote server —
+checking a service, reading a log, deploying, inspecting disk usage. For work
+on the local machine, use bash instead.
+
+- `host` is the saved host's name (as shown in the user's host list) or its id.
+- `command` runs through the remote login shell; quote paths that need it.
+- `timeout` is in seconds (default 120, max 600).
+
+Each call is confirmed by the user unless they have allowed the host and
+command pattern in advance, so prefer one precise command over a chain of
+exploratory ones. Never echo secrets, and never pass a password on the
+command line — saved hosts authenticate themselves.
+
+If the host name is wrong the result lists the hosts that do exist; retry
+with one of those rather than guessing hostnames.

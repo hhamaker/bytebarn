@@ -16,6 +16,10 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 
+KEY_AUTH = "key"
+PASSWORD_AUTH = "password"
+
+
 @dataclass
 class Host:
     id: str
@@ -24,6 +28,8 @@ class Host:
     username: str = ""
     port: int = 22
     identity_file: str = ""
+    auth_type: str = KEY_AUTH   # "key" | "password"; the password itself
+    # lives in AuthStore under "host:<id>", never in this file
     created_at: float = field(default_factory=time.time)
 
     @property
@@ -32,15 +38,29 @@ class Host:
         return f"{self.name} ({target})" if self.name != target else target
 
 
-def ssh_argv(host: Host) -> list[str]:
-    """The ssh command for a host; omits defaults to keep it readable."""
+def ssh_argv(host: Host, command: str = "", *, batch: bool = False) -> list[str]:
+    """The ssh command for a host, optionally running ``command`` remotely.
+
+    ``batch`` is for unattended (agent) use: key auth then fails fast rather
+    than hanging on a prompt. Interactive terminal connections leave it off so
+    an encrypted key can still ask for its passphrase. Password auth asks
+    exactly once and the password never touches argv — callers answer the
+    prompt on a PTY."""
     argv = ["ssh"]
     if host.port and host.port != 22:
         argv += ["-p", str(host.port)]
-    if host.identity_file:
-        argv += ["-i", str(Path(host.identity_file).expanduser())]
+    if host.auth_type == PASSWORD_AUTH:
+        argv += ["-o", "NumberOfPasswordPrompts=1",
+                 "-o", "PreferredAuthentications=password,keyboard-interactive"]
+    else:
+        if host.identity_file:
+            argv += ["-i", str(Path(host.identity_file).expanduser())]
+        if batch:
+            argv += ["-o", "BatchMode=yes"]
     target = f"{host.username}@{host.hostname}" if host.username else host.hostname
     argv.append(target)
+    if command:
+        argv.append(command)
     return argv
 
 
@@ -66,6 +86,7 @@ class HostStore:
                     username=str(entry.get("username", "")),
                     port=int(entry.get("port", 22)),
                     identity_file=str(entry.get("identity_file", "")),
+                    auth_type=str(entry.get("auth_type", KEY_AUTH)),
                     created_at=float(entry.get("created_at", 0.0)),
                 ))
             except (KeyError, TypeError, ValueError):
@@ -86,9 +107,18 @@ class HostStore:
     def get(self, host_id: str) -> Host | None:
         return next((h for h in self._hosts if h.id == host_id), None)
 
+    def by_name(self, name: str) -> Host | None:
+        """Lookup by id, exact name, or case-insensitive name (agent-friendly)."""
+        needle = name.strip()
+        for host in self._hosts:
+            if host.id == needle or host.name == needle:
+                return host
+        lowered = needle.lower()
+        return next((h for h in self._hosts if h.name.lower() == lowered), None)
+
     def add(
         self, *, name: str, hostname: str, username: str = "",
-        port: int = 22, identity_file: str = "",
+        port: int = 22, identity_file: str = "", auth_type: str = KEY_AUTH,
     ) -> Host:
         host = Host(
             id=uuid.uuid4().hex[:10],
@@ -97,6 +127,7 @@ class HostStore:
             username=username.strip(),
             port=port,
             identity_file=identity_file.strip(),
+            auth_type=auth_type if auth_type in (KEY_AUTH, PASSWORD_AUTH) else KEY_AUTH,
         )
         self._hosts.append(host)
         self._save()
