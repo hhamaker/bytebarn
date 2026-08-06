@@ -197,6 +197,21 @@ class PtySession:
         self.status = "exited"
 
 
+def _login_tty() -> None:
+    """Make the child's stdin its *controlling* terminal (login_tty(3)).
+
+    ``start_new_session=True`` only calls setsid: the process then has no
+    controlling terminal at all, so anything opening /dev/tty gets ENXIO.
+    ssh reads passwords from /dev/tty, not stdin, so without this it can
+    never prompt — and job control (Ctrl+C, fg/bg) does not work either.
+    """
+    os.setsid()
+    try:
+        fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+    except OSError:
+        pass
+
+
 async def spawn_shell(
     *,
     terminal_id: str,
@@ -245,7 +260,7 @@ async def spawn_shell(
             stdout=slave,
             stderr=slave,
             cwd=work,
-            start_new_session=True,
+            preexec_fn=_login_tty,   # NOT start_new_session — see _login_tty
             env=env,
         )
     finally:

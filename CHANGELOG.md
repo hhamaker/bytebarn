@@ -45,6 +45,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Terminals had no controlling terminal.** PTY children were spawned with
+  `start_new_session=True`, which calls `setsid` but never claims the PTY, so
+  `/dev/tty` failed with ENXIO. ssh reads passwords from `/dev/tty`, so it
+  could never prompt and every password login died as "Permission denied"
+  with no prompt in sight; job control (Ctrl+C, fg/bg) was broken in local
+  shells for the same reason. Children now do a proper `login_tty`.
 - **Silent ssh auth failures.** A password prompt split across two PTY reads
   ("…passwo" + "rd: ") matched nothing, so the saved password was never
   typed and ssh just said "Permission denied"; matching now runs over a

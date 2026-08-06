@@ -20,6 +20,44 @@ def _host(auth=KEY_AUTH) -> Host:
     return Host(id="h1", name="box", hostname="example.com", auth_type=auth)
 
 
+async def test_child_gets_a_controlling_terminal(tmp_path):
+    """ssh reads passwords from /dev/tty, not stdin.
+
+    Spawning with start_new_session=True leaves the child with no controlling
+    terminal, so /dev/tty fails with ENXIO and ssh can never prompt — it just
+    reports "Permission denied" with no prompt in sight."""
+    probe = _script(tmp_path, "ctty_probe", (
+        "if printf '' > /dev/tty 2>/dev/null; then echo HAS_CTTY; "
+        "else echo NO_CTTY; fi\n"))
+    code, output = await run_remote(_host(), "true", argv=[probe])
+    assert code == 0
+    assert "HAS_CTTY" in output, output
+
+
+async def test_password_read_from_dev_tty_is_answered(tmp_path):
+    """End-to-end shape of a real ssh login: prompt on /dev/tty, echo off."""
+    reader = tmp_path / "tty_ssh"
+    reader.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys, termios\n"
+        "tty = open('/dev/tty', 'r+')\n"
+        "tty.write(\"user@host's password: \"); tty.flush()\n"
+        "fd = tty.fileno()\n"
+        "old = termios.tcgetattr(fd); new = list(old)\n"
+        "new[3] &= ~termios.ECHO\n"
+        "termios.tcsetattr(fd, termios.TCSADRAIN, new)\n"
+        "line = tty.readline().rstrip('\\n')\n"
+        "termios.tcsetattr(fd, termios.TCSADRAIN, old)\n"
+        "tty.write('\\r\\nAUTH:' + ('ok' if line == 'hunter2' else 'bad') "
+        "+ '\\r\\n'); tty.flush()\n")
+    reader.chmod(reader.stat().st_mode | stat.S_IEXEC)
+    code, output = await run_remote(
+        _host(PASSWORD_AUTH), "uptime", password="hunter2", argv=[str(reader)])
+    assert code == 0
+    assert "AUTH:ok" in output
+    assert "hunter2" not in output
+
+
 async def test_runs_and_captures_output(tmp_path):
     fake = _script(tmp_path, "fake_ssh", 'echo "hello from remote"\n')
     code, output = await run_remote(_host(), "whoami", argv=[fake])

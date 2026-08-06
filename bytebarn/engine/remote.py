@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import fcntl
 import os
 import pty
 import re
 import signal
+import termios
 
 from .hosts import PASSWORD_AUTH, Host, ssh_argv
 
@@ -40,10 +42,18 @@ async def run_remote(
     Exit code 124 means the command timed out, matching ``timeout(1)``."""
     argv = argv or ssh_argv(host, command, batch=True)
     master, slave = pty.openpty()
+
+    def _login_tty() -> None:
+        # setsid alone leaves the child with no controlling terminal, and ssh
+        # reads passwords from /dev/tty — which then fails with ENXIO
+        os.setsid()
+        with contextlib.suppress(OSError):
+            fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
     try:
         proc = await asyncio.create_subprocess_exec(
             *argv, stdin=slave, stdout=slave, stderr=slave,
-            start_new_session=True,
+            preexec_fn=_login_tty,
         )
     finally:
         os.close(slave)
