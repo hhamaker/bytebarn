@@ -163,6 +163,31 @@ async def test_theme_applies_and_default_from_config(qapp, tmp_path):
         await engine.stop()
 
 
+async def test_backend_output_is_seeded_once_and_ansi_stripped(qapp, tmp_path):
+    """Regression: the snapshot was applied twice (doubling the log), and the
+    plain log view printed escape codes literally."""
+    from bytebarn.engine.events import TerminalOpened
+
+    from bytebarn.app.terminal_panel import TerminalPanel
+
+    engine = await _engine(tmp_path)
+    try:
+        panel = TerminalPanel(engine)
+        tid = "cc:s1"
+        engine.terminals.open(kind="claude-code", title="build",
+                              session_id="s1", terminal_id=tid)
+        engine.terminals.append(tid, "\x1b[32m✓\x1b[0m compiled 42 modules\n")
+        panel.handle_event(TerminalOpened(
+            terminal_id=tid, kind="claude-code", title="build", session_id="s1"))
+
+        text = panel._views[tid].toPlainText()
+        assert text.count("compiled 42 modules") == 1, text
+        assert "\x1b" not in text and "[32m" not in text
+        assert "✓ compiled 42 modules" in text
+    finally:
+        await engine.stop()
+
+
 def test_drop_zone_geometry():
     from PySide6.QtCore import QPoint
 

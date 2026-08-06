@@ -24,8 +24,17 @@ $PY -m PyInstaller \
   --osx-bundle-identifier dev.bytebarn.app \
   scripts/app_entry.py
 
+# PyInstaller stamps 0.0.0, so a built app cannot say which release it is.
+# Take the version from the package metadata and write it into the bundle.
+VERSION=$($PY -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+PLIST=dist/ByteBarn.app/Contents/Info.plist
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$PLIST" 2>/dev/null \
+  || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $VERSION" "$PLIST"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$PLIST" 2>/dev/null \
+  || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $VERSION" "$PLIST"
+
 echo
-echo "built dist/ByteBarn.app"
+echo "built dist/ByteBarn.app ($VERSION)"
 if [[ "${1:-}" == "--install" ]]; then
   rm -rf /Applications/ByteBarn.app
   cp -R dist/ByteBarn.app /Applications/ByteBarn.app

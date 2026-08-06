@@ -4,21 +4,24 @@
 [![PyPI](https://img.shields.io/pypi/v/bytebarn)](https://pypi.org/project/bytebarn/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-A local desktop harness for AI coding agents. Open a project, type a prompt
-or a `/goal`, and a barn crew of pixel-art farm animals gets to work on your
-codebase.
+A local desktop harness for AI coding agents. Pick a project, then move
+between its chats, its goal runs, and a real terminal from one window —
+with a barn crew of pixel-art farm animals doing the work.
 
-![The barn crew, ready for a goal](docs/media/welcome-dark.png)
+![A session: prompt, answer, syntax-highlighted code](docs/media/session-dark.png)
 
 The app itself is fully local — no cloud backend, no accounts, no
-telemetry. Connect it to any of 17 LLM providers (Anthropic, OpenAI, Groq,
-Bedrock, OpenRouter, Z.ai, and more), or skip the cloud entirely and run models
-on your own machine via Ollama or LM Studio.
-
-![A session: chat, tool calls, live diffing](docs/media/session-dark.png)
+telemetry. Connect it to any of 18 LLM providers (Anthropic, OpenAI, Groq,
+Bedrock, OpenRouter, Z.ai, Moonshot, and more) or your Claude Code
+subscription, or skip the cloud entirely and run models on your own machine
+via Ollama or LM Studio.
 
 ## What's in the barn
 
+- **One window, four views.** A nav rail switches between **Projects**,
+  **Chat**, **Code**, and **Terminal** (⌘1–⌘4); the `»` toggle slides it
+  out to label every icon. Each project keeps its own chats, goal runs,
+  memory bundle, and agent defaults.
 - **Chat + agents** — markdown/code transcript, streaming, collapsible tool
   and thinking cards, edit-and-re-run any prompt, regenerate, per-message
   copy, in-conversation search (⌘F), full-text search across all chats,
@@ -28,6 +31,16 @@ on your own machine via Ollama or LM Studio.
   subagent gets a git worktree so parallel edits do not collide; changes
   merge back into your tree). Queue goals and walk away; routines re-run a
   prompt on a schedule.
+- **A terminal that is actually a terminal** — a cell-grid VT emulator
+  (colors, cursor addressing, alt screen, scrollback, job control), tiled
+  into as many panes as you like by dragging a terminal onto a pane edge.
+  Rename any terminal, give each one its own color theme from ten built-ins,
+  and watch Claude Code runs stream into their own pane.
+- **Saved hosts** — a connection book (name, host, user, port, SSH key *or*
+  password) that opens `ssh` in a pane on double-click. Passwords live in
+  the 0600 auth store, never in config and never on a command line. Agents
+  can run commands on those hosts through the `ssh` tool — confirmed per
+  call, denied outright in Safe and Plan modes.
 - **Harness tools** — web search + research agent, MCP servers (12 one-click
   recipes + custom), skills (catalog + `skill` tool + `/skill <name>`),
   per-project persistent memory, preview panel for HTML/dev servers, inline
@@ -37,6 +50,17 @@ on your own machine via Ollama or LM Studio.
   seatbelt sandbox for Full-auto bash, config hooks, `/diff` `/review`
   `/context` `/rewind`, run review with per-file revert, cost tracking,
   automatic model fallback, extended-thinking control per agent.
+- **Three looks** — the classic dark theme, a warm "Night Workshop", and a
+  paper-white light theme (✨ ui in the status bar, or Settings).
+
+![Terminal view: tiled panes, per-pane themes, saved hosts](docs/media/terminal-panes.png)
+
+<details>
+<summary>Same session in the light theme</summary>
+
+![Light theme](docs/media/session-light.png)
+
+</details>
 
 ## Quick start
 
@@ -56,9 +80,11 @@ users can also grab `ByteBarn.app` from the
 [latest release](https://github.com/hhamaker/bytebarn/releases) — drag to
 Applications, open, done.
 
-On first launch, connect a provider (**⚡ providers** in the status bar —
-paste an API key or log in via web) and start typing. Ollama and LM Studio
-work with no key at all.
+On first launch, connect a provider (**⚡ Providers** at the foot of the nav
+rail — paste an API key or log in via web) and start typing. Ollama and LM
+Studio work with no key at all.
+
+![The nav rail, expanded](docs/media/nav-rail.png)
 
 <details>
 <summary>Running from source / contributing</summary>
@@ -94,6 +120,8 @@ QT_QPA_PLATFORM=offscreen .venv/bin/pytest
   similar work well; tiny chat-only models will disappoint.
 
 ## The signature flow
+
+![The barn crew, waiting for a prompt](docs/media/welcome-dark.png)
 
 Type `/goal add a --verbose flag to the CLI and test it` in the prompt bar:
 
@@ -139,7 +167,7 @@ tolerated; in-app edits patch files key-by-key, preserving your comments.
 Any OpenAI-compatible endpoint works (LM Studio, Ollama, OpenRouter, Groq)
 via `base_url` + `"api": "openai"`.
 
-### Provider connections (⚡ providers in the status bar)
+### Provider connections (⚡ Providers on the nav rail)
 
 Pick a provider, paste a key or **🌐 log in via web**, hit *Test connection*:
 
@@ -154,6 +182,7 @@ Pick a provider, paste a key or **🌐 log in via web**, hit *Test connection*:
 | Mistral | API key / `MISTRAL_API_KEY` | |
 | DeepSeek | API key / `DEEPSEEK_API_KEY` | |
 | Z.ai (GLM) | API key / `ZAI_API_KEY` | Zhipu GLM models; glm-4.7-flash is free |
+| Moonshot AI (Kimi) | API key / `MOONSHOT_API_KEY` | Kimi K2 models |
 | Together AI | API key / `TOGETHER_API_KEY` | |
 | Cerebras | API key / `CEREBRAS_API_KEY` | |
 | AWS Bedrock | Access Key ID + Secret Access Key (or AWS chain) | region field / `AWS_REGION`; boto3 optional for live lists |
@@ -162,6 +191,7 @@ Pick a provider, paste a key or **🌐 log in via web**, hit *Test connection*:
 | Ollama | none | local, `http://localhost:11434/v1` |
 | LM Studio | none | local, `http://localhost:1234/v1` |
 | GitHub Copilot | web login | GitHub device code — needs a Copilot subscription |
+| Claude Code | your local `claude` CLI | runtime backend, not an API key — runs through your existing Claude Code auth; output streams into the Terminal view |
 
 Web login flavors: xAI and GitHub Copilot show a short code to confirm in
 the browser (auto-copied to your clipboard; the dialog closes itself on
@@ -203,7 +233,7 @@ The orchestrator sees every visible subagent's description in its task tool
 and picks accordingly. A file named after a built-in (`build`, `plan`, `orchestrator`,
 `general`, `explore`, `chat`, `research`) merges over it.
 
-Prefer a GUI? **🐾 agents** in the status bar opens the agent editor with a
+Prefer a GUI? **🐾 Agents** on the nav rail opens the agent editor with a
 live sprite preview per agent. Sessions are managed from the sidebar:
 right-click one to **close** (archive) or **delete** it, subagents and all.
 
@@ -217,6 +247,37 @@ Skills are markdown under `~/.bytebarn/skills/` or
 `<project>/.bytebarn/skills/` (optional YAML `description` frontmatter).
 Agents see a skill catalog in the system prompt and load full guidance via
 the `skill` tool when a skill matches the task.
+
+## Terminals and hosts
+
+The **Terminal** view (⌘4) is a tiling terminal manager. Drag a terminal
+from the list onto a pane: the edges split in that direction, the middle
+swaps what that pane shows. **Split →** / **Split ↓** open a new shell in a
+fresh pane, and every pane header carries a 🎨 theme menu and a ✕ that
+closes the tile without killing the shell. Rename a terminal by
+double-clicking it. Themes are per terminal — Dark+, Night Barn, Solarized
+Dark/Light, Dracula, Nord, Gruvbox Dark, Monokai, One Dark, Tokyo Night —
+and "Set current as default" saves one under `terminal.theme`.
+
+**+ Host** saves a connection: name, host, user, port, and either an SSH key
+or a password. Double-click to open it in a pane. Hosts live in
+`~/.bytebarn/hosts.json`; passwords go to `~/.bytebarn/auth.json` (0600)
+beside provider keys — never in `hosts.json`, never on an ssh command line.
+Host keys are checked normally; a per-host "Trust new host key on first
+connect" checkbox opts into `accept-new` for that host, and a key that
+*changes* is always refused.
+
+Agents reach the same hosts through the `ssh` tool:
+
+```jsonc
+"permission": {
+  "ssh": { "default": "ask", "allow": ["staging: systemctl status*"] }
+}
+```
+
+Patterns match `"<host>: <command>"`. It asks before every call by default,
+is denied in Safe and Plan modes, and is only offered to agents whose tool
+map includes it.
 
 ## Permissions
 
@@ -247,9 +308,11 @@ poisoned.
 ./scripts/build_macos_app.sh --install   # builds dist/ByteBarn.app, copies to /Applications
 ```
 
-Uses PyInstaller; the app icon is rendered from the in-app sprite art.
-Launching from the Dock opens straight into your last-used folder — each
-session picks its own working directory from there.
+Uses PyInstaller; the app icon is rendered from the in-app sprite art, and
+the bundle is stamped with the version from `pyproject.toml` so About and
+Finder report the release you built. Launching from the Dock opens straight
+into your last-used folder — each session picks its own working directory
+from there.
 
 ## Platform support
 

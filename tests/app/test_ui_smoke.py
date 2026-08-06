@@ -2572,3 +2572,19 @@ async def test_a_worktree_cleanup_failure_reaches_the_status_bar(qapp, tmp_path)
         assert await engine.store.get_session(session.id) is None
     finally:
         await engine.stop()
+
+
+def test_code_blocks_follow_the_theme(qapp):
+    """monokai on paper white is unreadable — light themes get a light style."""
+    from bytebarn.app import theme
+    from bytebarn.app.markdown import render_markdown
+
+    theme.apply_theme(qapp, "dark")
+    dark = render_markdown("```python\nx = 1\n```")
+    assert "#1d2027" in dark
+
+    theme.apply_theme(qapp, "light")
+    light = render_markdown("```python\nx = 1\n```")
+    assert "#1d2027" not in light and "#f1f2f5" in light
+
+    theme.apply_theme(qapp, "dark")  # leave the app as we found it

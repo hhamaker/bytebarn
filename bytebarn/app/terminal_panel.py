@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from pathlib import Path
 
@@ -402,6 +403,15 @@ class TerminalView(QWidget):
             self._pty.write(text.replace("\n", "\r"))
 
 
+# CSI/OSC escapes: backend tees carry color and cursor control that a plain
+# text view would otherwise print literally as "[32m✓[0m"
+_ANSI = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]|\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def strip_ansi(text: str) -> str:
+    return _ANSI.sub("", text)
+
+
 class LogTerminalView(QPlainTextEdit):
     """Read-only plain log for backend tees (Claude Code stream-json etc.)."""
 
@@ -431,12 +441,12 @@ class LogTerminalView(QPlainTextEdit):
             >= self.verticalScrollBar().maximum() - 4
         )
         self.moveCursor(QTextCursor.End)
-        self.insertPlainText(text)
+        self.insertPlainText(strip_ansi(text))
         if at_end:
             self.moveCursor(QTextCursor.End)
 
     def set_text(self, text: str) -> None:
-        self.setPlainText(text or "")
+        self.setPlainText(strip_ansi(text or ""))
         self.moveCursor(QTextCursor.End)
 
     def feed(self, text: str) -> None:
@@ -619,13 +629,11 @@ class TerminalPanel(QWidget):
     def handle_event(self, event) -> None:
         name = getattr(event, "name", "")
         if name == "terminal.opened":
+            # _ensure_backend_item already seeds a new view from the hub
+            # snapshot; setting it again here doubled the output
             self._ensure_backend_item(
                 event.terminal_id, event.title or event.terminal_id,
                 event.kind, "running")
-            if event.kind != "user" and self.engine is not None:
-                view = self._views.get(event.terminal_id)
-                if view is not None:
-                    view.set_text(self.engine.terminals.snapshot(event.terminal_id))
             self._select_id(event.terminal_id)
         elif name == "terminal.chunk":
             view = self._views.get(event.terminal_id)
