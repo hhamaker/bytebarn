@@ -77,8 +77,22 @@ def test_host_dialog_round_trip(qapp):
     values = dialog.values()
     assert values == {"name": "db box", "hostname": "db.internal",
                       "username": "admin", "port": 2200,
-                      "identity_file": "~/.ssh/db", "auth_type": "key"}
+                      "identity_file": "~/.ssh/db", "auth_type": "key",
+                      "accept_new_key": False}
     assert dialog.password() == ""  # key auth never reports a password
+
+
+def test_dialog_exposes_host_key_trust_opt_in(qapp):
+    from bytebarn.app.host_dialog import HostDialog
+    from bytebarn.engine.hosts import Host
+
+    dialog = HostDialog()
+    assert dialog.accept_new_check.isChecked() is False  # opt-in, never default
+    dialog.accept_new_check.setChecked(True)
+    assert dialog.values()["accept_new_key"] is True
+
+    trusted = Host(id="h3", name="box", hostname="h", accept_new_key=True)
+    assert HostDialog(trusted).accept_new_check.isChecked() is True
 
 
 def test_host_dialog_password_mode(qapp):

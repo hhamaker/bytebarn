@@ -95,4 +95,31 @@ async def run_remote(
         output = PASSWORD_PROMPT.sub("", output, count=1)
     if code == 124:
         output += f"\n[timed out after {timeout:g}s]"
+    hint = host_key_hint(output, host)
+    if hint:
+        output += "\n" + hint
     return code, output
+
+
+def host_key_hint(output: str, host: Host) -> str:
+    """Turn ssh's terse host-key refusals into something actionable.
+
+    Unattended runs cannot answer ssh's "are you sure?" prompt, so an unknown
+    key looks like a bare "Host key verification failed." A *changed* key is a
+    different matter — it can mean an interception, so we never suggest
+    clearing it automatically."""
+    if "REMOTE HOST IDENTIFICATION HAS CHANGED" in output:
+        return (
+            f"[{host.name}: the server's host key changed since it was first "
+            "trusted. This can mean the server was rebuilt — or that the "
+            "connection is being intercepted. Verify the new fingerprint out "
+            "of band, then remove the old entry from ~/.ssh/known_hosts "
+            "yourself. ByteBarn will not do it for you.]")
+    if "Host key verification failed" in output:
+        return (
+            f"[{host.name}: its host key is not in ~/.ssh/known_hosts yet, and "
+            "an unattended run cannot answer ssh's confirmation prompt. "
+            "Connect once from the Terminal view and accept the fingerprint, "
+            "or tick \"Trust new host key\" in the host editor to accept it "
+            "automatically on first connect.]")
+    return ""

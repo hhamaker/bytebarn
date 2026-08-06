@@ -45,6 +45,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **"Host key verification failed" on agent runs.** Unattended ssh ran with
+  `BatchMode=yes`, which also disables host-key confirmation, so any server
+  not already in `known_hosts` failed with ssh's terse message. Hosts now
+  have an opt-in "Trust new host key on first connect" checkbox
+  (`StrictHostKeyChecking=accept-new`), and both failure modes explain
+  themselves: an unknown key tells you to connect once from the Terminal
+  view or enable the checkbox, while a *changed* key warns that it may mean
+  interception and refuses to touch `known_hosts` for you.
 - Icon buttons (pane ✕ / 🎨, panel close, search arrows, nav rail) were
   invisible: the global button padding (14 px per side) exceeded their fixed
   widths and clipped the glyph away. Flat buttons now use compact padding.

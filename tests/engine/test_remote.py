@@ -57,6 +57,44 @@ async def test_no_password_supplied_leaves_prompt_unanswered(tmp_path):
     assert code in (0, 124)
 
 
+async def test_unknown_host_key_gets_actionable_hint(tmp_path):
+    fake = _script(tmp_path, "hostkey_ssh", (
+        'echo "Host key verification failed." >&2\nexit 255\n'))
+    code, output = await run_remote(_host(), "uptime", argv=[fake])
+    assert code == 255
+    assert "Terminal view" in output and "Trust new host key" in output
+
+
+async def test_changed_host_key_warns_without_offering_a_fix(tmp_path):
+    fake = _script(tmp_path, "changed_ssh", (
+        'echo "@@@ REMOTE HOST IDENTIFICATION HAS CHANGED! @@@" >&2\nexit 255\n'))
+    _code, output = await run_remote(_host(), "uptime", argv=[fake])
+    assert "intercepted" in output
+    assert "will not do it for you" in output
+
+
+def test_accept_new_key_is_opt_in():
+    from bytebarn.engine.hosts import ssh_argv
+
+    default_argv = " ".join(ssh_argv(_host(), "uptime", batch=True))
+    assert "StrictHostKeyChecking" not in default_argv
+
+    trusting = Host(id="h2", name="box", hostname="example.com",
+                    accept_new_key=True)
+    argv = " ".join(ssh_argv(trusting, "uptime", batch=True))
+    assert "StrictHostKeyChecking=accept-new" in argv
+    # never the blanket "no" — a changed key must still fail
+    assert "StrictHostKeyChecking=no" not in argv
+
+
+def test_accept_new_key_round_trips(tmp_path):
+    from bytebarn.engine.hosts import HostStore
+
+    store = HostStore(tmp_path / "hosts.json")
+    host = store.add(name="box", hostname="example.com", accept_new_key=True)
+    assert HostStore(tmp_path / "hosts.json").get(host.id).accept_new_key is True
+
+
 async def test_timeout_kills_and_reports(tmp_path):
     fake = _script(tmp_path, "slow_ssh", "sleep 30\n")
     code, output = await run_remote(

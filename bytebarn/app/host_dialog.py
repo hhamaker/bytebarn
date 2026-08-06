@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -69,10 +70,18 @@ class HostDialog(QDialog):
         form.addRow("Host", self.host_edit)
         form.addRow("User", self.user_edit)
         form.addRow("Port", self.port_spin)
+        self.accept_new_check = QCheckBox("Trust new host key on first connect")
+        self.accept_new_check.setChecked(bool(host.accept_new_key) if host else False)
+        self.accept_new_check.setToolTip(
+            "Adds the server's key to ~/.ssh/known_hosts without asking the "
+            "first time. A key that later changes is still refused. Leave off "
+            "if you want to check the fingerprint yourself.")
+
         form.addRow("Auth", self.auth_combo)
         self._key_label = "SSH key"
         form.addRow(self._key_label, self.key_row)
         form.addRow("Password", self.password_edit)
+        form.addRow("", self.accept_new_check)
         self._form = form
         self._auth_changed()
 
@@ -123,4 +132,5 @@ class HostDialog(QDialog):
             "port": int(self.port_spin.value()),
             "identity_file": "" if password_auth else self.key_edit.text().strip(),
             "auth_type": self.auth_type(),
+            "accept_new_key": self.accept_new_check.isChecked(),
         }

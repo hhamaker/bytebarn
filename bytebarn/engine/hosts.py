@@ -30,6 +30,9 @@ class Host:
     identity_file: str = ""
     auth_type: str = KEY_AUTH   # "key" | "password"; the password itself
     # lives in AuthStore under "host:<id>", never in this file
+    # Trust-on-first-use: add an unknown host key automatically instead of
+    # asking. A *changed* key is still refused either way (MITM protection).
+    accept_new_key: bool = False
     created_at: float = field(default_factory=time.time)
 
     @property
@@ -49,6 +52,9 @@ def ssh_argv(host: Host, command: str = "", *, batch: bool = False) -> list[str]
     argv = ["ssh"]
     if host.port and host.port != 22:
         argv += ["-p", str(host.port)]
+    if host.accept_new_key:
+        # accept-new adds unknown keys but still refuses changed ones
+        argv += ["-o", "StrictHostKeyChecking=accept-new"]
     if host.auth_type == PASSWORD_AUTH:
         argv += ["-o", "NumberOfPasswordPrompts=1",
                  "-o", "PreferredAuthentications=password,keyboard-interactive"]
@@ -87,6 +93,7 @@ class HostStore:
                     port=int(entry.get("port", 22)),
                     identity_file=str(entry.get("identity_file", "")),
                     auth_type=str(entry.get("auth_type", KEY_AUTH)),
+                    accept_new_key=bool(entry.get("accept_new_key", False)),
                     created_at=float(entry.get("created_at", 0.0)),
                 ))
             except (KeyError, TypeError, ValueError):
@@ -119,6 +126,7 @@ class HostStore:
     def add(
         self, *, name: str, hostname: str, username: str = "",
         port: int = 22, identity_file: str = "", auth_type: str = KEY_AUTH,
+        accept_new_key: bool = False,
     ) -> Host:
         host = Host(
             id=uuid.uuid4().hex[:10],
@@ -128,6 +136,7 @@ class HostStore:
             port=port,
             identity_file=identity_file.strip(),
             auth_type=auth_type if auth_type in (KEY_AUTH, PASSWORD_AUTH) else KEY_AUTH,
+            accept_new_key=bool(accept_new_key),
         )
         self._hosts.append(host)
         self._save()
