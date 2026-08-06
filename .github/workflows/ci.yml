@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # lets a run be re-triggered by hand — pushes stop creating runs during an
+  # Actions outage, and re-pushing to force one is worse than a button
+  workflow_dispatch:
 
 jobs:
   test:
