@@ -122,7 +122,8 @@ QPushButton#railItem:checked {{
     background: {t['accent_soft']}; color: {t['text']};
     border: 1px solid {t['accent']};
 }}
-QPushButton#railItem:focus {{ outline: none; border: 1px solid {t['accent']}; }}
+QPushButton#railItem:focus {{ outline: none; background: {t['hover']}; }}
+QPushButton#railItem:checked:focus {{ background: {t['accent_soft']}; }}
 
 /* -- inputs & lists ---------------------------------------------------- */
 QPlainTextEdit, QLineEdit, QTreeWidget, QListWidget {{

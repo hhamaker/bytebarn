@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Termius-style shell: a nav rail with Projects / Chat / Code / Terminal
+  views.** A fixed icon rail (⌘1–⌘4) now anchors navigation: pick a project,
+  then move between its chats, its goal runs (Code view, with a new
+  "+ New code session" button that starts an orchestrator session directly),
+  and a full-content Terminal view. Providers / agents / settings moved off
+  the status bar onto the rail; leaving the Terminal view restores the chat
+  layout exactly, including the bottom terminal pane state.
+
 ### Fixed
+
+- PTY read loop crashed with a `NameError` the moment a read would block,
+  killing interactive shells; it now awaits the readiness future it created.
 
 - **Terminal Manager actually works as a terminal.** Local shells now use a
   real cell-grid VT emulator (colors, cursor addressing, clear, alt screen,
