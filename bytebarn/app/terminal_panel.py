@@ -908,6 +908,18 @@ class TerminalPanel(QWidget):
         self._adopt_view(tid, view_t)
         self._ensure_backend_item(tid, session.title, "user", "running")
 
+        # A new shell never displaces a visible terminal: reuse an empty
+        # active pane (the Split buttons pre-make one), else split off a new
+        # tile in the roomier direction.
+        pane = self.pane_area.active_pane()
+        if pane.terminal_id is not None and pane.view() is not None:
+            orientation = (Qt.Horizontal if pane.width() >= pane.height()
+                           else Qt.Vertical)
+            pane = self.pane_area.split(pane, orientation)
+            self._wire_pane(pane)
+        self._mount_in_pane(pane, tid)
+        self.pane_area.set_active(pane)
+
         def on_data(text: str, _tid=tid) -> None:
             v = self._views.get(_tid)
             if v is not None:

@@ -33,13 +33,15 @@ def zone_for(pos: QPoint, width: int, height: int) -> str:
         return "center"
     fx = pos.x() / width
     fy = pos.y() / height
-    if fx < 0.25:
+    # wide edge bands (30%) — splitting is the common intent, swapping the
+    # rarity, so the center target stays small
+    if fx < 0.3:
         return "left"
-    if fx > 0.75:
+    if fx > 0.7:
         return "right"
-    if fy < 0.25:
+    if fy < 0.3:
         return "top"
-    if fy > 0.75:
+    if fy > 0.7:
         return "bottom"
     return "center"
 
@@ -148,6 +150,12 @@ class TermPane(QFrame):
             self._placeholder.hide()
             self._body.addWidget(view, 1)
             view.installEventFilter(self)
+            # the pane owns drag & drop — a QPlainTextEdit child would
+            # otherwise swallow drops before the pane ever sees them
+            view.setAcceptDrops(False)
+            viewport = getattr(view, "viewport", None)
+            if callable(viewport) and viewport() is not None:
+                viewport().setAcceptDrops(False)
             view.show()
         else:
             self.terminal_id = None

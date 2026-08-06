@@ -257,6 +257,40 @@ async def test_drop_is_deferred_out_of_the_drag_stack(qapp, tmp_path):
         await engine.stop()
 
 
+async def test_new_shell_splits_instead_of_displacing(qapp, tmp_path):
+    """+ Shell must never replace a visible terminal — it tiles a new pane."""
+    from bytebarn.app.terminal_panel import TerminalPanel
+
+    engine = await _engine(tmp_path)
+    panel = TerminalPanel(engine)
+    try:
+        tid1 = _open_backend(engine, panel, "cc:s1", "one")
+        assert panel.pane_area.pane_for(tid1) is not None
+        await panel._spawn_shell()
+        panes = panel.pane_area.panes()
+        assert len(panes) == 2
+        assert panel.pane_area.pane_for(tid1) is not None  # still visible
+        shell_tid = next(t for t in panel._views if t != tid1)
+        assert panel.pane_area.pane_for(shell_tid) is not None
+    finally:
+        await panel.shutdown()
+        await engine.stop()
+
+
+async def test_mounted_views_do_not_swallow_drops(qapp, tmp_path):
+    from bytebarn.app.terminal_panel import TerminalPanel
+
+    engine = await _engine(tmp_path)
+    try:
+        panel = TerminalPanel(engine)
+        tid = _open_backend(engine, panel)  # LogTerminalView (QPlainTextEdit)
+        view = panel._views[tid]
+        assert not view.acceptDrops()
+        assert not view.viewport().acceptDrops()
+    finally:
+        await engine.stop()
+
+
 async def test_close_removes_terminal_and_collapses_pane(qapp, tmp_path):
     from bytebarn.app.terminal_panel import TerminalPanel
 
