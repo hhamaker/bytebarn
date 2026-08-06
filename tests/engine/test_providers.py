@@ -443,6 +443,27 @@ def test_connected_providers_and_curated(tmp_path, monkeypatch):
     assert not is_claude_code_model("anthropic/claude-sonnet-4")
 
 
+def test_claude_code_models_cover_cli_aliases():
+    """Every alias `claude --model` accepts is offered, and survives routing."""
+    from bytebarn.engine.providers.known import (
+        CLAUDE_CODE_MODELS,
+        CLAUDE_CODE_PROVIDER,
+        is_claude_code_model,
+    )
+    from bytebarn.engine.runtimes.claude_code import model_for_cli
+
+    cli_aliases = {"sonnet", "opus", "haiku", "fable", "best",
+                   "sonnet[1m]", "opus[1m]", "fable[1m]", "opusplan"}
+    assert cli_aliases <= set(CLAUDE_CODE_MODELS)
+    assert "default" in CLAUDE_CODE_MODELS  # ByteBarn sentinel: omit --model
+
+    for alias in CLAUDE_CODE_MODELS:
+        model = f"{CLAUDE_CODE_PROVIDER}/{alias}"
+        assert is_claude_code_model(model)
+        # "[1m]" brackets must reach the CLI intact; "default" means omit
+        assert model_for_cli(model) == (None if alias == "default" else alias)
+
+
 async def test_fetch_models_parses_provider_shapes(tmp_path, monkeypatch):
     import httpx
 

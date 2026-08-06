@@ -39,7 +39,24 @@ class ProviderSpec:
 # look like every other provider ("claude-code/sonnet") so agents/sessions can
 # pin it as their default; Engine routes those runs to ClaudeCodeRuntime.
 CLAUDE_CODE_PROVIDER = "claude-code"
-CLAUDE_CODE_MODELS: tuple[str, ...] = ("default", "sonnet", "opus", "haiku")
+# Every alias the `claude` CLI accepts for --model, plus ByteBarn's own
+# "default" sentinel (omit --model entirely and let the CLI choose). Mirrors
+# the CLI's internal alias list; full model ids like "claude-opus-5" also work
+# and are preserved if a session already pins one. The "[1m]" variants request
+# the 1M-token context window and need an account entitled to it — the CLI
+# falls back to the standard window when it is not available.
+CLAUDE_CODE_MODELS: tuple[str, ...] = (
+    "default",
+    "best",
+    "opusplan",
+    "fable",
+    "opus",
+    "sonnet",
+    "haiku",
+    "fable[1m]",
+    "opus[1m]",
+    "sonnet[1m]",
+)
 
 
 KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
@@ -52,7 +69,10 @@ KNOWN_PROVIDERS: dict[str, ProviderSpec] = {
             key_url="https://docs.anthropic.com/en/docs/claude-code",
             note="Local `claude` CLI (Claude Pro/Max subscription). Not an API — "
                  "ByteBarn drives headless Claude Code. Model \"default\" lets "
-                 "the CLI pick. Set as an agent default to run that agent (and "
+                 "the CLI pick, \"best\" tracks the strongest model your plan "
+                 "allows, \"opusplan\" plans with Opus then executes with "
+                 "Sonnet, and \"[1m]\" variants ask for the 1M-token context "
+                 "window. Set as an agent default to run that agent (and "
                  "its subagents) through Claude Code.",
         ),
         ProviderSpec(
