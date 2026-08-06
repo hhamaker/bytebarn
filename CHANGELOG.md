@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-08-06
+
+The workspace rebuild: a Termius-style shell, a real tiling terminal, and
+saved connections your agents can use.
+
 ### Added
 
 - **Saved hosts.** The Terminal Manager sidebar keeps a Termius-style
