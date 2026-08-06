@@ -532,6 +532,23 @@ class TerminalPanel(QWidget):
         bar.addWidget(self.clear_btn)
         bar.addWidget(close)
 
+        # saved hosts (Termius-style connection book) above the terminal list
+        self.host_list = QListWidget()
+        self.host_list.itemDoubleClicked.connect(
+            lambda item: self._connect_host(item.data(Qt.UserRole)))
+        self.host_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.host_list.customContextMenuRequested.connect(self._host_menu)
+        add_host_btn = QPushButton("+ Host")
+        add_host_btn.setFlat(True)
+        add_host_btn.setToolTip(
+            "Save a connection (SSH keys / agent only — no passwords stored)")
+        add_host_btn.clicked.connect(self._add_host)
+        hosts_header = QHBoxLayout()
+        hosts_label = QLabel("<b>Hosts</b>")
+        hosts_header.addWidget(hosts_label)
+        hosts_header.addStretch(1)
+        hosts_header.addWidget(add_host_btn)
+
         self.list = _TermList()
         self.list.setDragEnabled(True)
         self.list.setMaximumWidth(220)
@@ -556,8 +573,19 @@ class TerminalPanel(QWidget):
         self._park_layout = QVBoxLayout(self._park)
         self._park_layout.setContentsMargins(0, 0, 0, 0)
 
+        sidebar = QWidget()
+        sidebar.setMaximumWidth(220)
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(4)
+        sidebar_layout.addLayout(hosts_header)
+        sidebar_layout.addWidget(self.host_list, 1)
+        sidebar_layout.addWidget(QLabel("<b>Terminals</b>"))
+        sidebar_layout.addWidget(self.list, 2)
+        self._reload_hosts()
+
         split = QSplitter(Qt.Horizontal)
-        split.addWidget(self.list)
+        split.addWidget(sidebar)
         split.addWidget(self.pane_area)
         split.setStretchFactor(0, 0)
         split.setStretchFactor(1, 1)
@@ -575,6 +603,7 @@ class TerminalPanel(QWidget):
     def set_engine(self, engine) -> None:
         self.engine = engine
         self.refresh_from_hub()
+        self._reload_hosts()
 
     def refresh_from_hub(self) -> None:
         if self.engine is None:
@@ -865,6 +894,99 @@ class TerminalPanel(QWidget):
             self.list.setCurrentItem(item)
             self._close_selected()
 
+    # -- hosts ----------------------------------------------------------------
+
+    def _reload_hosts(self) -> None:
+        self.host_list.clear()
+        if self.engine is None:
+            return
+        from ..engine.hosts import ssh_argv
+
+        for host in self.engine.hosts.list():
+            item = QListWidgetItem(f"⇄ {host.label}")
+            item.setData(Qt.UserRole, host.id)
+            item.setToolTip(" ".join(ssh_argv(host)))
+            self.host_list.addItem(item)
+
+    def _add_host(self) -> None:
+        if self.engine is None:
+            return
+        from .host_dialog import HostDialog
+
+        dialog = HostDialog(parent=self)
+        if dialog.exec():
+            host = self.engine.hosts.add(**dialog.values())
+            if dialog.password():
+                self.engine.set_host_password(host.id, dialog.password())
+            self._reload_hosts()
+
+    def _edit_host(self, host_id: str) -> None:
+        from dataclasses import replace
+
+        from .host_dialog import HostDialog
+
+        host = self.engine.hosts.get(host_id) if self.engine else None
+        if host is None:
+            return
+        dialog = HostDialog(
+            host, has_password=bool(self.engine.host_password(host_id)), parent=self)
+        if dialog.exec():
+            self.engine.hosts.update(replace(host, **dialog.values()))
+            if dialog.password():  # blank keeps the stored one
+                self.engine.set_host_password(host_id, dialog.password())
+            self._reload_hosts()
+
+    def _connect_host(self, host_id: str) -> None:
+        import asyncio
+
+        from ..engine.hosts import PASSWORD_AUTH, ssh_argv
+
+        host = self.engine.hosts.get(host_id) if self.engine else None
+        if host is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        password = (self.engine.host_password(host_id)
+                    if host.auth_type == PASSWORD_AUTH else None)
+        if host.auth_type == PASSWORD_AUTH and not password:
+            # otherwise ssh just says "Permission denied" and the reason is
+            # invisible: the host is set to password auth with none saved
+            from PySide6.QtWidgets import QMessageBox
+
+            QMessageBox.warning(
+                self, "No password saved",
+                f"{host.name} is set to password auth but no password is "
+                "stored. Add one with Edit… on the host, or switch it to "
+                "SSH key auth.")
+            return
+        loop.create_task(self._spawn_shell(
+            command=ssh_argv(host), title=host.name, password=password,
+            host_hint=host))
+
+    def _host_menu(self, pos) -> None:
+        item = self.host_list.itemAt(pos)
+        if item is None:
+            return
+        host_id = item.data(Qt.UserRole)
+        from PySide6.QtWidgets import QMenu
+
+        menu = QMenu(self)
+        connect = menu.addAction("Connect")
+        edit = menu.addAction("Edit…")
+        delete = menu.addAction("Delete")
+        chosen = menu.exec(self.host_list.viewport().mapToGlobal(pos))
+        if chosen is connect:
+            self._connect_host(host_id)
+        elif chosen is edit:
+            self._edit_host(host_id)
+        elif chosen is delete and self.engine is not None:
+            self.engine.forget_host(host_id)  # drops the stored password too
+            self._reload_hosts()
+
+    # -- shells ---------------------------------------------------------------
+
     def _new_shell(self) -> None:
         import asyncio
 
@@ -874,7 +996,10 @@ class TerminalPanel(QWidget):
             return
         loop.create_task(self._spawn_shell())
 
-    async def _spawn_shell(self) -> None:
+    async def _spawn_shell(
+        self, command: list[str] | None = None, title: str = "",
+        password: str | None = None, host_hint=None,
+    ) -> None:
         cwd = Path.home()
         if self.engine is not None:
             cwd = Path(self.engine.project_dir)
@@ -890,7 +1015,8 @@ class TerminalPanel(QWidget):
 
         try:
             session = await spawn_shell(
-                terminal_id=tid, cwd=cwd, rows=rows, cols=cols)
+                terminal_id=tid, cwd=cwd, rows=rows, cols=cols,
+                command=command, title=title)
         except Exception as exc:
             view: AnyTermView = LogTerminalView()
             self._adopt_view(tid, view)
@@ -920,13 +1046,39 @@ class TerminalPanel(QWidget):
         self._mount_in_pane(pane, tid)
         self.pane_area.set_active(pane)
 
+        # Password hosts: answer ssh's prompt once, from memory. The password
+        # never reaches argv (where ps would show it) or the scrollback.
+        pending_password = {"value": password} if password else None
+        # rolling tail: a PTY read can split the prompt anywhere, and neither
+        # half matches on its own
+        watch = {"tail": "", "seen": "", "answered": False}
+
         def on_data(text: str, _tid=tid) -> None:
             v = self._views.get(_tid)
             if v is not None:
                 v.append_text(text)
+            watch["seen"] = (watch["seen"] + text)[-2000:]
+            if pending_password and pending_password.get("value"):
+                from ..engine.remote import PASSWORD_PROMPT
 
-        def on_exit(code, _tid=tid) -> None:
+                watch["tail"] = (watch["tail"] + text)[-256:]
+                if PASSWORD_PROMPT.search(watch["tail"].strip()):
+                    secret = pending_password.pop("value")
+                    watch["tail"] = ""
+                    watch["answered"] = True
+                    session.write(secret + "\n")
+
+        def on_exit(code, _tid=tid, _host=host_hint) -> None:
             self._mark_status(_tid, "exited", code)
+            if _host is not None:
+                from ..engine.remote import host_key_hint
+
+                hint = host_key_hint(
+                    watch["seen"], _host,
+                    watch["answered"] if password else None)
+                view = self._views.get(_tid)
+                if hint and view is not None:
+                    view.append_text("\r\n" + hint + "\r\n")
 
         await session.start_reader(on_data, on_exit)
         self._select_id(tid)

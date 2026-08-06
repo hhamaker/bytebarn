@@ -11,6 +11,7 @@ from .memory import MemoryTool
 from .question import QuestionTool
 from .read import ReadTool
 from .skill import SkillTool
+from .ssh import SshTool
 from .task import TaskTool
 from .todowrite import TodoWriteTool
 from .webfetch import WebFetchTool
@@ -25,11 +26,12 @@ ALL_TOOLS: dict[str, type[Tool]] = {
     for t in (
         BashTool, ReadTool, WriteTool, EditTool, GlobTool, GrepTool,
         WebFetchTool, WebSearchTool, TodoWriteTool, QuestionTool, TaskTool,
-        MemoryTool,
+        MemoryTool, SshTool,
     )
 }
 
-WRITE_TOOLS = {"bash", "edit", "write", "memory"}  # serialized execution (spec §5.3)
+# serialized execution (spec §5.3) — remote commands mutate too
+WRITE_TOOLS = {"bash", "edit", "write", "memory", "ssh"}
 
 
 def build_tools(

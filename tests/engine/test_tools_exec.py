@@ -90,7 +90,7 @@ def test_build_tools_registry():
     tools = build_tools(None, include_task=True, subagents=[("explore", "search things")])
     names = {t.name for t in tools}
     assert "task" in names and "bash" in names and "memory" in names
-    assert "websearch" in names and len(names) == 12
+    assert "websearch" in names and "ssh" in names and len(names) == 13
     task = next(t for t in tools if t.name == "task")
     assert "explore: search things" in task.description()
 

@@ -57,6 +57,10 @@ class Engine:
         self.worktrees = WorktreeManager(self.global_dir / "worktrees")
         from .terminals import ProcessHub
         self.terminals = ProcessHub(self.bus)
+        from .hosts import HostStore
+        self.hosts = HostStore(self.global_dir / "hosts.json")
+        from .auth import AuthStore
+        self._host_auth = AuthStore(self.global_dir)
 
         self._runs: dict[str, RunHandle] = {}
         self._new_session_lock = asyncio.Lock()
@@ -135,6 +139,26 @@ class Engine:
             await close()
 
         await self.store.close()
+
+    # -- host credentials ---------------------------------------------------
+    # Passwords live in the 0600 auth store beside provider keys, never in
+    # hosts.json (spec: 2026-08-05-host-passwords-and-agent-ssh-design.md).
+
+    def set_host_password(self, host_id: str, password: str) -> None:
+        if password:
+            self._host_auth.set(f"host:{host_id}", {
+                "type": "password", "password": password})
+        else:
+            self._host_auth.remove(f"host:{host_id}")
+
+    def host_password(self, host_id: str) -> str | None:
+        record = self._host_auth.get(f"host:{host_id}") or {}
+        return record.get("password") or None
+
+    def forget_host(self, host_id: str) -> None:
+        """Delete a host and any credential stored for it."""
+        self.hosts.remove(host_id)
+        self._host_auth.remove(f"host:{host_id}")
 
     def reload_config(self) -> None:
         """Re-read config layers and rebuild providers/agents/commands."""

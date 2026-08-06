@@ -121,12 +121,15 @@ async def test_terminal_view_swaps_content_and_restores(qapp, tmp_path):
         assert not window.content_split.isVisible()
         assert not window.prompt_bar.isVisible()
         assert not window.header.isVisible()
+        # the terminal view owns the full width — no project/session sidebar
+        assert not window.sidebar.isVisible()
 
         window._set_view("chat")
         qapp.processEvents()
         assert window.content_split.isVisible()
         assert window.prompt_bar.isVisible()
         assert window.header.isVisible()
+        assert window.sidebar.isVisible()
         # bottom pane was closed before entering, so it stays closed
         assert not window.terminal_panel.isVisible()
     finally:
@@ -149,6 +152,50 @@ async def test_terminal_view_keeps_open_bottom_pane_on_return(qapp, tmp_path):
         window._set_view("chat")         # back
         qapp.processEvents()
         assert window.terminal_panel.isVisible()  # pane restored, still open
+    finally:
+        await engine.stop()
+
+
+def test_rail_expands_with_labels(qapp):
+    from bytebarn.app.nav_rail import COLLAPSED_WIDTH, EXPANDED_WIDTH, NavRail
+
+    rail = NavRail()
+    assert rail.minimumWidth() == COLLAPSED_WIDTH
+    assert rail._view_buttons["projects"].text() == "🛖"
+
+    toggled: list[bool] = []
+    rail.expanded_toggled.connect(toggled.append)
+    rail.set_expanded(True, animate=False)
+    assert rail.is_expanded()
+    assert rail.minimumWidth() == EXPANDED_WIDTH
+    assert rail._view_buttons["projects"].text() == "🛖  Projects"
+    assert rail._view_buttons["terminal"].text() == ">_  Terminal"
+    assert "Collapse" in rail.toggle_button.text()
+    assert toggled == []  # programmatic set emits nothing
+
+    rail.set_expanded(False, animate=False)
+    assert rail.minimumWidth() == COLLAPSED_WIDTH
+    assert rail._view_buttons["projects"].text() == "🛖"
+
+    rail.toggle_button.click()  # user toggle emits
+    assert toggled == [True]
+
+
+async def test_rail_expansion_restored_from_config(qapp, tmp_path):
+    from bytebarn.app.main_window import MainWindow
+    from bytebarn.engine.facade import Engine
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    gdir = tmp_path / "g"
+    gdir.mkdir()
+    (gdir / "config.json").write_text(json.dumps(
+        {"model": "fake/m", "ui": {"rail_expanded": True}}))
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=gdir)
+    await engine.start()
+    try:
+        window = MainWindow(engine)
+        assert window.nav_rail.is_expanded()
     finally:
         await engine.stop()
 

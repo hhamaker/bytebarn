@@ -7,8 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-08-06
+
+The workspace rebuild: a Termius-style shell, a real tiling terminal, and
+saved connections your agents can use.
+
 ### Added
 
+- **Saved hosts.** The Terminal Manager sidebar keeps a Termius-style
+  connection book (`~/.bytebarn/hosts.json`): name, host, user, port, and
+  either an SSH key or a username/password. Double-click (or Connect) opens
+  `ssh` in a new terminal tile. + Host / Edit… / Delete manage entries.
+  Passwords are stored in the 0600 auth store beside provider keys, never in
+  `hosts.json` and never on an ssh command line — ByteBarn answers the
+  prompt on the PTY.
+- **Agents can use saved hosts.** A new `ssh` tool runs one command on a
+  saved host (`host`, `command`, `timeout`). It asks for confirmation by
+  default, is denied outright in Safe and Plan modes, and matches permission
+  rules on `"<host>: <command>"` so you can pre-allow narrow patterns like
+  `"staging: systemctl status*"`. Only agents whose tool map includes `ssh`
+  can see it.
+- **Slide-out nav rail.** The » toggle at the rail's foot expands it to show
+  what each icon means (Projects / Chat / Code / Terminal, Agents /
+  Providers / Settings); the choice persists in config as
+  `ui.rail_expanded`.
 - **Terminal splits, renames, and themes.** The Terminal Manager is now a
   tiling surface: drag a terminal from the list (or a pane header) onto a
   pane — edges split in that direction, the center swaps the pane's
@@ -28,6 +50,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Terminals had no controlling terminal.** PTY children were spawned with
+  `start_new_session=True`, which calls `setsid` but never claims the PTY, so
+  `/dev/tty` failed with ENXIO. ssh reads passwords from `/dev/tty`, so it
+  could never prompt and every password login died as "Permission denied"
+  with no prompt in sight; job control (Ctrl+C, fg/bg) was broken in local
+  shells for the same reason. Children now do a proper `login_tty`.
+- **Silent ssh auth failures.** A password prompt split across two PTY reads
+  ("…passwo" + "rd: ") matched nothing, so the saved password was never
+  typed and ssh just said "Permission denied"; matching now runs over a
+  rolling tail. Connecting a password host with no password saved warns up
+  front instead of launching a doomed connection, and a rejected login
+  explains what to check (wrong saved password vs. the server refusing
+  password auth, or a key the server does not have).
+- The Terminal view no longer shows the project/session sidebar — its own
+  Hosts and Terminals lists replace it, and the panes get the full width.
+- **"Host key verification failed" on agent runs.** Unattended ssh ran with
+  `BatchMode=yes`, which also disables host-key confirmation, so any server
+  not already in `known_hosts` failed with ssh's terse message. Hosts now
+  have an opt-in "Trust new host key on first connect" checkbox
+  (`StrictHostKeyChecking=accept-new`), and both failure modes explain
+  themselves: an unknown key tells you to connect once from the Terminal
+  view or enable the checkbox, while a *changed* key warns that it may mean
+  interception and refuses to touch `known_hosts` for you.
 - Icon buttons (pane ✕ / 🎨, panel close, search arrows, nav rail) were
   invisible: the global button padding (14 px per side) exceeded their fixed
   widths and clipped the glyph away. Flat buttons now use compact padding.

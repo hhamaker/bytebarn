@@ -117,6 +117,9 @@ QPushButton#railItem {{
     color: {t['muted']}; font-size: 16px; padding: 0;
     {mono}
 }}
+QPushButton#railItem[expanded="true"] {{
+    text-align: left; padding-left: 10px; font-size: 13px;
+}}
 QPushButton#railItem:hover {{ background: {t['hover']}; color: {t['text']}; }}
 QPushButton#railItem:checked {{
     background: {t['accent_soft']}; color: {t['text']};
