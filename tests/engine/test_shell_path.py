@@ -76,11 +76,14 @@ def test_claude_runtime_uses_an_explicit_path_as_given():
 def test_privacy_hint_explains_eperm_in_protected_folders():
     from bytebarn.engine.runtimes.claude_code import privacy_hint
 
-    hint = privacy_hint("error: An internal error occurred (EPERM)",
+    hint = privacy_hint("open /x: Operation not permitted",
                         "/Users/x/Documents/GitHub/proj")
     assert "Privacy & Security" in hint and "ByteBarn" in hint
 
     # a normal failure is not dressed up as a permissions problem
     assert privacy_hint("claude: command failed", "/Users/x/Documents/p") == ""
-    # nor is EPERM outside the protected folders
-    assert privacy_hint("EPERM", "/Users/x/code/proj") == ""
+    # nor is a bare EPERM, which has many causes that Settings will not fix
+    assert privacy_hint("An internal error occurred (EPERM)",
+                        "/Users/x/Documents/p") == ""
+    # nor a denial outside the protected folders
+    assert privacy_hint("Operation not permitted", "/Users/x/code/proj") == ""

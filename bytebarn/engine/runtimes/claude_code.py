@@ -113,19 +113,20 @@ def privacy_hint(text: str, cwd: str | Path = "") -> str:
     a terminal, the CLI is covered by the terminal's grant; launched from
     ByteBarn.app it is not, so reading a project under ~/Documents (or
     Desktop / Downloads / iCloud Drive) fails with a bare EPERM."""
-    if not any(code in text for code in ("EPERM", "EACCES", "operation not permitted")):
+    # "Operation not permitted" on a path is the signature of a privacy
+    # denial; a bare EPERM from the CLI is not, and saying so sends people
+    # to a settings pane that will not help.
+    if "operation not permitted" not in text.lower():
         return ""
     protected = ("/Documents", "/Desktop", "/Downloads", "Mobile Documents")
     where = str(cwd)
     if where and not any(p in where for p in protected):
         return ""
     return (
-        "macOS privacy protection is blocking this. A tool launched by "
-        "ByteBarn inherits ByteBarn's permissions, and the app has not been "
-        "granted access to this folder. Give ByteBarn.app access under "
+        "That looks like a macOS privacy denial: a tool launched by ByteBarn "
+        "inherits ByteBarn's permissions. Give ByteBarn.app access under "
         "System Settings → Privacy & Security → Files and Folders (or Full "
-        "Disk Access), then try again. Projects outside ~/Documents, "
-        "~/Desktop and ~/Downloads are unaffected."
+        "Disk Access), then relaunch the app."
     )
 
 
@@ -674,10 +675,18 @@ class ClaudeCodeRuntime:
             engine.bus.emit(SessionActivity(session_id=live.id, detail=""))
             return "error"
         if rc not in (0, None) and not state.result_text and not state.text_buf:
+            # Show what the CLI actually said: without this the transcript has
+            # only an exit code and the reason is buried in the terminal pane.
             stderr_tail = getattr(self, "_stderr_tail", "")
+            parts = [f"claude-code exited with code {rc}"]
+            tail = "\n".join(
+                line for line in stderr_tail.strip().splitlines()[-8:] if line.strip())
+            if tail:
+                parts.append(f"```\n{tail}\n```")
             hint = privacy_hint(stderr_tail, cwd)
-            message_text = f"claude-code exited with code {rc}"
-            raise RuntimeError(f"{message_text}\n\n{hint}" if hint else message_text)
+            if hint:
+                parts.append(hint)
+            raise RuntimeError("\n\n".join(parts))
 
         engine.bus.emit(SessionUpdated(session_id=live.id))
         engine.bus.emit(SessionActivity(session_id=live.id, detail=""))
