@@ -56,8 +56,15 @@ def ssh_argv(host: Host, command: str = "", *, batch: bool = False) -> list[str]
         # accept-new adds unknown keys but still refuses changed ones
         argv += ["-o", "StrictHostKeyChecking=accept-new"]
     if host.auth_type == PASSWORD_AUTH:
-        argv += ["-o", "NumberOfPasswordPrompts=1",
-                 "-o", "PreferredAuthentications=password,keyboard-interactive"]
+        # Force the password path on regardless of what ~/.ssh/config says,
+        # and keep ssh from spending the server's auth attempts offering keys
+        # before it ever reaches the prompt.
+        argv += ["-o", "PreferredAuthentications=password,keyboard-interactive",
+                 "-o", "PasswordAuthentication=yes",
+                 "-o", "KbdInteractiveAuthentication=yes",
+                 "-o", "PubkeyAuthentication=no",
+                 "-o", "IdentitiesOnly=yes",
+                 "-o", "NumberOfPasswordPrompts=3"]
     else:
         if host.identity_file:
             argv += ["-i", str(Path(host.identity_file).expanduser())]

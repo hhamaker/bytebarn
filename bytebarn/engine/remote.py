@@ -19,8 +19,12 @@ from .hosts import PASSWORD_AUTH, Host, ssh_argv
 
 DEFAULT_TIMEOUT = 120.0
 _MAX_OUTPUT = 200_000
-# openssh prompts: "user@host's password:", "Password:", "Enter passphrase…"
-PASSWORD_PROMPT = re.compile(r"(password|passphrase)[^\n]*:\s*$", re.IGNORECASE)
+# openssh prompts: "user@host's password:", "Password:", "Enter passphrase…".
+# Not anchored to the end of the buffer: when a login fails fast, one read can
+# carry the prompt *and* the refusal, and an end-anchored pattern would miss
+# it entirely. "Permission denied (publickey,password)." cannot match — the
+# word is not followed by a colon on the same line.
+PASSWORD_PROMPT = re.compile(r"(password|passphrase)[^\n]*:[ \t]*", re.IGNORECASE)
 
 
 async def run_remote(
@@ -133,13 +137,16 @@ def host_key_hint(output: str, host: Host, answered: bool | None = None) -> str:
             # refusal, so the transcript alone cannot say whether the password
             # was ever typed. `answered` is what actually happened.
             if answered is False:
+                target = (f"{host.username}@{host.hostname}" if host.username
+                          else host.hostname)
                 return (
-                    f"[{host.name}: the server never asked for a password, so "
-                    "the saved one was never sent. It is refusing password "
-                    "logins for this user — check PasswordAuthentication and "
-                    "KbdInteractiveAuthentication in its sshd_config, or that "
-                    f"the username ({host.username or 'your local user'}) is "
-                    "right.]")
+                    f"[{host.name}: no password prompt arrived, so the saved "
+                    "one was never sent. Run `ssh -v " + target + "` in a "
+                    "shell pane to see which methods the server actually "
+                    "offers — the usual causes are PasswordAuthentication or "
+                    "KbdInteractiveAuthentication being off in its "
+                    f"sshd_config, or the username ({host.username or 'yours'})"
+                    " being wrong.]")
             if answered:
                 return (
                     f"[{host.name}: ByteBarn typed the saved password at the "

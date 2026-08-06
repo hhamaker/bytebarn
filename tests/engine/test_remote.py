@@ -76,6 +76,31 @@ async def test_prompt_split_across_reads_is_still_answered(tmp_path):
     assert "hunter2" not in output
 
 
+async def test_prompt_coalesced_with_later_output_is_still_matched(tmp_path):
+    """A fast login writes the prompt and more text in one read; an
+    end-anchored matcher would miss the prompt entirely."""
+    fake = _script(tmp_path, "coalesced_ssh", (
+        'printf "hunter@10.0.0.1\'s password: some trailing noise\\n"\n'
+        "read secret\n"
+        'echo "got:[$secret]"\n'
+    ))
+    _code, output = await run_remote(
+        _host(PASSWORD_AUTH), "uptime", password="hunter2", argv=[fake])
+    assert "got:[•••]" in output
+
+
+def test_password_hosts_force_the_password_path():
+    from bytebarn.engine.hosts import ssh_argv
+
+    argv = " ".join(ssh_argv(_host(PASSWORD_AUTH), "uptime"))
+    # config files must not be able to switch password auth off underneath us
+    assert "PasswordAuthentication=yes" in argv
+    assert "KbdInteractiveAuthentication=yes" in argv
+    # and ssh must not spend the server's auth attempts offering keys first
+    assert "PubkeyAuthentication=no" in argv
+    assert "IdentitiesOnly=yes" in argv
+
+
 async def test_denied_without_a_prompt_says_the_password_was_never_sent(tmp_path):
     """ssh overwrites its prompt with \\r, so the transcript can't tell us —
     the hint must be based on whether we actually answered."""
@@ -84,8 +109,8 @@ async def test_denied_without_a_prompt_says_the_password_was_never_sent(tmp_path
         "exit 255\n"))
     _code, output = await run_remote(
         _host(PASSWORD_AUTH), "uptime", password="hunter2", argv=[fake])
-    assert "never asked for a password" in output
-    assert "KbdInteractiveAuthentication" in output
+    assert "no password prompt arrived" in output
+    assert "ssh -v" in output and "KbdInteractiveAuthentication" in output
 
 
 async def test_denied_after_answering_blames_the_stored_password(tmp_path):
@@ -159,7 +184,7 @@ async def test_password_never_appears_in_argv():
     host = _host(PASSWORD_AUTH)
     argv = ssh_argv(host, "uptime")
     assert "hunter2" not in " ".join(argv)
-    assert "NumberOfPasswordPrompts=1" in " ".join(argv)
+    assert "NumberOfPasswordPrompts=3" in " ".join(argv)
     # agent (batch) runs fail fast; interactive connects can still prompt for
     # an encrypted key's passphrase
     assert "BatchMode=yes" in " ".join(ssh_argv(_host(KEY_AUTH), "up", batch=True))
