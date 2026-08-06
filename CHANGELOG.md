@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-08-06
+
+Makes the packaged app behave like the one you run from source: it can find
+your tools, keep its file permissions, and say what went wrong.
+
+### Fixed
+
+- **Rebuilding the app revoked its file permissions.** macOS keys privacy
+  grants to the code signature, and PyInstaller's ad-hoc signature changes
+  every build, so each rebuild looked like a new app: shells and agents then
+  failed with `Operation not permitted` for projects under ~/Documents.
+  `CODESIGN_IDENTITY` now signs with a stable identity (grants persist), and
+  an unsigned build says so instead of failing mysteriously later.
+- **The packaged app could not find your tools.** Launched from Finder it
+  inherits launchd's bare PATH, so Homebrew/npm/cargo binaries did not
+  exist as far as it was concerned — Claude Code died with "No such file or
+  directory: 'claude'" though `claude` worked in a terminal, and the bash
+  tool had the same blind spot. The GUI now takes its PATH from your login
+  shell at startup.
+- New terminals open in the current session's directory — an isolated
+  session's worktree included — rather than always at the project root.
+- A failed Claude Code run shows the CLI's own stderr in the transcript
+  instead of only an exit code, and a genuine macOS privacy denial explains
+  which setting fixes it.
+- Claude Code output was duplicated in its terminal (the hub snapshot was
+  applied twice), and the log view printed ANSI escapes literally.
+- Fenced code blocks were dark-on-dark in the light theme; the highlighting
+  style now follows the theme.
+
 ## [0.4.0] — 2026-08-06
 
 The workspace rebuild: a Termius-style shell, a real tiling terminal, and
@@ -50,14 +79,6 @@ saved connections your agents can use.
 
 ### Fixed
 
-- **Rebuilding the app revoked its file permissions.** macOS keys privacy
-  grants to the code signature, and PyInstaller's ad-hoc signature changes
-  every build, so each rebuild looked like a new app: shells and agents then
-  failed with `Operation not permitted` for projects under ~/Documents.
-  `CODESIGN_IDENTITY` now signs with a stable identity (grants persist), and
-  an unsigned build says so instead of failing mysteriously later.
-- New terminals open in the current session's directory — an isolated
-  session's worktree included — rather than always at the project root.
 - **Terminals had no controlling terminal.** PTY children were spawned with
   `start_new_session=True`, which calls `setsid` but never claims the PTY, so
   `/dev/tty` failed with ENXIO. ssh reads passwords from `/dev/tty`, so it
