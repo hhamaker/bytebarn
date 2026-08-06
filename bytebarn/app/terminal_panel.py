@@ -610,6 +610,19 @@ class TerminalPanel(QWidget):
 
     # -- public API ----------------------------------------------------------
 
+    def set_session_dir_source(self, getter) -> None:
+        """Callable returning the open session's working directory (or '')."""
+        self._session_dir_source = getter
+
+    def session_dir(self) -> str:
+        getter = getattr(self, "_session_dir_source", None)
+        if getter is None:
+            return ""
+        try:
+            return str(getter() or "")
+        except Exception:
+            return ""
+
     def set_engine(self, engine) -> None:
         self.engine = engine
         self.refresh_from_hub()
@@ -1010,7 +1023,9 @@ class TerminalPanel(QWidget):
     ) -> None:
         cwd = Path.home()
         if self.engine is not None:
-            cwd = Path(self.engine.project_dir)
+            # the open session's own directory, so a shell lands where the
+            # chat is working (worktrees included) rather than the project root
+            cwd = Path(self.session_dir() or self.engine.project_dir)
         tid = f"user:{uuid.uuid4().hex[:8]}"
 
         # Estimate size from the pane area so the shell starts with a real winsize

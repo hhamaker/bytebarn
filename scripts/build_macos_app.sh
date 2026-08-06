@@ -45,6 +45,21 @@ add_usage NSDesktopFolderUsageDescription "$REASON"
 add_usage NSDownloadsFolderUsageDescription "$REASON"
 add_usage NSRemovableVolumesUsageDescription "$REASON"
 
+# macOS ties privacy grants (Documents, Full Disk Access…) to the app's code
+# signature. PyInstaller signs ad-hoc, and an ad-hoc signature changes on
+# every build — so each rebuild looks like a *different* app and silently
+# loses the permissions you granted. Sign with a stable identity to keep
+# them: CODESIGN_IDENTITY="Developer ID Application: You (TEAMID)" or the
+# name of a self-signed code-signing certificate in your keychain.
+if [[ -n "${CODESIGN_IDENTITY:-}" ]]; then
+  codesign --force --deep --sign "$CODESIGN_IDENTITY" \
+    --identifier dev.bytebarn.app dist/ByteBarn.app
+  echo "signed with: $CODESIGN_IDENTITY"
+else
+  echo "note: ad-hoc signed — macOS will ask for file permissions again after"
+  echo "      this build. Set CODESIGN_IDENTITY to keep grants across builds."
+fi
+
 echo
 echo "built dist/ByteBarn.app ($VERSION)"
 if [[ "${1:-}" == "--install" ]]; then

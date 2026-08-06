@@ -85,6 +85,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.engine = engine
         self.current_session_id: str | None = None
+        self._session_dir: str = ""
         self._session_stack: list[str] = []  # for back-navigation into subagents
         self._running: set[str] = set()
         self._activity: str = ""  # live run detail for the open session
@@ -211,6 +212,7 @@ class MainWindow(QMainWindow):
         from .terminal_panel import TerminalPanel
 
         self.terminal_panel = TerminalPanel(engine)
+        self.terminal_panel.set_session_dir_source(lambda: self._session_dir)
         self.terminal_panel.setVisible(False)
         self.terminal_panel.closed.connect(self._on_terminal_closed)
         self.mid_split = QSplitter(Qt.Vertical)
@@ -1118,6 +1120,8 @@ class MainWindow(QMainWindow):
         if session is None:
             return
         self.current_session_id = session_id
+        # new terminals open here, so a shell matches the chat's working tree
+        self._session_dir = session.directory or ""
         self._activity = "working…" if self.engine.is_running(session_id) else ""
         # load the most recent page first (lazy loading)
         history = await self.engine.store.session_parts(session_id, limit=50)

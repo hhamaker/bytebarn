@@ -358,3 +358,27 @@ async def test_default_theme_config_key(qapp, tmp_path):
         assert panel._views[tid].theme_name() == "Gruvbox Dark"
     finally:
         await engine.stop()
+
+
+async def test_new_shell_opens_in_the_session_directory(qapp, tmp_path):
+    """A shell should land where the chat works, not at the project root."""
+    from bytebarn.app.terminal_panel import TerminalPanel
+
+    engine = await _engine(tmp_path)
+    panel = TerminalPanel(engine)
+    try:
+        work = tmp_path / "worktree"
+        work.mkdir()
+        panel.set_session_dir_source(lambda: str(work))
+        assert panel.session_dir() == str(work)
+
+        await panel._spawn_shell()
+        tid = next(iter(panel._views))
+        assert str(work) in panel._ptys[tid].cwd
+
+        # no session open → fall back to the project directory
+        panel.set_session_dir_source(lambda: "")
+        assert panel.session_dir() == ""
+    finally:
+        await panel.shutdown()
+        await engine.stop()
