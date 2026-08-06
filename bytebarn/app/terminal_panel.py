@@ -536,7 +536,11 @@ class TerminalPanel(QWidget):
         self.list.setDragEnabled(True)
         self.list.setMaximumWidth(220)
         self.list.delete_requested.connect(self._close_selected)
-        self.list.currentItemChanged.connect(self._on_select)
+        # Mount on click/activate, NOT on currentItemChanged: selection fires
+        # on mouse *press*, so it would mount mid-drag and turn every
+        # drag-to-split into a "move" that closes the source pane.
+        self.list.itemClicked.connect(self._on_select)
+        self.list.itemActivated.connect(self._on_select)
         self.list.itemDoubleClicked.connect(
             lambda item: self._rename_terminal(item.data(Qt.UserRole)))
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -674,6 +678,7 @@ class TerminalPanel(QWidget):
         item = self._find_item(tid)
         if item is not None:
             self.list.setCurrentItem(item)
+            self._show_view(tid)  # selection no longer mounts implicitly
 
     def _on_select(self, item: QListWidgetItem | None, _prev=None) -> None:
         if item is None:
@@ -723,8 +728,17 @@ class TerminalPanel(QWidget):
         view.setFocus()
 
     def _terminal_dropped(self, pane, tid: str, zone: str) -> None:
-        """List/header drag landed on a pane: center swaps, edges split."""
-        if tid not in self._views:
+        """List/header drag landed on a pane: center swaps, edges split.
+
+        Deferred one event-loop turn: the drop arrives inside the source
+        pane's blocking drag.exec, and a move can delete that very pane —
+        never tear down widgets whose event frames are still on the stack."""
+        from PySide6.QtCore import QTimer
+
+        QTimer.singleShot(0, lambda: self._apply_drop(pane, tid, zone))
+
+    def _apply_drop(self, pane, tid: str, zone: str) -> None:
+        if tid not in self._views or pane not in self.pane_area.panes():
             return
         if zone == "center":
             if pane.terminal_id != tid:

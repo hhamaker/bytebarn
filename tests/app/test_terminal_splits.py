@@ -189,23 +189,70 @@ async def test_drop_splits_and_moves(qapp, tmp_path):
         pane1 = panel.pane_area.pane_for(tid2) or panel.pane_area.active_pane()
 
         # drop tid1 on the right edge → new pane to the right with tid1
-        panel._terminal_dropped(pane1, tid1, "right")
+        panel._apply_drop(pane1, tid1, "right")
         assert len(panel.pane_area.panes()) == 2
         new_pane = panel.pane_area.pane_for(tid1)
         assert new_pane is not None and new_pane is not pane1
 
         # drop tid2 onto tid1's pane center → tid2 moves there and the
         # vacated source pane closes (no empty tiles left behind)
-        panel._terminal_dropped(new_pane, tid2, "center")
+        panel._apply_drop(new_pane, tid2, "center")
         assert new_pane.terminal_id == tid2
         assert len(panel.pane_area.panes()) == 1
         assert panel.pane_area.pane_for(tid1) is None  # tid1 parked
         assert tid1 in panel._views
 
         # drop tid1 on top edge of tid2's pane → splits vertically, before
-        panel._terminal_dropped(new_pane, tid1, "top")
+        panel._apply_drop(new_pane, tid1, "top")
         assert len(panel.pane_area.panes()) == 2
         assert panel.pane_area.pane_for(tid1).terminal_id == tid1
+    finally:
+        await engine.stop()
+
+
+async def test_selection_change_alone_does_not_mount(qapp, tmp_path):
+    """Regression: currentItemChanged fires on mouse *press*, so mounting on
+    it turned every drag-to-split into a move that closed the source pane."""
+    from bytebarn.app.terminal_panel import TerminalPanel
+
+    engine = await _engine(tmp_path)
+    try:
+        panel = TerminalPanel(engine)
+        tid1 = _open_backend(engine, panel, "cc:s1", "one")
+        tid2 = _open_backend(engine, panel, "cc:s2", "two")
+        # tid2 is mounted (auto-shown on open); park tid1 pane state known
+        assert panel.pane_area.pane_for(tid2) is not None
+
+        # bare selection change (what a drag's mouse-press does) must NOT mount
+        mounted_before = panel.pane_area.pane_for(tid1)
+        panel.list.setCurrentItem(panel._find_item(tid1))
+        assert panel.pane_area.pane_for(tid1) is mounted_before
+
+        # a real click (itemClicked) mounts
+        panel._on_select(panel._find_item(tid1))
+        assert panel.pane_area.pane_for(tid1) is not None
+    finally:
+        await engine.stop()
+
+
+async def test_drop_is_deferred_out_of_the_drag_stack(qapp, tmp_path):
+    import asyncio
+
+    from bytebarn.app.terminal_panel import TerminalPanel
+
+    engine = await _engine(tmp_path)
+    try:
+        panel = TerminalPanel(engine)
+        tid1 = _open_backend(engine, panel, "cc:s1", "one")
+        tid2 = _open_backend(engine, panel, "cc:s2", "two")
+        pane = panel.pane_area.pane_for(tid2) or panel.pane_area.active_pane()
+        panel._terminal_dropped(pane, tid1, "right")
+        assert len(panel.pane_area.panes()) == 1  # nothing yet — deferred
+        for _ in range(3):  # pump Qt so the queued QTimer fires
+            qapp.processEvents()
+            await asyncio.sleep(0)
+        assert len(panel.pane_area.panes()) == 2
+        assert panel.pane_area.pane_for(tid1) is not None
     finally:
         await engine.stop()
 
@@ -219,7 +266,7 @@ async def test_close_removes_terminal_and_collapses_pane(qapp, tmp_path):
         tid1 = _open_backend(engine, panel, "cc:s1", "one")
         tid2 = _open_backend(engine, panel, "cc:s2", "two")
         pane = panel.pane_area.pane_for(tid2) or panel.pane_area.active_pane()
-        panel._terminal_dropped(pane, tid1, "right")
+        panel._apply_drop(pane, tid1, "right")
         assert len(panel.pane_area.panes()) == 2
 
         panel.list.setCurrentItem(panel._find_item(tid1))
