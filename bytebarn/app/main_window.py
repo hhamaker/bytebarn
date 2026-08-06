@@ -263,6 +263,10 @@ class MainWindow(QMainWindow):
         self.nav_rail = NavRail()
         self.nav_rail.view_selected.connect(self._set_view)
         self.nav_rail.tool_selected.connect(self._open_tool)
+        ui_conf = (engine.config.model_extra or {}).get("ui") or {}
+        if isinstance(ui_conf, dict) and ui_conf.get("rail_expanded"):
+            self.nav_rail.set_expanded(True, animate=False)
+        self.nav_rail.expanded_toggled.connect(self._remember_rail_expanded)
         self._current_view = "chat"
         self._pre_terminal_state: dict | None = None
         central = QWidget()
@@ -643,6 +647,16 @@ class MainWindow(QMainWindow):
             self.mid_split.setSizes(state["sizes"])
         else:
             self.mid_split.setSizes([1, 0])
+
+    def _remember_rail_expanded(self, expanded: bool) -> None:
+        try:
+            from ..engine.config import patch_config_file
+
+            patch_config_file(self.engine.global_dir / "config.json",
+                              {"ui.rail_expanded": bool(expanded)})
+            self.engine.reload_config()
+        except Exception:
+            pass
 
     def _open_tool(self, tool: str) -> None:
         if tool == "agents":

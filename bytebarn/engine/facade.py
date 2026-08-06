@@ -57,6 +57,8 @@ class Engine:
         self.worktrees = WorktreeManager(self.global_dir / "worktrees")
         from .terminals import ProcessHub
         self.terminals = ProcessHub(self.bus)
+        from .hosts import HostStore
+        self.hosts = HostStore(self.global_dir / "hosts.json")
 
         self._runs: dict[str, RunHandle] = {}
         self._new_session_lock = asyncio.Lock()

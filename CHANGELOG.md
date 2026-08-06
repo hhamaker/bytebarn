@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Saved hosts.** The Terminal Manager sidebar keeps a Termius-style
+  connection book (`~/.bytebarn/hosts.json`): name, host, user, port, and
+  SSH key per entry — never passwords; auth is keys/agent only.
+  Double-click (or Connect) opens `ssh` in a new terminal tile. + Host /
+  Edit… / Delete manage entries.
+- **Slide-out nav rail.** The » toggle at the rail's foot expands it to show
+  what each icon means (Projects / Chat / Code / Terminal, Agents /
+  Providers / Settings); the choice persists in config as
+  `ui.rail_expanded`.
 - **Terminal splits, renames, and themes.** The Terminal Manager is now a
   tiling surface: drag a terminal from the list (or a pane header) onto a
   pane — edges split in that direction, the center swaps the pane's

@@ -205,8 +205,9 @@ async def spawn_shell(
     shell: str | None = None,
     rows: int = 24,
     cols: int = 80,
+    command: list[str] | None = None,
 ) -> PtySession:
-    """Open a PTY and spawn the user shell with a sensible winsize."""
+    """Open a PTY and spawn the user shell (or ``command``) with a winsize."""
     shell = shell or _default_shell()
     work = str(Path(cwd or Path.home()).expanduser())
     rows = max(1, rows)
@@ -230,11 +231,14 @@ async def spawn_shell(
         # weird TERM (e.g. dumb under some launchers).
         env.pop("TERMINFO_DIRS", None)
         # Login + interactive so PATH matches Terminal.app (.zprofile / .bash_profile).
-        base = os.path.basename(shell)
-        if base in ("bash", "zsh", "sh", "fish"):
-            argv = [shell, "-il"]
+        if command:
+            argv = list(command)
         else:
-            argv = [shell]
+            base = os.path.basename(shell)
+            if base in ("bash", "zsh", "sh", "fish"):
+                argv = [shell, "-il"]
+            else:
+                argv = [shell]
         proc = await asyncio.create_subprocess_exec(
             *argv,
             stdin=slave,

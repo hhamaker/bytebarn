@@ -153,6 +153,50 @@ async def test_terminal_view_keeps_open_bottom_pane_on_return(qapp, tmp_path):
         await engine.stop()
 
 
+def test_rail_expands_with_labels(qapp):
+    from bytebarn.app.nav_rail import COLLAPSED_WIDTH, EXPANDED_WIDTH, NavRail
+
+    rail = NavRail()
+    assert rail.minimumWidth() == COLLAPSED_WIDTH
+    assert rail._view_buttons["projects"].text() == "🛖"
+
+    toggled: list[bool] = []
+    rail.expanded_toggled.connect(toggled.append)
+    rail.set_expanded(True, animate=False)
+    assert rail.is_expanded()
+    assert rail.minimumWidth() == EXPANDED_WIDTH
+    assert rail._view_buttons["projects"].text() == "🛖  Projects"
+    assert rail._view_buttons["terminal"].text() == ">_  Terminal"
+    assert "Collapse" in rail.toggle_button.text()
+    assert toggled == []  # programmatic set emits nothing
+
+    rail.set_expanded(False, animate=False)
+    assert rail.minimumWidth() == COLLAPSED_WIDTH
+    assert rail._view_buttons["projects"].text() == "🛖"
+
+    rail.toggle_button.click()  # user toggle emits
+    assert toggled == [True]
+
+
+async def test_rail_expansion_restored_from_config(qapp, tmp_path):
+    from bytebarn.app.main_window import MainWindow
+    from bytebarn.engine.facade import Engine
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    gdir = tmp_path / "g"
+    gdir.mkdir()
+    (gdir / "config.json").write_text(json.dumps(
+        {"model": "fake/m", "ui": {"rail_expanded": True}}))
+    engine = Engine(proj, db_path=tmp_path / "db.sqlite", global_dir=gdir)
+    await engine.start()
+    try:
+        window = MainWindow(engine)
+        assert window.nav_rail.is_expanded()
+    finally:
+        await engine.stop()
+
+
 async def test_new_code_session_uses_orchestrator(qapp, tmp_path):
     from bytebarn.app.main_window import MainWindow
 
